@@ -54,6 +54,8 @@ mod codex;
 mod fonts;
 mod server;
 mod updates;
+#[cfg(all(target_os = "macos", not(chromium)))]
+mod local_test_login;
 mod view_menu;
 #[cfg(all(chromium, target_os = "macos"))]
 mod webkit_migration;
@@ -346,7 +348,7 @@ fn main() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_updater::Builder::new().build());
     #[cfg(target_os = "macos")]
-    let builder = builder.menu(build_menu).on_menu_event(|app, event| {
+    let builder = builder.on_menu_event(|app, event| {
         if event.id() == CLOSE_TAB {
             let _ = app.emit(CLOSE_TAB, ());
         } else if event.id() == updates::menu::MENU_ID {
@@ -376,6 +378,9 @@ fn main() {
             let _ = (window, event);
         })
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            app.set_menu(build_menu(app.handle())?)?;
+
             // macOS registers doop:// from the bundle's Info.plist, so it
             // only works installed; Windows and Linux can register at
             // runtime, which also makes `tauri dev` receive links.
@@ -409,6 +414,10 @@ fn main() {
             } else {
                 entry.parse()?
             };
+            #[cfg(all(target_os = "macos", not(chromium)))]
+            let test_login = local_test_login::enabled(app.handle());
+            #[cfg(all(target_os = "macos", not(chromium)))]
+            let first_url = if test_login { "about:blank".parse()? } else { first_url };
             // Hosts that stay inside the shell; any other http(s) target opens
             // in the system browser. Hostless web schemes (about:, blob:) stay
             // in — sandboxed frame content depends on them — but mailto: and
@@ -524,7 +533,18 @@ fn main() {
             let builder = builder
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
                 .hidden_title(true);
+            // Exercise a cold test login without replacing the user's stored WebKit session.
+            #[cfg(all(target_os = "macos", not(chromium)))]
+            let builder = if test_login && std::env::args_os().any(|arg| arg == "--fresh-test-session") {
+                builder.incognito(true)
+            } else {
+                builder
+            };
             let _webview_window = builder.build()?;
+            #[cfg(all(target_os = "macos", not(chromium)))]
+            if test_login {
+                local_test_login::start(_webview_window.clone());
+            }
             server::check_on_launch(app.handle(), entry.parse()?);
             #[cfg(target_os = "macos")]
             if let Ok(ns_window) = _webview_window.ns_window() {
