@@ -426,13 +426,13 @@ fn main() {
             let app_hosts = server::app_hosts(server::active(app.handle()));
             // Marks every page loaded in the shell so the app can tell desktop
             // sessions from browser ones (src/lib/shell.ts) and render the
-            // tab strip; the version lets the app adapt to shell capabilities
-            // (traffic-light inset arrived with the overlay title bar, 0.1.2)
-            // and the platform tells it which window framing it lives under.
+            // tab strip. Declare the overlay directly because custom builds
+            // can have a release series independent of the upstream shell.
             let desktop_marker = format!(
-                "window.__DOOP_DESKTOP__ = '{}'; window.__DOOP_DESKTOP_PLATFORM__ = '{}'; window.__DOOP_CLAUDE_CLI__ = true; window.__DOOP_CLAUDE_INSTALL__ = true; window.__DOOP_CLAUDE_CHOOSE__ = true; window.__DOOP_CLAUDE_EXTENSION__ = {}; window.__DOOP_CODEX_SETUP__ = true; window.__DOOP_VIEW_MENU__ = true; window.__DOOP_APP_MENU__ = {}; window.__DOOP_LOCAL_FONTS__ = true; window.__DOOP_UPDATE_CARD__ = true; window.__DOOP_SERVER_CHOOSE__ = true;",
+                "window.__DOOP_DESKTOP__ = '{}'; window.__DOOP_DESKTOP_PLATFORM__ = '{}'; window.__DOOP_DESKTOP_TRAFFIC_LIGHTS__ = {}; window.__DOOP_CLAUDE_CLI__ = true; window.__DOOP_CLAUDE_INSTALL__ = true; window.__DOOP_CLAUDE_CHOOSE__ = true; window.__DOOP_CLAUDE_EXTENSION__ = {}; window.__DOOP_CODEX_SETUP__ = true; window.__DOOP_VIEW_MENU__ = true; window.__DOOP_APP_MENU__ = {}; window.__DOOP_LOCAL_FONTS__ = true; window.__DOOP_UPDATE_CARD__ = true; window.__DOOP_SERVER_CHOOSE__ = true;",
                 app.package_info().version,
                 std::env::consts::OS,
+                cfg!(target_os = "macos"),
                 cfg!(any(target_os = "macos", target_os = "windows")),
                 // only macOS has a menu bar for the page to build (app_menu.rs)
                 cfg!(target_os = "macos")

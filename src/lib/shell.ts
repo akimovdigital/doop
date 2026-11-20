@@ -10,6 +10,7 @@ export type DesktopPlatform = 'macos' | 'windows' | 'linux'
 type ShellGlobals = {
   __DOOP_DESKTOP__?: unknown
   __DOOP_DESKTOP_PLATFORM__?: unknown
+  __DOOP_DESKTOP_TRAFFIC_LIGHTS__?: unknown
 }
 
 const shell = globalThis as ShellGlobals
@@ -41,11 +42,10 @@ function shellVersionAtLeast(major: number, minor: number, patch: number): boole
   return pat >= patch
 }
 
-/** The overlay title bar (traffic lights floating over the page) arrived
- *  with shell 0.1.2; older shells keep a native title bar and need no inset.
- *  Only macOS has an overlay title bar: Windows shells keep the native frame,
- *  so the page must not reserve room for traffic lights or act as the
- *  window's drag handle there. */
+/** Use the shell's actual framing when declared. Shells without the marker
+ *  still use the 0.1.2 boundary where the macOS overlay title bar arrived. */
 export function hasInsetTrafficLights(): boolean {
-  return desktopPlatform() === 'macos' && shellVersionAtLeast(0, 1, 2)
+  if (desktopPlatform() !== 'macos') return false
+  const inset = shell.__DOOP_DESKTOP_TRAFFIC_LIGHTS__
+  return typeof inset === 'boolean' ? inset : shellVersionAtLeast(0, 1, 2)
 }

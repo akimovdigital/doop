@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { desktopPlatform, hasInsetTrafficLights, isDesktopShell, shellVersion } from '../src/lib/shell'
 
-type Markers = { __DOOP_DESKTOP__?: unknown; __DOOP_DESKTOP_PLATFORM__?: unknown }
+type Markers = {
+  __DOOP_DESKTOP__?: unknown
+  __DOOP_DESKTOP_PLATFORM__?: unknown
+  __DOOP_DESKTOP_TRAFFIC_LIGHTS__?: unknown
+}
 const g = globalThis as Markers
 
 function shell(version: unknown, platform?: unknown) {
@@ -13,6 +17,7 @@ function shell(version: unknown, platform?: unknown) {
 afterEach(() => {
   delete g.__DOOP_DESKTOP__
   delete g.__DOOP_DESKTOP_PLATFORM__
+  delete g.__DOOP_DESKTOP_TRAFFIC_LIGHTS__
 })
 
 describe('outside the shell', () => {
@@ -51,6 +56,25 @@ describe('desktopPlatform', () => {
 })
 
 describe('hasInsetTrafficLights', () => {
+  it('reserves room for macOS window buttons in a separately versioned dev build', () => {
+    shell('0.0.2', 'macos')
+    g.__DOOP_DESKTOP_TRAFFIC_LIGHTS__ = true
+    expect(hasInsetTrafficLights()).toBe(true)
+  })
+
+  it('respects a macOS shell that explicitly uses a native title bar', () => {
+    shell('0.14.0', 'macos')
+    g.__DOOP_DESKTOP_TRAFFIC_LIGHTS__ = false
+    expect(hasInsetTrafficLights()).toBe(false)
+  })
+
+  it('ignores the traffic-light capability outside macOS shells', () => {
+    g.__DOOP_DESKTOP_TRAFFIC_LIGHTS__ = true
+    expect(hasInsetTrafficLights()).toBe(false)
+    shell('0.0.2', 'windows')
+    expect(hasInsetTrafficLights()).toBe(false)
+  })
+
   it.each([
     ['0.1.1', undefined, false],
     ['0.1.2', undefined, true],
