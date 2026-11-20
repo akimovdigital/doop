@@ -1,8 +1,10 @@
 {
   "name": "doop-stacki-test",
   "productName": "Doop + Stacki Test",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "main": "main.mjs",
-  "devDependencies": { "electron": "45.4.1" }
+  "devDependencies": {
+    "electron": "45.4.1"
+  }
 }

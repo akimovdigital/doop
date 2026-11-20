@@ -6,3 +6,5 @@ site/dist/
 site/src/pages/index.astro
 site/public/images/
 site/public/screen.css
+site/src/pages/example-*.astro
+site/public/examples/

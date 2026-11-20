@@ -16,12 +16,12 @@ const doop = 'http://' + host + ':48671'
 const studio = 'http://' + host + ':48672'
 const support = path.join(app.getPath('appData'), 'Doop Stacki Test')
 const credentialsPath = path.join(support, 'local-account.json')
-const page = path.join(site, 'src/pages/index.astro')
+const pagesDirectory = path.join(site, 'src/pages')
 const children = new Set()
 const toolbarHeight = 57
-let window, designView, studioView, currentView, cookie, fixture, active
+let window, editorView, cookie, account, fixture, active
 let ready = false
-let transferring = false
+let busy = false
 
 app.setPath('userData', path.join(support, 'Chromium'))
 if (!app.requestSingleInstanceLock()) app.exit(0)
@@ -105,35 +105,59 @@ async function prepareDesign(account) {
 
   for (const header of cookies) {
     const match = /^([^=]+)=([^;]*)/.exec(header)
-    if (match) await designView.webContents.session.cookies.set({
+    if (match) await editorView.webContents.session.cookies.set({
       url: doop, name: match[1], value: match[2], path: '/', httpOnly: true, sameSite: 'lax',
     })
   }
 
-  if (!account.canvasId) {
-    account.canvasId = (await json('/api/canvases', 'POST', { name: 'Тест Astro · Олень в лесу' })).id
-    await saveAccount(account)
+  const entry = account.example ?? account
+  fixture = await prepareFixture(entry)
+  await saveAccount(account)
+}
+
+async function prepareFixture(entry) {
+  const number = entry.number ?? 1
+  const file = number === 1 ? 'index.astro' : 'example-' + number + '.astro'
+  const page = path.join(pagesDirectory, file)
+  if (!entry.canvasId) {
+    entry.canvasId = (await json('/api/canvases', 'POST', { name: 'Пример ' + number + ' · Олень в лесу' })).id
   }
-  if (!account.image) {
+  if (!entry.image) {
     const bytes = await readFile(path.join(lab, 'sample/forest.jpg'))
-    const upload = await request('/api/canvases/' + account.canvasId + '/assets', {
+    const upload = await request('/api/canvases/' + entry.canvasId + '/assets', {
       method: 'POST', body: bytes, headers: { 'content-type': 'image/jpeg' },
     })
-    account.image = (await upload.json()).url
-    await saveAccount(account)
+    entry.image = (await upload.json()).url
   }
 
   const template = await readFile(path.join(lab, 'sample/screen.html'), 'utf8')
   const css = await readFile(path.join(lab, 'sample/screen.css'), 'utf8')
-  const html = template.replace('<link rel="stylesheet" href="%%STYLES%%">', '<style>\n' + css + '</style>').replace('%%IMAGE%%', account.image)
-  if (!account.frameId) {
-    const frame = await json('/api/canvases/' + account.canvasId + '/frames', 'POST', {
+  const html = template.replace('<link rel="stylesheet" href="%%STYLES%%">', '<style>\n' + css + '</style>').replace('%%IMAGE%%', entry.image)
+  if (!entry.frameId) {
+    const frame = await json('/api/canvases/' + entry.canvasId + '/frames', 'POST', {
       name: 'Олень в лесу', width: 1080, height: 800, x: 0, y: 0, html,
     })
-    account.frameId = frame.id
-    await saveAccount(account)
+    entry.frameId = frame.id
   }
-  fixture = { canvasId: account.canvasId, frameId: account.frameId, image: account.image, html, css }
+  return {
+    canvasId: entry.canvasId, frameId: entry.frameId, image: entry.image,
+    number, file, page, html, css, transferred: await exists(page),
+  }
+}
+
+async function openDesign(example) {
+  const target = doop + '/c/' + example.canvasId + '?frame=' + example.frameId
+  await loadEditor(target)
+}
+
+async function newExample() {
+  const entry = { number: fixture.number + 1 }
+  const next = await prepareFixture(entry)
+  await openDesign(next)
+  await saveAccount({ ...account, example: entry })
+  account.example = entry
+  fixture = next
+  select('design')
 }
 
 async function saveAccount(account) {
@@ -143,14 +167,16 @@ async function saveAccount(account) {
 }
 
 async function transfer() {
+  const { number, page } = fixture
   if (await exists(page)) {
+    fixture.transferred = true
     await openStudio()
     return
   }
   const canvas = await json('/api/canvases/' + fixture.canvasId)
   const frame = canvas.frames.find(item => item.id === fixture.frameId)
   if (!frame || frame.approval?.status !== 'ready_for_dev') {
-    throw new Error('Выбери фрейм в Doop и отметь его Ready for dev.')
+    throw new Error('Для переноса нужна отметка Ready for dev.')
   }
   // The test exporter accepts only the reviewed static fixture. It must never
   // turn arbitrary Doop HTML into executable Astro templates.
@@ -162,15 +188,18 @@ async function transfer() {
   const baseline = await readFile(path.join(lab, 'sample/forest.jpg'))
   if (!image.equals(baseline)) throw new Error('Фотография Doop отличается от тестового ресурса.')
   const css = fixture.css
+  const assets = number === 1 ? '' : '/examples/' + number
+  const publicDirectory = path.join(site, 'public' + assets)
   const source = frame.html
-    .replace('<style>\n' + css + '</style>', '<link rel="stylesheet" href="/screen.css">')
-    .replace(fixture.image, '/images/forest.jpg')
-  await mkdir(path.join(site, 'public/images'), { recursive: true })
-  await copyFile(path.join(lab, 'sample/hills.jpg'), path.join(site, 'public/images/hills.jpg'))
-  await writeFile(path.join(site, 'public/images/forest.jpg'), image)
-  await writeFile(path.join(site, 'public/screen.css'), css)
+    .replace('<style>\n' + css + '</style>', '<link rel="stylesheet" href="' + assets + '/screen.css">')
+    .replace(fixture.image, assets + '/images/forest.jpg')
+  await mkdir(path.join(publicDirectory, 'images'), { recursive: true })
+  await copyFile(path.join(lab, 'sample/hills.jpg'), path.join(publicDirectory, 'images/hills.jpg'))
+  await writeFile(path.join(publicDirectory, 'images/forest.jpg'), image)
+  await writeFile(path.join(publicDirectory, 'screen.css'), css)
   await writeFile(page + '.next', source)
   await rename(page + '.next', page)
+  fixture.transferred = true
   await openStudio()
 }
 
@@ -179,57 +208,58 @@ function trace(event, data) {
 }
 
 async function openStudio() {
+  const target = new URL('/studio', studio)
+  if (fixture.number !== 1) target.searchParams.set('file', 'src/pages/' + fixture.file)
+  await loadEditor(target.href)
   select('studio')
-  if (!studioView.webContents.getURL().startsWith(studio + '/studio')) {
-    await studioView.webContents.loadURL(studio + '/studio')
-    trace('studio-loaded', { bounds: studioView.getBounds(), url: studioView.webContents.getURL() })
-    setTimeout(async () => {
-      try {
-        const dom = await studioView.webContents.executeJavaScript('({title: document.title, length: document.body?.innerText.length, root: !!document.getElementById("root"), state: document.readyState, size: [innerWidth, innerHeight]})')
-        trace('studio-document', dom)
-      } catch (error) {
-        trace('studio-eval', error.message)
-      }
-    }, 1000).unref()
+}
+
+async function loadEditor(target) {
+  const contents = editorView.webContents
+  if (contents.getURL() === target) return
+  await contents.loadURL(target)
+  // Ask Chromium for a frame after navigation, including while the window
+  // has no keyboard focus. Nothing from the frame is stored.
+  try {
+    await Promise.race([contents.capturePage(), delay(1500, undefined, { ref: false })])
+    contents.invalidate()
+  } catch (error) {
+    trace('editor-paint', error.message)
   }
 }
 
 function layout() {
   const [width, height] = window.getContentSize()
-  for (const view of [designView, studioView]) view.setBounds({ x: 0, y: toolbarHeight, width, height: Math.max(0, height - toolbarHeight) })
+  editorView.setBounds({ x: 0, y: toolbarHeight, width, height: Math.max(0, height - toolbarHeight) })
 }
 
-function report(message = '', error = false) {
-  if (!window.isDestroyed()) window.webContents.send('state', { ready, active, message, error })
+function report(message, error = false) {
+  const status = fixture && active === 'design' && !fixture.transferred ? 'Отметь фрейм Ready for dev и нажми Stacki.' : ''
+  if (!window.isDestroyed()) window.webContents.send('state', {
+    ready, busy, active, message: message ?? status, error,
+    example: fixture?.number,
+  })
 }
 
 function showError(message) {
   ready = false
-  if (currentView) window.contentView.removeChildView(currentView)
-  currentView = undefined
+  editorView.setVisible(false)
   report(message, true)
 }
 
 function select(mode) {
   active = mode
-  const nextView = mode === 'design' ? designView : studioView
-  if (currentView !== nextView) {
-    if (currentView) window.contentView.removeChildView(currentView)
-    window.contentView.addChildView(nextView)
-    currentView = nextView
-    layout()
-  }
   report()
 }
 
 async function boot() {
   const doopData = path.join(support, 'Doop')
   await mkdir(doopData, { recursive: true, mode: 0o700 })
-  await mkdir(path.dirname(page), { recursive: true })
+  await mkdir(pagesDirectory, { recursive: true })
   const content = path.join(doopData, 'dist')
   if (!await exists(content)) await symlink(path.join(root, 'dist'), content, 'dir')
   await Promise.all([checkPort(48671), checkPort(48672)])
-  const account = await exists(credentialsPath)
+  account = await exists(credentialsPath)
     ? JSON.parse(await readFile(credentialsPath, 'utf8'))
     : { password: randomBytes(32).toString('base64url'), secret: randomBytes(32).toString('hex') }
   await saveAccount(account)
@@ -244,23 +274,29 @@ async function boot() {
     waitFor(doop + '/healthz', doopProcess, async response => (await response.json()).ok === true).then(() => prepareDesign(account)),
     waitFor(studio + '/studio/api/session', studioProcess, async response => (await response.json()).editing === 'source'),
   ])
-  await designView.webContents.loadURL(doop + '/c/' + fixture.canvasId + '?frame=' + fixture.frameId)
+  await openDesign(fixture)
   ready = true
   select('design')
 }
 
-function createView(origin) {
-  const view = new WebContentsView({ webPreferences: { partition: 'persist:doop-stacki-test', sandbox: true, contextIsolation: true, backgroundThrottling: false } })
-  if (origin === studio) {
-    view.setBackgroundColor('#e4efe9')
-    view.webContents.on('console-message', (_event, details) => {
-      if (details.level === 'error') trace('studio-console', details.message)
-    })
-    view.webContents.on('render-process-gone', (_event, details) => trace('studio-renderer', details))
-  }
+function createView() {
+  const view = new WebContentsView({
+    webPreferences: {
+      partition: 'persist:doop-stacki-test', sandbox: true, contextIsolation: true, backgroundThrottling: false,
+      preload: path.join(import.meta.dirname, 'studio-preload.cjs'),
+    },
+  })
+  view.setBackgroundColor('#e4efe9')
+  view.webContents.on('console-message', (_event, details) => {
+    if (details.level === 'error' && view.webContents.getURL().startsWith(studio + '/')) {
+      trace('studio-console', details.message)
+    }
+  })
+  view.webContents.on('render-process-gone', (_event, details) => trace('editor-renderer', details))
   view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   view.webContents.on('will-navigate', (event, url) => {
-    if (new URL(url).origin !== origin) event.preventDefault()
+    const allowed = active === 'studio' ? studio : doop
+    if (new URL(url).origin !== allowed) event.preventDefault()
   })
   return view
 }
@@ -273,32 +309,38 @@ async function createWindow() {
   })
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', event => event.preventDefault())
-  designView = createView(doop)
-  studioView = createView(studio)
+  editorView = createView()
+  window.contentView.addChildView(editorView)
   window.on('resize', layout)
-  window.on('closed', () => {
-    for (const view of [designView, studioView]) view.webContents.close()
-  })
+  window.on('closed', () => editorView.webContents.close())
   layout()
 
   ipcMain.handle('mode', async (event, mode) => {
-    if (event.sender !== window.webContents || !ready || transferring) return
-    if (mode === 'design') select(mode)
-    else if (mode === 'studio') {
-      transferring = true
-      report('Открываю Stacki…')
-      try {
-        await transfer()
-      } catch (error) {
+    if (event.sender !== window.webContents || !ready || busy) return
+    if (mode !== 'design' && mode !== 'studio' && mode !== 'new') return
+
+    busy = true
+    const loading = { design: 'Открываю Doop…', studio: 'Открываю Stacki…', new: 'Создаю чистый фрейм в Doop…' }
+    report(loading[mode])
+    let failure
+    try {
+      if (mode === 'new') {
+        await newExample()
+      } else if (mode === 'design') {
+        await openDesign(fixture)
         select('design')
-        report(error.message, true)
-      } finally {
-        transferring = false
+      } else {
+        await transfer()
       }
+    } catch (error) {
+      failure = error.message
+    } finally {
+      busy = false
+      report(failure, failure !== undefined)
     }
   })
 
-  window.webContents.on('did-finish-load', () => report(ready ? '' : 'Запускаю Doop и Stacki…'))
+  window.webContents.on('did-finish-load', () => report(ready ? undefined : 'Запускаю Doop и Stacki…'))
   await window.loadFile(path.join(import.meta.dirname, 'index.html'))
   if (process.argv.includes('--background-test')) window.showInactive()
   else window.show()

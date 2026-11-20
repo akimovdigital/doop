@@ -8,3 +8,6 @@ button:focus-visible { outline: 2px solid #24483b; outline-offset: 2px; }
 button:disabled { opacity: .55; cursor: default; }
 #status[data-error="true"] { color: #8c2020; }
 .version { margin-left: auto; color: #4b5e54; font-variant-numeric: tabular-nums; }
+[data-mode="new"] { flex: none; }
+#example { flex: none; color: #4b5e54; }
+#status { min-width: 0; }
