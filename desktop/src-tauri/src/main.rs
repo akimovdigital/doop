@@ -346,7 +346,7 @@ fn main() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_updater::Builder::new().build());
     #[cfg(target_os = "macos")]
-    let builder = builder.menu(build_menu).on_menu_event(|app, event| {
+    let builder = builder.on_menu_event(|app, event| {
         if event.id() == CLOSE_TAB {
             let _ = app.emit(CLOSE_TAB, ());
         } else if event.id() == updates::menu::MENU_ID {
@@ -376,6 +376,9 @@ fn main() {
             let _ = (window, event);
         })
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            app.set_menu(build_menu(app.handle())?)?;
+
             // macOS registers doop:// from the bundle's Info.plist, so it
             // only works installed; Windows and Linux can register at
             // runtime, which also makes `tauri dev` receive links.
