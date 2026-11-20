@@ -532,7 +532,8 @@ fn main() {
             #[cfg(target_os = "macos")]
             let builder = builder
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
-                .hidden_title(true);
+                .hidden_title(true)
+                .maximized(app.config().identifier == "digital.akimov.doop-test");
             // Exercise a cold test login without replacing the user's stored WebKit session.
             #[cfg(all(target_os = "macos", not(chromium)))]
             let builder = if test_login && std::env::args_os().any(|arg| arg == "--fresh-test-session") {
