@@ -1,0 +1,8 @@
+node_modules/
+vendor/
+site/.astro/
+site/.stacki/
+site/dist/
+site/src/pages/index.astro
+site/public/images/
+site/public/screen.css
