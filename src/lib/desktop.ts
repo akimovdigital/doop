@@ -19,6 +19,8 @@ import {
   rememberPendingSignIn,
 } from './desktopAuth'
 import { isDesktopShell } from './shell'
+import { useStore } from './store'
+import { api } from './api'
 import { codexSetupTarget } from './codexConnection'
 import { forgetPendingConnect, isPendingConnect, parseDesktopConnectLink } from './desktopConnect'
 import { safeRelativeTarget } from './safeTarget'
@@ -26,10 +28,13 @@ import { NO_CANVAS, isViewCommand, runViewCommand, syncViewMenu } from './viewMe
 import { initAppMenu } from './appMenu'
 import { type Chord, matchesChord } from './actions/chords'
 
-export type CanvasTab = { id: string; name: string; pinned?: boolean; pageId?: string }
+export type CanvasTab = { id: string; name: string; pinned?: boolean; pageId?: string; group?: string }
 
 type ShellWindow = Window & {
+  __DOOP_TAB_WINDOWS__?: boolean
+  __DOOP_DETACHED_WINDOW__?: boolean
   __TAURI__?: {
+    core?: { invoke?: (command: string, args: Record<string, unknown>) => Promise<void> }
     opener?: { openUrl?: (url: string) => Promise<void> }
     event?: { listen?: <T>(name: string, handler: (event: { payload: T }) => void) => Promise<() => void> }
     deepLink?: { getCurrent?: () => Promise<string[] | null> }
@@ -48,13 +53,17 @@ const shellWindow = window as ShellWindow
 
 let userId: string | null = null
 
+function tabStorage() {
+  return shellWindow.__DOOP_DETACHED_WINDOW__ ? sessionStorage : localStorage
+}
+
 function storageKey(id: string) {
   return `doop-open-tabs:${id}`
 }
 
 function load(id: string): CanvasTab[] {
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(storageKey(id)) ?? '[]')
+    const parsed: unknown = JSON.parse(tabStorage().getItem(storageKey(id)) ?? '[]')
     if (!Array.isArray(parsed)) return []
     const seen = new Set<string>()
     const tabs: CanvasTab[] = []
@@ -66,6 +75,7 @@ function load(id: string): CanvasTab[] {
         name: typeof tab.name === 'string' ? tab.name : 'Untitled canvas',
         ...(tab.pinned === true && { pinned: true }),
         ...(typeof tab.pageId === 'string' && tab.pageId && { pageId: tab.pageId }),
+        ...(tab.pinned !== true && typeof tab.group === 'string' && tab.group.trim() && { group: tab.group.trim() }),
       })
     }
     return tabs
@@ -74,14 +84,35 @@ function load(id: string): CanvasTab[] {
   }
 }
 
-export const useTabs = create<{ tabs: CanvasTab[] }>(() => ({ tabs: [] }))
+export const useTabs = create<{ tabs: CanvasTab[]; split: [string, string] | null }>(() => ({
+  tabs: [],
+  split: null,
+}))
 
 function setTabs(tabs: CanvasTab[]) {
-  const ordered = [...tabs.filter((tab) => tab.pinned), ...tabs.filter((tab) => !tab.pinned)]
-  useTabs.setState({ tabs: ordered })
+  const buckets = new Map<string, CanvasTab[]>()
+  for (const tab of tabs) {
+    if (!tab.group) continue
+    const members = buckets.get(tab.group) ?? []
+    members.push(tab)
+    buckets.set(tab.group, members)
+  }
+  const ordered = tabs.filter((tab) => tab.pinned)
+  for (const tab of tabs) {
+    if (tab.pinned) continue
+    if (!tab.group) ordered.push(tab)
+    else if (buckets.has(tab.group)) {
+      ordered.push(...buckets.get(tab.group)!)
+      buckets.delete(tab.group)
+    }
+  }
+  useTabs.setState(({ split }) => ({
+    tabs: ordered,
+    split: split?.every((id) => ordered.some((tab) => tab.id === id)) ? split : null,
+  }))
   if (!userId) return
   try {
-    localStorage.setItem(storageKey(userId), JSON.stringify(ordered))
+    tabStorage().setItem(storageKey(userId), JSON.stringify(ordered))
   } catch {
     /* blocked storage only means tabs don't survive a relaunch */
   }
@@ -94,6 +125,7 @@ export function setTabsUser(id: string | null) {
   if (!isDesktopShell() || id === userId) return
   const pending = userId === null ? useTabs.getState().tabs : []
   userId = id
+  useTabs.setState({ split: null })
   if (!id) {
     useTabs.setState({ tabs: [] })
     return
@@ -118,7 +150,53 @@ export function setCanvasTabPinned(id: string, pinned: boolean) {
   const { tabs } = useTabs.getState()
   const tab = tabs.find((item) => item.id === id)
   if (!tab || Boolean(tab.pinned) === pinned) return
-  setTabs(tabs.map((item) => (item.id === id ? { ...item, pinned: pinned || undefined } : item)))
+  setTabs(tabs.map((item) => (item.id === id ? { ...item, pinned: pinned || undefined, group: undefined } : item)))
+}
+
+export function groupCanvasTab(id: string, group?: string) {
+  const { tabs } = useTabs.getState()
+  setTabs(tabs.map((tab) => (tab.id === id ? { ...tab, group, pinned: undefined } : tab)))
+}
+
+export function renameCanvasTabGroup(previous: string, group: string) {
+  const { tabs } = useTabs.getState()
+  setTabs(tabs.map((tab) => (tab.group === previous ? { ...tab, group } : tab)))
+}
+
+export async function renameCanvasTab(id: string, name: string) {
+  await api.renameCanvas(id, name)
+  const { tabs } = useTabs.getState()
+  // A rename response may arrive after the tab was closed or the account changed.
+  if (tabs.some((tab) => tab.id === id)) ensureTab(id, name)
+  const canvas = useStore.getState().canvas
+  if (canvas?.id === id && canvas.name !== name) useStore.getState().renameCanvasLocal(name)
+}
+
+export function supportsCanvasWindows() {
+  return shellWindow.__DOOP_TAB_WINDOWS__ === true && typeof shellWindow.__TAURI__?.core?.invoke === 'function'
+}
+
+export async function moveCanvasTabToWindow(tab: CanvasTab) {
+  if (!supportsCanvasWindows()) return
+  await shellWindow.__TAURI__!.core!.invoke!('open_canvas_window', { id: tab.id, page: tab.pageId })
+  closeTab(tab.id, location.pathname)
+}
+
+/** A second editor gets its own document and canvas store. */
+export function openCanvasSplit(first: CanvasTab, second: CanvasTab) {
+  if (first.id === second.id) return
+  useTabs.setState({ split: [first.id, second.id] })
+  if (location.pathname !== `/c/${first.id}`) navigate(canvasTabTarget(first))
+}
+
+export function closeCanvasSplit() {
+  useTabs.setState({ split: null })
+}
+
+export const COPY_TAB_LINK_SHORTCUT: Chord = { code: 'KeyL', mod: true }
+
+export function copyCanvasTabLink(tab: CanvasTab) {
+  return navigator.clipboard.writeText(new URL(canvasTabTarget(tab), location.origin).href)
 }
 
 /** The current canvas page survives a visit to Home or another canvas. */
@@ -394,7 +472,16 @@ export function initDesktopShell() {
   document.addEventListener(
     'keydown',
     (e) => {
-      const target = shellShortcutTarget(e, useTabs.getState().tabs)
+      const { tabs } = useTabs.getState()
+      if (matchesChord(e, COPY_TAB_LINK_SHORTCUT)) {
+        const current = tabs.find((tab) => location.pathname === `/c/${tab.id}`)
+        if (current) {
+          e.preventDefault()
+          void copyCanvasTabLink(current).catch(console.error)
+          return
+        }
+      }
+      const target = shellShortcutTarget(e, tabs)
       if (target === null) return
       e.preventDefault()
       if (target.split('?')[0] !== location.pathname) navigate(target)

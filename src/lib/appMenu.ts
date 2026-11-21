@@ -177,6 +177,7 @@ function invoke(command: string, args: Record<string, unknown>) {
 export function syncAppMenu() {
   if (syncTimer) clearTimeout(syncTimer)
   syncTimer = null
+  if (!document.hasFocus()) return
   const items = nativeStates().filter(([id, enabled, checked]) => {
     const state = `${enabled}:${checked}`
     if (shown.get(id) === state) return false
@@ -207,7 +208,12 @@ export function initAppMenu() {
   onActionHostChange(scheduleSync)
   useStore.subscribe(scheduleSync)
   /* what Paste can take changes outside the store */
-  for (const event of ['copy', 'cut', 'focus'] as const) window.addEventListener(event, scheduleSync)
+  for (const event of ['copy', 'cut'] as const) window.addEventListener(event, scheduleSync)
+  // Another Doop window may have replaced the shared menu's state.
+  window.addEventListener('focus', () => {
+    shown.clear()
+    scheduleSync()
+  })
   bridge.__TAURI__?.event
     ?.listen?.<{ id?: unknown; key?: unknown }>('app-menu', ({ payload }) => {
       if (typeof payload?.id === 'string') runNativeItem(payload.id, payload.key === true)

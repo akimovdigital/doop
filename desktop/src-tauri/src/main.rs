@@ -62,9 +62,9 @@ mod webkit_migration;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{atomic::{AtomicUsize, Ordering}, Mutex};
 use tauri::webview::{DownloadEvent, PageLoadEvent};
-use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -75,10 +75,12 @@ type ShellRuntime = tauri::Wry;
 #[cfg(chromium)]
 type ShellRuntime = tauri::DynRuntime;
 
-/// Bring the (only) window forward: after a doop:// link, or when a second
+/// Bring the main window forward: after a doop:// link, or when a second
 /// instance was launched to deliver one.
 fn focus_main_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
+    if let Some(window) = app.get_webview_window("main")
+        .or_else(|| app.webview_windows().into_values().next())
+    {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
@@ -101,8 +103,7 @@ fn base_url() -> String {
 }
 
 /// Where the traffic lights sit: on the tab strip's content line. The strip
-/// is 40px and tab content centres 21px from the top (DesktopTabs.tsx keeps
-/// its buttons and labels on that line); the ~14px buttons start at 21 - 7.
+/// is 38px, with room for the controls on the left of the web app's tabs.
 #[cfg(target_os = "macos")]
 const TRAFFIC_LIGHTS: (f64, f64) = (13.0, 21.0);
 
@@ -113,6 +114,7 @@ const TRAFFIC_LIGHTS: (f64, f64) = (13.0, 21.0);
 fn place_traffic_lights(ns_window_ptr: *mut std::ffi::c_void) {
     use objc2_app_kit::{NSWindow, NSWindowButton};
 
+    debug_assert!(objc2::MainThreadMarker::new().is_some());
     // SAFETY: Tauri hands out a live NSWindow pointer, and window events are
     // delivered on the main thread — the only place AppKit may be touched.
     unsafe {
@@ -306,6 +308,187 @@ fn chromium_profile_dir() -> Option<PathBuf> {
     )
 }
 
+/// New windows use the same server, navigation rules and cookie store as the
+/// main window. The renderer can request a canvas ID and optional page only.
+fn canvas_window_url(origin: &str, id: &str, page: Option<&str>) -> Result<Url, String> {
+    if id.is_empty()
+        || id.len() > 128
+        || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+    {
+        return Err("Invalid canvas ID.".into());
+    }
+    let mut url = Url::parse(origin).map_err(|error| error.to_string())?;
+    url.set_path(&format!("/c/{id}"));
+    if let Some(page) = page.filter(|page| !page.is_empty()) {
+        url.query_pairs_mut().append_pair("page", page);
+    }
+    Ok(url)
+}
+
+#[tauri::command]
+async fn open_canvas_window(app: AppHandle, id: String, page: Option<String>) -> Result<(), String> {
+    static NEXT_WINDOW: AtomicUsize = AtomicUsize::new(1);
+    let url = canvas_window_url(server::active(&app), &id, page.as_deref())?;
+    let label = format!("canvas-{}", NEXT_WINDOW.fetch_add(1, Ordering::Relaxed));
+    #[cfg(all(target_os = "macos", not(chromium)))]
+    let incognito = local_test_login::enabled(&app)
+        && std::env::args_os().any(|arg| arg == "--fresh-test-session");
+    #[cfg(not(all(target_os = "macos", not(chromium))))]
+    let incognito = false;
+    build_canvas_window(&app, &label, url, false, incognito).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn focused_shell_window(app: &AppHandle) -> Option<WebviewWindow<ShellRuntime>> {
+    app.webview_windows()
+        .into_values()
+        .find(|window| window.is_focused().unwrap_or(false))
+}
+
+fn build_canvas_window(
+    app: &AppHandle,
+    label: &str,
+    first_url: Url,
+    migrating: bool,
+    incognito: bool,
+) -> tauri::Result<WebviewWindow<ShellRuntime>> {
+    let label_is_main = label == "main";
+    let handle = app.clone();
+    // Hosts that stay inside the shell; any other http(s) target opens
+    // in the system browser. Hostless web schemes (about:, blob:) stay
+    // in — sandboxed frame content depends on them — but mailto: and
+    // tel: are hostless too and WKWebView drops them silently, so they
+    // go to the system handler (Mail) instead.
+    let app_hosts = server::app_hosts(server::active(app));
+    // Marks every page loaded in the shell so the app can tell desktop
+    // sessions from browser ones (src/lib/shell.ts) and render the
+    // tab strip. Declare the overlay directly because custom builds
+    // can have a release series independent of the upstream shell.
+    let desktop_marker = format!(
+        "window.__DOOP_DESKTOP__ = '{}'; window.__DOOP_DESKTOP_PLATFORM__ = '{}'; window.__DOOP_DESKTOP_TRAFFIC_LIGHTS__ = {}; window.__DOOP_CLAUDE_CLI__ = true; window.__DOOP_CLAUDE_INSTALL__ = true; window.__DOOP_CLAUDE_CHOOSE__ = true; window.__DOOP_CLAUDE_EXTENSION__ = {}; window.__DOOP_CODEX_SETUP__ = true; window.__DOOP_VIEW_MENU__ = true; window.__DOOP_APP_MENU__ = {}; window.__DOOP_LOCAL_FONTS__ = true; window.__DOOP_UPDATE_CARD__ = true; window.__DOOP_SERVER_CHOOSE__ = true; window.__DOOP_TAB_WINDOWS__ = true; window.__DOOP_DETACHED_WINDOW__ = {};",
+        app.package_info().version,
+        std::env::consts::OS,
+        cfg!(target_os = "macos"),
+        cfg!(any(target_os = "macos", target_os = "windows")),
+        // only macOS has a menu bar for the page to build (app_menu.rs)
+        cfg!(target_os = "macos"),
+        !label_is_main
+    );
+    // macOS never reports the saved path on `Finished`, so remember
+    // the destinations chosen on `Requested`, keyed by URL. The same
+    // URL can be in flight more than once (double-clicking Download),
+    // so each key holds a queue: wry gives every request its own
+    // deduplicated filename and completions arrive in request order.
+    let download_handle = app.clone();
+    let downloads: Mutex<HashMap<String, VecDeque<PathBuf>>> =
+        Mutex::new(HashMap::new());
+    let builder =
+        WebviewWindowBuilder::new(app, label, WebviewUrl::External(first_url))
+            .initialization_script(&desktop_marker)
+            .on_download(move |_webview, event| {
+                match event {
+                    DownloadEvent::Requested { url, destination } => {
+                        let mut picker = rfd::FileDialog::new().set_title("Save export");
+                        // wry suggests ~/Downloads/<name>, CEF the bare
+                        // name; both panels open in Downloads.
+                        let dir = destination
+                            .parent()
+                            .filter(|dir| !dir.as_os_str().is_empty())
+                            .map(PathBuf::from)
+                            .or_else(|| download_handle.path().download_dir().ok());
+                        if let Some(dir) = dir {
+                            picker = picker.set_directory(dir);
+                        }
+                        if let Some(name) = destination.file_name().and_then(|n| n.to_str()) {
+                            picker = picker.set_file_name(name);
+                        }
+                        if let Some(ext) = destination.extension().and_then(|e| e.to_str()) {
+                            picker = picker.add_filter(ext.to_uppercase(), &[ext]);
+                        }
+                        // Cancelling the panel cancels the download.
+                        let Some(chosen) = picker.save_file() else {
+                            return false;
+                        };
+                        *destination = chosen;
+                        if let Ok(mut map) = downloads.lock() {
+                            map.entry(url.to_string())
+                                .or_default()
+                                .push_back(destination.clone());
+                        }
+                    }
+                    DownloadEvent::Finished { url, path, success } => {
+                        let remembered = downloads.lock().ok().and_then(|mut map| {
+                            let queue = map.get_mut(url.as_str())?;
+                            let front = queue.pop_front();
+                            if queue.is_empty() {
+                                map.remove(url.as_str());
+                            }
+                            front
+                        });
+                        if success {
+                            if let Some(saved) = path.or(remembered) {
+                                let _ = download_handle.opener().reveal_item_in_dir(saved);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                true
+            })
+            .on_page_load(move |window, payload| {
+                if label_is_main && payload.event() == PageLoadEvent::Started {
+                    updates::page_loading(window.app_handle());
+                }
+                #[cfg(all(chromium, target_os = "macos"))]
+                if migrating {
+                    let on_landing = payload.url().path() == webkit_migration::LANDING_PATH;
+                    match payload.event() {
+                        PageLoadEvent::Finished if on_landing => webkit_migration::landed(window),
+                        PageLoadEvent::Started if !on_landing => {
+                            let _ = window.show();
+                        }
+                        _ => {}
+                    }
+                }
+            })
+            .title("doop")
+            .visible(!migrating)
+            .inner_size(if label_is_main { 1440.0 } else { 1100.0 }, if label_is_main { 900.0 } else { 760.0 })
+            .min_inner_size(900.0, 600.0)
+            .on_navigation(move |url| {
+                let in_app = match (url.scheme(), url.host_str()) {
+                    ("mailto" | "tel", _) => false,
+                    (_, Some(host)) => app_hosts.iter().any(|h| h == host),
+                    (_, None) => true,
+                };
+                if !in_app {
+                    let _ = handle.opener().open_url(url.as_str(), None::<String>);
+                }
+                in_app
+            });
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .maximized(label_is_main && app.config().identifier == "digital.akimov.doop-test");
+    #[cfg(not(chromium))]
+    let builder = builder.incognito(incognito);
+    #[cfg(chromium)]
+    let _ = incognito;
+    let window = builder.build()?;
+    #[cfg(target_os = "macos")]
+    {
+        let window_to_position = window.clone();
+        window.run_on_main_thread(move || {
+            if let Ok(ns_window) = window_to_position.ns_window() {
+                place_traffic_lights(ns_window);
+            }
+        })?;
+    }
+    Ok(window)
+}
+
 // CEF starts its renderer, GPU and utility processes from this same binary;
 // the entry point hands those to Chromium before any of main() runs.
 #[cfg_attr(chromium, tauri_runtime_cef::cef_entry_point)]
@@ -339,7 +522,8 @@ fn main() {
             app_menu::app_menu_set,
             app_menu::app_menu_state,
             updates::update_card_ready,
-            updates::update_restart
+            updates::update_restart,
+            open_canvas_window
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             focus_main_window(app)
@@ -350,7 +534,9 @@ fn main() {
     #[cfg(target_os = "macos")]
     let builder = builder.on_menu_event(|app, event| {
         if event.id() == CLOSE_TAB {
-            let _ = app.emit(CLOSE_TAB, ());
+            if let Some(window) = focused_shell_window(app) {
+                let _ = app.emit_to(window.label(), CLOSE_TAB, ());
+            }
         } else if event.id() == updates::menu::MENU_ID {
             updates::menu::check(app);
         } else if event.id() == server::menu::MENU_ID {
@@ -393,7 +579,6 @@ fn main() {
             updates::start(app.handle());
             server::grant(app.handle())?;
 
-            let handle = app.handle().clone();
             let entry = format!("{}/auth", server::active(app.handle()));
             // The first Chromium launch after the WebKit app opens hidden on
             // the app's origin and brings the WebKit storage over before the
@@ -418,139 +603,17 @@ fn main() {
             let test_login = local_test_login::enabled(app.handle());
             #[cfg(all(target_os = "macos", not(chromium)))]
             let first_url = if test_login { "about:blank".parse()? } else { first_url };
-            // Hosts that stay inside the shell; any other http(s) target opens
-            // in the system browser. Hostless web schemes (about:, blob:) stay
-            // in — sandboxed frame content depends on them — but mailto: and
-            // tel: are hostless too and WKWebView drops them silently, so they
-            // go to the system handler (Mail) instead.
-            let app_hosts = server::app_hosts(server::active(app.handle()));
-            // Marks every page loaded in the shell so the app can tell desktop
-            // sessions from browser ones (src/lib/shell.ts) and render the
-            // tab strip. Declare the overlay directly because custom builds
-            // can have a release series independent of the upstream shell.
-            let desktop_marker = format!(
-                "window.__DOOP_DESKTOP__ = '{}'; window.__DOOP_DESKTOP_PLATFORM__ = '{}'; window.__DOOP_DESKTOP_TRAFFIC_LIGHTS__ = {}; window.__DOOP_CLAUDE_CLI__ = true; window.__DOOP_CLAUDE_INSTALL__ = true; window.__DOOP_CLAUDE_CHOOSE__ = true; window.__DOOP_CLAUDE_EXTENSION__ = {}; window.__DOOP_CODEX_SETUP__ = true; window.__DOOP_VIEW_MENU__ = true; window.__DOOP_APP_MENU__ = {}; window.__DOOP_LOCAL_FONTS__ = true; window.__DOOP_UPDATE_CARD__ = true; window.__DOOP_SERVER_CHOOSE__ = true;",
-                app.package_info().version,
-                std::env::consts::OS,
-                cfg!(target_os = "macos"),
-                cfg!(any(target_os = "macos", target_os = "windows")),
-                // only macOS has a menu bar for the page to build (app_menu.rs)
-                cfg!(target_os = "macos")
-            );
-            // macOS never reports the saved path on `Finished`, so remember
-            // the destinations chosen on `Requested`, keyed by URL. The same
-            // URL can be in flight more than once (double-clicking Download),
-            // so each key holds a queue: wry gives every request its own
-            // deduplicated filename and completions arrive in request order.
-            let download_handle = app.handle().clone();
-            let downloads: Mutex<HashMap<String, VecDeque<PathBuf>>> =
-                Mutex::new(HashMap::new());
-            let builder =
-                WebviewWindowBuilder::new(app, "main", WebviewUrl::External(first_url))
-                    .initialization_script(&desktop_marker)
-                    .on_download(move |_webview, event| {
-                        match event {
-                            DownloadEvent::Requested { url, destination } => {
-                                let mut picker = rfd::FileDialog::new().set_title("Save export");
-                                // wry suggests ~/Downloads/<name>, CEF the bare
-                                // name; both panels open in Downloads.
-                                let dir = destination
-                                    .parent()
-                                    .filter(|dir| !dir.as_os_str().is_empty())
-                                    .map(PathBuf::from)
-                                    .or_else(|| download_handle.path().download_dir().ok());
-                                if let Some(dir) = dir {
-                                    picker = picker.set_directory(dir);
-                                }
-                                if let Some(name) = destination.file_name().and_then(|n| n.to_str()) {
-                                    picker = picker.set_file_name(name);
-                                }
-                                if let Some(ext) = destination.extension().and_then(|e| e.to_str()) {
-                                    picker = picker.add_filter(ext.to_uppercase(), &[ext]);
-                                }
-                                // Cancelling the panel cancels the download.
-                                let Some(chosen) = picker.save_file() else {
-                                    return false;
-                                };
-                                *destination = chosen;
-                                if let Ok(mut map) = downloads.lock() {
-                                    map.entry(url.to_string())
-                                        .or_default()
-                                        .push_back(destination.clone());
-                                }
-                            }
-                            DownloadEvent::Finished { url, path, success } => {
-                                let remembered = downloads.lock().ok().and_then(|mut map| {
-                                    let queue = map.get_mut(url.as_str())?;
-                                    let front = queue.pop_front();
-                                    if queue.is_empty() {
-                                        map.remove(url.as_str());
-                                    }
-                                    front
-                                });
-                                if success {
-                                    if let Some(saved) = path.or(remembered) {
-                                        let _ = download_handle.opener().reveal_item_in_dir(saved);
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                        true
-                    })
-                    .on_page_load(move |window, payload| {
-                        if payload.event() == PageLoadEvent::Started {
-                            updates::page_loading(window.app_handle());
-                        }
-                        #[cfg(all(chromium, target_os = "macos"))]
-                        if migrating {
-                            let on_landing = payload.url().path() == webkit_migration::LANDING_PATH;
-                            match payload.event() {
-                                PageLoadEvent::Finished if on_landing => webkit_migration::landed(window),
-                                PageLoadEvent::Started if !on_landing => {
-                                    let _ = window.show();
-                                }
-                                _ => {}
-                            }
-                        }
-                    })
-                    .title("doop")
-                    .visible(!migrating)
-                    .inner_size(1440.0, 900.0)
-                    .min_inner_size(900.0, 600.0)
-                    .on_navigation(move |url| {
-                        let in_app = match (url.scheme(), url.host_str()) {
-                            ("mailto" | "tel", _) => false,
-                            (_, Some(host)) => app_hosts.iter().any(|h| h == host),
-                            (_, None) => true,
-                        };
-                        if !in_app {
-                            let _ = handle.opener().open_url(url.as_str(), None::<String>);
-                        }
-                        in_app
-                    });
-            #[cfg(target_os = "macos")]
-            let builder = builder
-                .title_bar_style(tauri::TitleBarStyle::Overlay)
-                .hidden_title(true)
-                .maximized(app.config().identifier == "digital.akimov.doop-test");
             // Exercise a cold test login without replacing the user's stored WebKit session.
             #[cfg(all(target_os = "macos", not(chromium)))]
-            let builder = if test_login && std::env::args_os().any(|arg| arg == "--fresh-test-session") {
-                builder.incognito(true)
-            } else {
-                builder
-            };
-            let _webview_window = builder.build()?;
+            let incognito = test_login && std::env::args_os().any(|arg| arg == "--fresh-test-session");
+            #[cfg(not(all(target_os = "macos", not(chromium))))]
+            let incognito = false;
+            let _webview_window = build_canvas_window(app.handle(), "main", first_url, migrating, incognito)?;
             #[cfg(all(target_os = "macos", not(chromium)))]
             if test_login {
                 local_test_login::start(_webview_window.clone());
             }
             server::check_on_launch(app.handle(), entry.parse()?);
-            #[cfg(target_os = "macos")]
-            if let Ok(ns_window) = _webview_window.ns_window() {
-                place_traffic_lights(ns_window);
-            }
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -561,4 +624,27 @@ fn main() {
                 updates::install_on_quit(app);
             }
         });
+}
+
+#[cfg(test)]
+mod canvas_window_tests {
+    use super::canvas_window_url;
+
+    #[test]
+    fn keeps_the_canvas_and_page_on_the_configured_server() {
+        let url = canvas_window_url("http://127.0.0.1:4437", "test_Canvas-01", Some("page:one&name=two"))
+            .expect("valid canvas");
+        assert_eq!(url.origin().ascii_serialization(), "http://127.0.0.1:4437");
+        assert_eq!(url.path(), "/c/test_Canvas-01");
+        assert_eq!(url.query_pairs().into_owned().collect::<Vec<_>>(), [
+            (String::from("page"), String::from("page:one&name=two"))
+        ]);
+    }
+
+    #[test]
+    fn rejects_paths_in_place_of_canvas_ids() {
+        for id in ["", "../auth", "//example.org", "abc?foo=bar", "a%2Fb"] {
+            assert!(canvas_window_url("https://doop.design", id, None).is_err());
+        }
+    }
 }

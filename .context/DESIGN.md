@@ -96,9 +96,14 @@ White system (Doop UI v2, canvas guideline `doop-ui-system`): neutral greys, no 
 - Section backgrounds are solid by default. Light uses fill `#ebedf2` and stroke `#c3c9d3`. Dark uses fill `#30343c` and stroke `#535b69`. The theme defaults use 100% fill, a 1 px inside stroke and 8 px corner rounding. The panel exposes distinct paint controls, including each paint's opacity and the stroke's placement. A clear hex field removes that paint.
 - A region sits behind its frames and behind smaller contained sections. The name chip stays in screen space above the region and uses the canvas label size. Selection uses the accent outline and four screen-size handles. At 5% zoom or less, a selected section keeps its name visible over quiet frame previews. A frame keeps its own hit target over a section's background. The Section inspector uses the 244 px property-panel surface and existing Doop fields, with a sheet on mobile.
 - The inspector edits the name, position, dimensions, aspect ratio and corner radius. Position edits move contained objects. Resize and fit update the bounds. The frame context menu can wrap a selection in a new section. The section menu can link to the section or remove its boundary. `CanvasSections.tsx`, `SectionInspector.tsx`, and `shared/sections.ts` own the presentation and rules.
-- The desktop tab strip is 38 CSS px tall, with a space for the macOS window controls. Home keeps
-  canvas tabs open. Pinned tabs use a 30px icon slot, show their titles on hover and keep Doop’s
-  surface, selected and focus treatments. See `DesktopTabs.tsx` and `App.tsx`.
+- The desktop tab strip is 38 CSS px tall with a 76 px inset for macOS window controls. Rectangular
+  tabs fill the strip and share dividers on the paper-deep surface. A selected tab uses the surface
+  colour, brand icon and a centered 36 × 2 px rounded brand underline. The pinned slot is 37 px wide
+  and uses a shorter 16 px underline. The original canvas name remains available as a tooltip.
+- The tab context menu uses Doop's surface and border tokens, 12 px corners and the existing menu
+  focus and collision behavior. It groups canvas commands, window actions and tab closing. Rename
+  edits the tab label inline. Named groups keep related tabs together and persist per account. The
+  split view places two labelled canvas editors side by side. See `DesktopTabs.tsx` and `App.tsx`.
 
 ## Component catalogue (Storybook)
 

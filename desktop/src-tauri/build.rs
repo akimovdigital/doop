@@ -29,6 +29,7 @@ fn main() {
             "app_menu_state",
             "update_card_ready",
             "update_restart",
+            "open_canvas_window",
         ]));
     let attributes = if chromium {
         // tauri-build watches only its default capabilities path, so a

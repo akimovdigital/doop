@@ -194,15 +194,12 @@ pub fn app_menu_state(app: AppHandle, items: Vec<ItemState>) {
 
 /// Relays one of the page's items to it; any other menu id is ignored.
 pub fn relay(app: &AppHandle, id: &str) {
-    if let Some(id) = id.strip_prefix(PREFIX) {
-        let _ = app.emit(
-            EVENT,
-            Picked {
-                id,
-                key: fired_by_key(),
-            },
-        );
+    #[cfg(target_os = "macos")]
+    if let (Some(id), Some(window)) = (id.strip_prefix(PREFIX), crate::focused_shell_window(app)) {
+        let _ = app.emit_to(window.label(), EVENT, Picked { id, key: fired_by_key() });
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, id);
 }
 
 /// Whether the event AppKit is handling is a key press: a key equivalent

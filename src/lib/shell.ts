@@ -16,7 +16,7 @@ type ShellGlobals = {
 const shell = globalThis as ShellGlobals
 
 export function isDesktopShell(): boolean {
-  return typeof shell.__DOOP_DESKTOP__ === 'string'
+  return typeof shell.__DOOP_DESKTOP__ === 'string' && (typeof window === 'undefined' || window === window.top)
 }
 
 /** The shell's version string, null outside the shell. */

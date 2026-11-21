@@ -29,8 +29,8 @@ import { useMe } from './lib/me'
 import { adminApi } from './lib/api'
 import { Button } from './components/ui/button'
 import { AuthScreen } from './components/ui/screen'
-import { DesktopTabs, ShellDragBar } from './components/DesktopTabs'
-import { setTabsUser } from './lib/desktop'
+import { DesktopSplit, DesktopTabs, ShellDragBar } from './components/DesktopTabs'
+import { setTabsUser, useTabs } from './lib/desktop'
 import { isDesktopShell } from './lib/shell'
 import { SIGNUP_PARAM, parseSignupMethod } from '../shared/firstCanvas'
 import { useT } from './lib/i18n'
@@ -53,6 +53,12 @@ function reportProviderSignup() {
 export function App() {
   const [route, setRoute] = useState(location.pathname + location.search)
   const path = route.split('?')[0]!
+  const firstSplit = useTabs((s) =>
+    s.split && path === `/c/${s.split[0]}` ? s.tabs.find((tab) => tab.id === s.split?.[0]) : undefined,
+  )
+  const secondSplit = useTabs((s) =>
+    firstSplit && s.split ? s.tabs.find((tab) => tab.id === s.split?.[1]) : undefined,
+  )
   const { data: session, isPending } = authClient.useSession()
   /* a signed-out guest on a share link asked for the sign-in form */
   const [guestAuth, setGuestAuth] = useState<'signin' | 'signup' | null>(null)
@@ -128,7 +134,7 @@ export function App() {
 
   const localAgentUser = !isPending && me && !me.impersonating ? session?.user.id : undefined
   useEffect(() => {
-    if (localAgentUser) return startLocalAgent(localAgentUser)
+    if (localAgentUser && window === window.top) return startLocalAgent(localAgentUser)
   }, [localAgentUser])
 
   if (isPending)
@@ -249,11 +255,12 @@ export function App() {
     <>
       <DesktopTabs path={path} />
       <div
+        id={canvasId ? 'desktop-canvas-content' : undefined}
         role={canvasId ? 'tabpanel' : undefined}
         aria-labelledby={canvasId ? `desktop-canvas-tab-${canvasId}` : undefined}
         className="h-dvh overflow-auto pt-[38px] [--app-inset:38px]"
       >
-        {page}
+        {firstSplit && secondSplit ? <DesktopSplit tabs={[firstSplit, secondSplit]} /> : page}
       </div>
     </>
   ) : (

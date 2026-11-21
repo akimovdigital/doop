@@ -65,4 +65,40 @@ function ContextMenuSeparator({ className, ...props }: React.ComponentProps<type
   )
 }
 
-export { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator }
+const ContextMenuSub = ContextMenuPrimitive.Sub
+
+function ContextMenuSubTrigger({ className, ...props }: React.ComponentProps<typeof ContextMenuPrimitive.SubTrigger>) {
+  return (
+    <ContextMenuPrimitive.SubTrigger
+      className={cn(
+        menuItemVariants(),
+        'cursor-pointer outline-none data-[highlighted]:bg-sub data-[state=open]:bg-sub',
+        className,
+      )}
+      {...props}
+    />
+  )
+}
+
+function ContextMenuSubContent({ className, ...props }: React.ComponentProps<typeof ContextMenuPrimitive.SubContent>) {
+  return (
+    <ContextMenuPrimitive.Portal>
+      <ContextMenuPrimitive.SubContent
+        collisionPadding={8}
+        className={cn('z-[850] min-w-[162px] rounded-[12px] bg-surface p-1.5 shadow-pop', className)}
+        {...props}
+      />
+    </ContextMenuPrimitive.Portal>
+  )
+}
+
+export {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
+  ContextMenuSubContent,
+}

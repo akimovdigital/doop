@@ -101,9 +101,12 @@ pub fn submenu(app: &AppHandle) -> tauri::Result<Submenu<ShellRuntime>> {
 
 /// Relays a View item to the page; any other menu id is ignored.
 pub fn relay(app: &AppHandle, id: &str) {
-    if let Some(command) = id.strip_prefix(PREFIX) {
-        let _ = app.emit(EVENT, command);
+    #[cfg(target_os = "macos")]
+    if let (Some(command), Some(window)) = (id.strip_prefix(PREFIX), crate::focused_shell_window(app)) {
+        let _ = app.emit_to(window.label(), EVENT, command);
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, id);
 }
 
 /// The page's view state, mirrored into the menu. `ui_toggle` is false
