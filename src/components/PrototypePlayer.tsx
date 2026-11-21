@@ -726,7 +726,7 @@ function ProtoScreen({
   const { width, height, scale } = layout
   const box: CSSProperties = { width: Math.round(width * scale), height: Math.round(height * scale) }
   return (
-    <div className="relative overflow-hidden bg-white" style={box}>
+    <div className="relative overflow-hidden bg-white" style={{ ...box, visibility: shown ? undefined : 'hidden' }}>
       <iframe
         ref={iframeRef}
         className="block border-none bg-white"

@@ -69,6 +69,18 @@ const MIN_ZOOM = 0.01
    iframe undoes the zoom). Mirrored by FOLLOW_MAX_ZOOM. */
 const MAX_ZOOM = 16
 const MAX_PAGE_CAMERAS = 64
+// Keep only camera coordinates across tab switches. The editor and room can unmount normally.
+const pageCameras = new Map<string, Viewport>()
+const pageCameraKey = (canvasId: string, pageId: string) => JSON.stringify([canvasId, pageId])
+
+function rememberPageCamera(state: ReturnType<typeof useStore.getState>, placedPage: string | null) {
+  const { canvas, activePageId, viewport, following } = state
+  if (!canvas || !activePageId || activePageId !== placedPage || following) return
+  const key = pageCameraKey(canvas.id, activePageId)
+  pageCameras.delete(key)
+  pageCameras.set(key, viewport)
+  if (pageCameras.size > MAX_PAGE_CAMERAS) pageCameras.delete(pageCameras.keys().next().value!)
+}
 
 /* The Comment tool's cursor wins over everything under the stage — frames
    included, like the Hand tool's grab — except inside the comment UI itself
@@ -314,7 +326,6 @@ export function Stage({
      per-frame viewport writes */
   const [layoutZoom, setLayoutZoom] = useState(1)
   const layoutZoomRef = useRef(1)
-  const pageCameras = useRef(new Map<string, Viewport>())
   const cameraPage = useRef<string | null>(null)
   const deepLinkHandled = useRef(false)
   const [linkSearch, setLinkSearch] = useState(location.search)
@@ -404,16 +415,9 @@ export function Stage({
     let settle = 0
     const unsub = useStore.subscribe((s, prev) => {
       const sameCanvas = s.canvas?.id === prev.canvas?.id
-      if (!sameCanvas) pageCameras.current.clear()
       if (!sameCanvas || s.activePageId !== prev.activePageId) {
         /* The incoming viewport may already be reset; save the outgoing one. */
-        const page = sameCanvas ? prev.activePageId : null
-        if (page && page === cameraPage.current && !prev.following) {
-          const views = pageCameras.current
-          views.delete(page)
-          views.set(page, prev.viewport)
-          if (views.size > MAX_PAGE_CAMERAS) views.delete(views.keys().next().value!)
-        }
+        rememberPageCamera(prev, cameraPage.current)
         cameraPage.current = null
         refitRef.current = null
       }
@@ -436,6 +440,7 @@ export function Stage({
       }, 250)
     })
     return () => {
+      rememberPageCamera(useStore.getState(), cameraPage.current)
       unsub()
       window.clearTimeout(settle)
     }
@@ -748,7 +753,7 @@ export function Stage({
     }
     if (cameraPage.current === activePageId) return
     cameraPage.current = activePageId
-    const saved = pageCameras.current.get(activePageId)
+    const saved = pageCameras.get(pageCameraKey(canvas.id, activePageId))
     if (saved) setViewport(saved)
     else {
       const sections = activeSections(state)

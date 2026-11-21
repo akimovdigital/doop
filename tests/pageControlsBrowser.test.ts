@@ -122,6 +122,114 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     expect(await page.$('button[aria-label="Show interface"]')).toBeNull()
   })
 
+  it('restores pan and zoom after switching to another canvas and back', async () => {
+    const first = new URL(page.url()).pathname
+    const firstPage = await page.$eval('[data-page-id]', (row) => row.getAttribute('data-page-id'))
+    const second = await page.evaluate(async () => {
+      const response = await fetch('/api/canvases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Another canvas' }),
+      })
+      if (!response.ok) throw new Error(await response.text())
+      const canvas = await response.json()
+      return { path: '/c/' + canvas.id, pageId: canvas.pages?.[0]?.id ?? canvas.id + ':page1' }
+    })
+    const stage = '.stage'
+    const camera = () => page.$eval(stage, (element) => element.querySelector<HTMLElement>('.world')!.style.transform)
+    const initial = await camera()
+    await page.$eval(stage, (element) => {
+      element.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: 70, ctrlKey: true, clientX: 700, clientY: 300, cancelable: true }),
+      )
+    })
+    await page.waitForFunction(
+      (previous) => document.querySelector<HTMLElement>('.stage .world')?.style.transform !== previous,
+      {},
+      initial,
+    )
+    const moved = await camera()
+    const switchCanvas = (path: string) =>
+      page.evaluate((target) => {
+        history.pushState(null, '', target)
+        window.dispatchEvent(new PopStateEvent('popstate'))
+      }, path)
+    const waitForPage = (id: string | null) =>
+      page.waitForFunction(
+        (expected) => document.querySelector('[data-page-id]')?.getAttribute('data-page-id') === expected,
+        {},
+        id,
+      )
+    await switchCanvas(second.path)
+    await waitForPage(second.pageId)
+    expect(await camera()).toBe(initial)
+    await switchCanvas(first)
+    await waitForPage(firstPage)
+    expect(await camera()).toBe(moved)
+  }, 20_000)
+
+  it('keeps Present dark until its first live frame is ready', async () => {
+    await page.evaluate(async () => {
+      const response = await fetch('/api/canvases/' + location.pathname.split('/').at(-1) + '/frames', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Present loading fixture',
+          x: 100,
+          y: 100,
+          width: 800,
+          height: 500,
+          html: '<style>body{background:#175c42}</style><p>Live presentation</p>',
+        }),
+      })
+      if (!response.ok) throw new Error(await response.text())
+    })
+    await page.evaluate(() => localStorage.setItem('doop:proto-scaling', 'actual'))
+    await page.reload()
+    await page.waitForSelector('button[aria-label="Present prototype"]:enabled')
+    await page.evaluate(() => {
+      function hold(event: MessageEvent) {
+        const target = document.querySelector<HTMLIFrameElement>('[data-prototype-player] iframe')
+        if (!target || event.source !== target.contentWindow || event.data?.type !== 'doop:frame-ready') return
+        event.stopImmediatePropagation()
+        window.removeEventListener('message', hold, true)
+        document.documentElement.dataset.presentReplyHeld = 'true'
+        window.addEventListener(
+          'release-present-reply',
+          () => window.dispatchEvent(new MessageEvent('message', { source: event.source, data: event.data })),
+          {
+            once: true,
+          },
+        )
+      }
+      window.addEventListener('message', hold, true)
+    })
+    await page.click('button[aria-label="Present prototype"]')
+    const iframe = await page.waitForSelector('[data-prototype-player] iframe')
+    await page.waitForSelector('html[data-present-reply-held="true"]')
+    const rect = (await iframe!.boundingBox())!
+    const capture = (x: number, y: number) => page.screenshot({ clip: { x, y, width: 4, height: 4 } })
+    const left = await capture(4, rect.y + rect.height / 2)
+    const center = () => capture(rect.x + rect.width / 2, rect.y + rect.height / 2)
+    expect(
+      await sharp(await center())
+        .raw()
+        .toBuffer(),
+    ).toEqual(await sharp(left).raw().toBuffer())
+    await page.evaluate(() => window.dispatchEvent(new Event('release-present-reply')))
+    await page.waitForSelector('[data-prototype-player] iframe', { visible: true })
+    const live = await iframe!.contentFrame()
+    await live!.waitForFunction(() => document.body.textContent?.includes('Live presentation'))
+    expect([
+      ...(
+        await sharp(await center())
+          .removeAlpha()
+          .raw()
+          .toBuffer()
+      ).subarray(0, 3),
+    ]).toEqual([23, 92, 66])
+  }, 20_000)
+
   it('draws, styles and moves a section with its frame and opens its link', async () => {
     await page.evaluate(async () => {
       const response = await fetch('/api/canvases/' + location.pathname.split('/').at(-1) + '/frames', {
