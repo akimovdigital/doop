@@ -37,7 +37,6 @@ import { resolveFrameLink } from '../lib/elementLink'
 import { sendWs } from '../lib/ws'
 import { throttle } from '../lib/throttle'
 import { getIdentity } from '../lib/identity'
-import { PrototypePlayer } from './PrototypePlayer'
 import { FRAME_BOOTSTRAP } from '../lib/frameRuntime'
 import { MOD_KEY } from '../lib/keys'
 import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY, counterZoom } from '../lib/layoutZoom'
@@ -60,7 +59,7 @@ import { FRAME_COMMENT_SELECTOR, isElementComment, isFrameComment, elementCommen
 import { elementIdSelector } from '../../shared/elementId'
 import { cn } from '@/lib/utils'
 import { Tooltip } from './ui/tooltip'
-import { EditIcon, EyeClosedIcon, GithubIcon, LockIcon, PlayIcon, SyncIcon } from './ui/icons'
+import { EditIcon, EyeClosedIcon, GithubIcon, LockIcon, SyncIcon } from './ui/icons'
 import { isSyncedFrame } from '../lib/sync'
 import { isGithubFrame, isGithubPlaceholder } from '../lib/github'
 import { AgentIcon } from './AgentIcon'
@@ -342,10 +341,6 @@ export const FrameView = memo(function FrameView({
   stack,
   layoutZoom,
   loadDocument = true,
-  snapshots = false,
-  playing = false,
-  onTogglePlayback,
-  onStopPlayback,
   compactSectionTitles = false,
   requestDocument,
   onFollowLink,
@@ -355,10 +350,6 @@ export const FrameView = memo(function FrameView({
   stack?: number
   layoutZoom: number
   loadDocument?: boolean
-  snapshots?: boolean
-  playing?: boolean
-  onTogglePlayback?: (id: string) => void
-  onStopPlayback?: () => void
   compactSectionTitles?: boolean
   requestDocument?: (frameId: string) => void
   onFollowLink?: (source: Frame, href: string) => void
@@ -448,11 +439,7 @@ export const FrameView = memo(function FrameView({
   /* after exiting edit mode, hold renders until the final serialized HTML
      lands in the store — otherwise a stale post would morph the edit away */
   const [suspendPost, setSuspendPost] = useState(false)
-  const elementPicked = useStore((s) => s.selectedElement?.frameId === frame.id)
-  const showPreview = snapshots && !standalone && !stream && !editing && !pathEdit && !elementPicked
   const mountRuntime = loadDocument || standalone || !!stream
-  const canPlay = snapshots && !standalone && !!frame.html && !githubPlaceholder && !stream && !editing && !pathEdit
-  const showPlaybackButton = canPlay && (selected || playing)
 
   /* one throttle per frame, so a group drag broadcasts every member —
      a single throttle would keep only the last frame written each tick */
@@ -1061,7 +1048,7 @@ export const FrameView = memo(function FrameView({
     const request = ++htmlRequest.current
     noteFrameDocument(frame.id, null)
     let cancelled = false
-    void requestFrame(frame.id, 'doop:html', { html, still: snapshots }).then((reply) => {
+    void requestFrame(frame.id, 'doop:html', { html }).then((reply) => {
       if (!reply || !iframe || iframeRef.current !== iframe || request !== htmlRequest.current) return
       /* the runtime shows it whether or not this effect is still current */
       noteFrameDocument(frame.id, html)
@@ -1070,7 +1057,7 @@ export const FrameView = memo(function FrameView({
     return () => {
       cancelled = true
     }
-  }, [runtimeReady, html, frame.html, frame.id, editing, suspendPost, snapshots])
+  }, [runtimeReady, html, frame.html, frame.id, editing, suspendPost])
 
   /* ---- element comments ---- */
   const frameComments = useStore((s) => s.comments).filter((c) => c.frameId === frame.id)
@@ -1944,7 +1931,7 @@ export const FrameView = memo(function FrameView({
             )}
           {/* a standalone element wears no name on the canvas, as a shape in
               Figma does not; the Layers rail names it */}
-          {!standalone && !(showPreview && compactSectionTitles && !showPlaybackButton) && (
+          {!standalone && (!compactSectionTitles || selected) && (
             <div
               /* the Stage reads this off the press target */
               data-frame-locked={frame.locked ? '' : undefined}
@@ -1960,7 +1947,6 @@ export const FrameView = memo(function FrameView({
               className="@container/title pointer-events-auto absolute bottom-full left-0 flex origin-bottom-left cursor-default select-none items-center gap-2 overflow-hidden whitespace-nowrap text-[12px] font-semibold text-ink-soft"
               style={{
                 width: 'calc(100% * var(--zoom, 1))',
-                minWidth: showPlaybackButton ? 26 : undefined,
                 transform: `scale(calc(1 / var(--zoom, 1))) translateY(-${LABEL_GAP}px)`,
                 cursor: duping || dupKeyHeld ? DUP_CURSOR : undefined,
                 /* the frame's place in the stack, while its wrapper gives it up */
@@ -1996,25 +1982,6 @@ export const FrameView = memo(function FrameView({
                     <GithubIcon width={11} height={11} />
                   </span>
                 </Tooltip>
-              )}
-              {showPlaybackButton && (
-                <button
-                  type="button"
-                  className="grid size-5 shrink-0 place-items-center rounded-control bg-surface text-ink hover:bg-sub focus-visible:outline focus-visible:outline-ring"
-                  aria-label={t(playing ? 'canvas.stopFramePreview' : 'canvas.playFramePreview')}
-                  title={t(playing ? 'canvas.stopFramePreview' : 'canvas.playFramePreview')}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onTogglePlayback?.(frame.id)
-                  }}
-                >
-                  {playing ? (
-                    <span className="size-2 rounded-[1px] bg-current" aria-hidden />
-                  ) : (
-                    <PlayIcon className="size-3" />
-                  )}
-                </button>
               )}
               <span className="min-w-0 overflow-hidden text-ellipsis">{frame.name}</span>
               <FrameApprovalBadge frame={frame} />
@@ -2075,7 +2042,7 @@ export const FrameView = memo(function FrameView({
                  pixel in from the edge: painted to the edge, it showed past the
                  scaled iframe's antialiased edge as a light seam */
               !standalone &&
-                (showPreview
+                (frame.html && !runtimeDocument
                   ? 'bg-sub'
                   : "before:absolute before:inset-[calc(1px/var(--zoom,1))] before:bg-white before:content-['']"),
               /* Select keeps the arrow, like Figma: the frame is a thing to
@@ -2125,7 +2092,7 @@ export const FrameView = memo(function FrameView({
                 linkPress.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY }
                 return
               }
-              startDrag(e, 'move', !snapshots || selected || tool === 'comment')
+              startDrag(e, 'move', true)
             }}
             onPointerCancel={() => {
               linkPress.current = null
@@ -2168,7 +2135,7 @@ export const FrameView = memo(function FrameView({
               /* where the pointer is stays current through a drag or a resize
                  too: once the gesture's save lands, the hover is probed again
                  at the pointer's spot, which the gesture has moved */
-              if (showPreview || tool === 'hand' || tool === 'zoom' || panMode) return
+              if (tool === 'hand' || tool === 'zoom' || panMode) return
               const at = designPoint(e, e.currentTarget, frame.rotation)
               hoverAt.current = at
               /* the Hand only pans, the Zoom only zooms, and a locked frame has nothing to pick: no
@@ -2191,21 +2158,6 @@ export const FrameView = memo(function FrameView({
               leaveHover()
             }}
           >
-            {showPreview && frame.html && !githubPlaceholder && (
-              <img
-                data-frame-overview-preview=""
-                key={frame.updatedAt}
-                src={`/i/${frame.id}.jpg?snapshot&v=${frame.updatedAt}`}
-                alt=""
-                loading="lazy"
-                decoding="async"
-                className="pointer-events-none absolute inset-0 h-full w-full"
-                onError={(e) => {
-                  e.currentTarget.style.visibility = 'hidden'
-                }}
-              />
-            )}
-            {playing && canPlay && <PrototypePlayer startFrameId={frame.id} onClose={onStopPlayback} inline />}
             {/* always there, so the iframe never moves in the DOM (that reloads
                 it): it carries the iframe out by the bleed margin */}
             <div
@@ -2240,8 +2192,7 @@ export const FrameView = memo(function FrameView({
                       ? null
                       : { zoom: counterZoom(layoutZoom), transform: `scale(${layoutZoom})` }),
                     transformOrigin: '0 0',
-                    contentVisibility: showPreview ? 'hidden' : editing || selected ? 'visible' : 'auto',
-                    visibility: showPreview || playing ? 'hidden' : undefined,
+                    contentVisibility: editing || selected ? 'visible' : 'auto',
                     /* Chromium paints an opaque backdrop behind an iframe whose
                    colour scheme differs from its document's; the page's dark
                    scheme reaches this element by inheritance while a

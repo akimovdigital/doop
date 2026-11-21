@@ -9,10 +9,10 @@ const EAGER_HTML_LIMIT = 256_000
 const SMALL_PAGE_FRAME_LIMIT = 8
 const SMALL_PAGE_HTML_LIMIT = 4_000_000
 const STARTS_PER_BATCH = 3
+const PREPARING_HTML_LIMIT = 800_000
 const BOOT_TIMEOUT_MS = 2_000
 const NEAR_PX = 180
 const PAN_SETTLE_MS = 180
-const MAX_EDIT_DOCUMENTS = 3
 
 export function useFrameAdmission(
   frames: Frame[],
@@ -30,9 +30,6 @@ export function useFrameAdmission(
     }
     return size <= EAGER_HTML_LIMIT || count <= SMALL_PAGE_FRAME_LIMIT
   }, [frames])
-  const prototypeMode = useStore((s) => s.prototypeMode)
-  const snapshots = !prototypeMode && (!eager || import.meta.env.VITE_DOOP_STATIC_CANVAS === '1')
-  const snapshotPolicy = useRef(false)
   const [admitted, setAdmitted] = useState(new Set<string>())
   const started = useRef(new Set<string>())
   const booting = useRef(new Map<string, number>())
@@ -50,43 +47,20 @@ export function useFrameAdmission(
       .filter((frame) => !frame.hidden)
       .map((frame) => ({
         id: frame.id,
+        htmlSize: frame.html.length,
         ...rotatedBounds(frame, frame.rotation ?? 0),
       }))
-    const liveIds = new Set(live.map((frame) => frame.id))
+    const liveById = new Map(live.map((frame) => [frame.id, frame]))
     let changed = false
     for (const id of ids) {
-      if (liveIds.has(id)) continue
+      if (liveById.has(id)) continue
       ids.delete(id)
       boots.delete(id)
       changed = true
     }
-    if (snapshots) {
-      if (!snapshotPolicy.current) {
-        ids.clear()
-        boots.clear()
-        changed = true
-      }
-      snapshotPolicy.current = true
-      wake.current = (id) => {
-        if (!liveIds.has(id)) return
-        ids.delete(id)
-        ids.add(id)
-        const selectedId = useStore.getState().selectedId
-        for (const candidate of ids) {
-          if (ids.size <= MAX_EDIT_DOCUMENTS) break
-          if (candidate !== selectedId && candidate !== id) ids.delete(candidate)
-        }
-        setAdmitted(new Set(ids))
-      }
-      if (changed) setAdmitted(new Set(ids))
-      return () => {
-        wake.current = null
-      }
-    }
-    snapshotPolicy.current = false
     if (eager) {
       // A frame already painted on a small page stays alive when new frames make it large.
-      for (const id of liveIds) {
+      for (const id of liveById.keys()) {
         if (ids.has(id)) continue
         ids.add(id)
         changed = true
@@ -132,7 +106,7 @@ export function useFrameAdmission(
     }
 
     function start(id: string) {
-      if (ids.has(id) || !liveIds.has(id)) return false
+      if (ids.has(id) || !liveById.has(id)) return false
       ids.add(id)
       const since = performance.now()
       boots.set(id, since)
@@ -164,10 +138,20 @@ export function useFrameAdmission(
               Math.max(0, Math.min(width, right) - Math.max(0, left)) *
               Math.max(0, Math.min(height, bottom) - Math.max(0, top))
             const distance = Math.hypot((left + right - width) / 2, (top + bottom - height) / 2)
-            return [{ id: frame.id, visibleArea, distance }]
+            return [{ id: frame.id, htmlSize: frame.htmlSize, visibleArea, distance }]
           })
           .sort((a, b) => b.visibleArea - a.visibleArea || a.distance - b.distance)
-        for (const frame of candidates.slice(0, slots)) added = start(frame.id) || added
+        // One large document can fill the budget on its own. Let it finish
+        // before posting another large HTML parse to the renderer.
+        let preparing = 0
+        for (const id of boots.keys()) preparing += liveById.get(id)?.htmlSize ?? 0
+        for (const frame of candidates.slice(0, slots)) {
+          if (preparing > 0 && preparing + frame.htmlSize > PREPARING_HTML_LIMIT) break
+          if (start(frame.id)) {
+            preparing += frame.htmlSize
+            added = true
+          }
+        }
       }
       if (added) setAdmitted(new Set(ids))
     }
@@ -217,7 +201,7 @@ export function useFrameAdmission(
       window.clearTimeout(idleTimer)
       for (const off of watches.values()) off()
     }
-  }, [frames, stage, layer, eager, snapshots])
+  }, [frames, stage, layer, eager])
 
-  return { eager: eager && !snapshots, snapshots, admitted, request }
+  return { eager, admitted, request }
 }

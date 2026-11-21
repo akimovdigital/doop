@@ -285,7 +285,7 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     expect(css).toContain('--space-roomy:24px')
   }, 20_000)
 
-  it('keeps tall frames fully visible and runs one interactive preview on demand', async () => {
+  it('renders tall live HTML and plays visible animations on a large page before selection', async () => {
     const tallId = await page.evaluate(async () => {
       const id = location.pathname.split('/').at(-1)
       let tallId = ''
@@ -306,8 +306,9 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
                   #interactive{position:absolute;width:240px;height:100px;left:280px;top:300px}
                   @keyframes move{to{transform:translateX(50px)}} #motion{animation:move 1s infinite alternate}
                   </style><body><button id="interactive" onclick="this.textContent='Clicked'">Interactive</button>
-                  <div id="motion">Animated</div><div id="footer">Bottom content</div></body></html>`
-                : '<p>Frame</p>',
+                  <div id="motion">Animated</div><div id="footer">Bottom content</div>
+                  <script>document.body.dataset.started = 'yes'</script></body></html>`
+                : '<style>@keyframes fade{to{opacity:.25}}p{animation:fade 1s infinite alternate}</style><p>Frame</p>',
           }),
         })
         if (!response.ok) throw new Error(await response.text())
@@ -317,7 +318,20 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     })
     await page.reload()
     const shell = `[data-doop-frame-shell="${tallId}"]`
-    await page.waitForSelector(shell + ' [data-frame-overview-preview]')
+    const iframe = await page.waitForSelector(shell + ' iframe[data-doop-frame]')
+    const content = (await iframe!.contentFrame())!
+    await content.waitForSelector('body[data-started="yes"] #footer')
+    expect(await content.$eval('#footer', (element) => element.getBoundingClientRect().bottom)).toBe(2200)
+    const animationTime = () => content.$eval('#motion', (element) => Number(element.getAnimations()[0]?.currentTime))
+    const first = await animationTime()
+    await content.waitForFunction(
+      (time) => Number(document.getElementById('motion')?.getAnimations()[0]?.currentTime) > time,
+      {},
+      first,
+    )
+    const sibling = await page.waitForSelector('iframe[title^="Overview "]:not([title="Overview 0"])')
+    const neighbor = (await sibling!.contentFrame())!
+    await neighbor.waitForFunction(() => (document.querySelector('p')?.getAnimations().length ?? 0) > 0)
     await page.setViewport({ width: 1400, height: 560 })
     const tree = '[role="tree"]'
     await page.waitForFunction(
@@ -339,58 +353,9 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     expect(await page.$eval(tree, (rail) => rail.scrollTop)).toBe(0)
     await page.keyboard.press('Escape')
     await page.setViewport({ width: 1400, height: 900 })
-    expect(await page.$$('iframe[data-doop-frame]')).toHaveLength(0)
-    const jpeg = await page.evaluate(async (id) => {
-      const response = await fetch(`/i/${id}.jpg?snapshot`)
-      if (!response.ok) throw new Error(await response.text())
-      return Array.from(new Uint8Array(await response.arrayBuffer()))
-    }, tallId)
-    const { data, info } = await sharp(Buffer.from(jpeg)).removeAlpha().raw().toBuffer({ resolveWithObject: true })
-    expect(info.height / info.width).toBeCloseTo(2200 / 800, 2)
-    const tail = ((info.height - 10) * info.width + 10) * info.channels
-    expect(data[tail + 1]).toBeGreaterThan(110)
-    expect(data[tail]).toBeLessThan(70)
     await page.click(shell + ' [data-frame-title]')
-    await page.keyboard.down('Shift')
-    await page.keyboard.press('Digit2')
-    await page.keyboard.up('Shift')
-    expect(await page.$$('iframe[data-doop-frame]')).toHaveLength(0)
-    await page.click('button[aria-label="Play frame preview"]')
-    const inline = await page.waitForSelector('[data-inline-preview] iframe')
-    const contentFrame = await inline!.contentFrame()
-    await contentFrame!.waitForSelector('button#interactive')
-    expect(await contentFrame!.$eval('#motion', (element) => getComputedStyle(element).animationPlayState)).toBe(
-      'running',
-    )
-    const target = await contentFrame!.$eval('button#interactive', (button) => {
-      const rect = button.getBoundingClientRect()
-      return { x: (rect.left + rect.width / 2) / innerWidth, y: (rect.top + rect.height / 2) / innerHeight }
-    })
-    const box = (await inline!.boundingBox())!
-    const x = box.x + target.x * box.width
-    const y = box.y + target.y * box.height
-    const topTarget = await page.evaluate(
-      (x, y) => {
-        const hit = document.elementFromPoint(x, y)
-        return {
-          isPlayer: hit?.matches('[data-inline-preview] iframe') ?? false,
-          tag: hit?.tagName,
-          classes: hit?.className,
-          x,
-          y,
-        }
-      },
-      x,
-      y,
-    )
-    expect(topTarget.isPlayer, JSON.stringify(topTarget)).toBe(true)
-    await page.mouse.click(x, y)
-    await contentFrame!.waitForFunction(() => document.querySelector('#interactive')?.textContent === 'Clicked')
-    await page.click('button[aria-label="Stop frame preview"]')
-    await page.waitForSelector('[data-inline-preview]', { hidden: true })
-    expect(await page.$$('iframe[data-doop-frame]')).toHaveLength(0)
     await page.click('button[aria-label="Present prototype"]')
-    await page.waitForSelector('[data-prototype-player]:not([data-inline-preview]) iframe')
+    await page.waitForSelector('[data-prototype-player] iframe')
   }, 60_000)
 
   it('copies another page’s link without leaving the current page', async () => {

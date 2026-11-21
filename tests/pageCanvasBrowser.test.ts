@@ -168,11 +168,10 @@ describe.skipIf(!findBrowserPath())('page camera and snapping', { timeout: 30_00
       html: '<main id="away">Away</main>',
     }))
     await load(canvas([target, ...distant]), '?frame=target', false)
-    expect(await page.$$('iframe[data-doop-frame]')).toHaveLength(0)
-    expect(await page.evaluate(() => window.inspectFrame('target', '#near'))).toMatchObject({ tag: 'main' })
-    await page.waitForFunction(() =>
-      window.trace.some((entry) => (entry as { msg?: string }).msg === 'doop:html-result'),
-    )
+    const initial = await page.waitForSelector('iframe[title="target"]')
+    const liveDocument = (await initial!.contentFrame())!
+    await liveDocument.waitForSelector('#near')
+    await liveDocument.$eval('#near', (element) => (element.textContent = 'Retained state'))
     expect(await page.$('iframe[title="away-0"]')).toBeNull()
     expect(await page.$$('[data-frame-title]')).toHaveLength(21)
 
@@ -183,15 +182,14 @@ describe.skipIf(!findBrowserPath())('page camera and snapping', { timeout: 30_00
     expect(await page.$('iframe[title="away-0"]')).toBeNull()
 
     await page.evaluate(() => {
-      const first = document.querySelector<HTMLIFrameElement>('iframe[title="target"]')!
-      first.dataset.testFrame = 'retained'
       history.pushState(null, '', '?frame=away-0')
       window.dispatchEvent(new PopStateEvent('popstate'))
     })
     await waitState('deep link selects the distant frame', () => window.pageState().selectedId === 'away-0')
-    expect(await page.$('iframe[title="away-0"]')).toBeNull()
-    expect(await page.evaluate(() => window.inspectFrame('away-0', '#away'))).toMatchObject({ tag: 'main' })
-    expect(await page.$('iframe[title="target"][data-test-frame="retained"]')).not.toBeNull()
+    const arrived = await page.waitForSelector('iframe[title="away-0"]')
+    const arrivedDocument = (await arrived!.contentFrame())!
+    await arrivedDocument.waitForSelector('#away')
+    expect(await liveDocument.$eval('#near', (element) => element.textContent)).toBe('Retained state')
     expect(await page.$('iframe[title="away-19"]')).toBeNull()
   })
 

@@ -76,12 +76,10 @@ export function PrototypePlayer({
   startFrameId,
   onClose,
   syncUrl = false,
-  inline = false,
 }: {
   startFrameId: string
   onClose?: () => void
   syncUrl?: boolean
-  inline?: boolean
 }) {
   const frames = useStore((s) => s.canvas?.frames)
   const canvasId = useStore((s) => s.canvas?.id)
@@ -144,9 +142,9 @@ export function PrototypePlayer({
     return () => observer.disconnect()
   }, [])
 
-  const [scaling, setScalingState] = useState(() => (inline ? 'fit' : readProtoScaling()))
+  const [scaling, setScalingState] = useState(readProtoScaling)
   const setScaling = (next: ProtoScaling) => {
-    if (!inline) saveProtoScaling(next)
+    saveProtoScaling(next)
     setScalingState(next)
   }
 
@@ -342,7 +340,6 @@ export function PrototypePlayer({
          Escape in the menu) and stop them short of the editor themselves;
          Escape on the button still leaves the player */
       const target = e.target instanceof Element ? e.target : null
-      if (inline && e.key !== 'Escape' && !rootRef.current?.contains(target)) return
       if (target?.closest('[data-proto-menu]')) return
       if (target?.closest('[data-proto-menu-trigger]') && e.key !== 'Escape') return
       /* capture phase, and modal: no key reaches the editor underneath (an
@@ -360,7 +357,7 @@ export function PrototypePlayer({
       window.removeEventListener('keydown', onKey, true)
       window.removeEventListener('pointerup', onUp)
     }
-  }, [inline])
+  }, [])
   useEffect(() => {
     if (!syncUrl) return
     /* the entry the player opened on records its start screen, so Back to it
@@ -436,16 +433,10 @@ export function PrototypePlayer({
     <div
       ref={rootRef}
       /* below the shell's tab strip, by the --app-inset contract (App.tsx) */
-      className={
-        inline
-          ? 'absolute inset-0 z-10 overflow-hidden bg-code'
-          : 'fixed inset-x-0 bottom-0 top-[var(--app-inset,0px)] z-[80] overflow-hidden bg-code'
-      }
-      onPointerDown={inline ? (event) => event.stopPropagation() : undefined}
+      className="fixed inset-x-0 bottom-0 top-[var(--app-inset,0px)] z-[80] overflow-hidden bg-code"
       role="dialog"
       aria-label={t('panels.protoAria', { name: shownFrame?.name ?? t('panels.protoMissingLower') })}
       data-prototype-player=""
-      data-inline-preview={inline || undefined}
     >
       {base.map(({ entry, role }) => {
         const frame = frameById(entry.frameId)
@@ -503,50 +494,48 @@ export function PrototypePlayer({
         )
       })}
 
-      {!inline && (
-        <div className="absolute top-3 right-3 z-10 flex items-center gap-1 rounded-pill bg-black/55 p-1 text-code-ink opacity-70 backdrop-blur-[6px] transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100">
-          <span className="max-w-[180px] truncate px-2 text-caption text-code-ink/80" data-proto-current="">
-            {shownFrame?.name ?? t('panels.protoMissing')}
-          </span>
+      <div className="absolute top-3 right-3 z-10 flex items-center gap-1 rounded-pill bg-black/55 p-1 text-code-ink opacity-70 backdrop-blur-[6px] transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100">
+        <span className="max-w-[180px] truncate px-2 text-caption text-code-ink/80" data-proto-current="">
+          {shownFrame?.name ?? t('panels.protoMissing')}
+        </span>
+        <IconButton
+          size="sm"
+          className={playerBtn}
+          aria-label={t('common.back')}
+          disabled={stack.length < 2 && !overlays.length}
+          onClick={() => back()}
+        >
+          <ArrowLeftIcon size="rail" />
+        </IconButton>
+        <IconButton size="sm" className={playerBtn} aria-label={t('panels.protoRestart')} onClick={restart}>
+          <HistoryIcon size="rail" />
+        </IconButton>
+        <IconButton size="sm" className={playerBtn} aria-label={t('panels.protoHotspots')} onClick={flashHotspots}>
+          <HotspotIcon size="rail" />
+        </IconButton>
+        <ScalingMenu scaling={scaling} onChange={setScaling} />
+        {onClose && canvasId && (
           <IconButton
             size="sm"
             className={playerBtn}
-            aria-label={t('common.back')}
-            disabled={stack.length < 2 && !overlays.length}
-            onClick={() => back()}
+            aria-label={t('panels.protoNewTab')}
+            onClick={() => window.open(prototypePath(canvasId, current.frameId), '_blank', 'noopener')}
           >
-            <ArrowLeftIcon size="rail" />
+            <ExportIcon size="rail" />
           </IconButton>
-          <IconButton size="sm" className={playerBtn} aria-label={t('panels.protoRestart')} onClick={restart}>
-            <HistoryIcon size="rail" />
+        )}
+        {onClose && (
+          <IconButton
+            size="sm"
+            className={playerBtn}
+            aria-label={t('panels.protoExit')}
+            title={t('panels.protoExitTitle')}
+            onClick={onClose}
+          >
+            <XIcon size="rail" />
           </IconButton>
-          <IconButton size="sm" className={playerBtn} aria-label={t('panels.protoHotspots')} onClick={flashHotspots}>
-            <HotspotIcon size="rail" />
-          </IconButton>
-          <ScalingMenu scaling={scaling} onChange={setScaling} />
-          {onClose && canvasId && (
-            <IconButton
-              size="sm"
-              className={playerBtn}
-              aria-label={t('panels.protoNewTab')}
-              onClick={() => window.open(prototypePath(canvasId, current.frameId), '_blank', 'noopener')}
-            >
-              <ExportIcon size="rail" />
-            </IconButton>
-          )}
-          {onClose && (
-            <IconButton
-              size="sm"
-              className={playerBtn}
-              aria-label={t('panels.protoExit')}
-              title={t('panels.protoExitTitle')}
-              onClick={onClose}
-            >
-              <XIcon size="rail" />
-            </IconButton>
-          )}
-        </div>
-      )}
+        )}
+      </div>
       {notice && (
         <div className="absolute bottom-5 left-1/2 z-10 -translate-x-1/2 rounded-pill bg-black/70 px-3 py-1.5 text-body text-code-ink">
           {notice}

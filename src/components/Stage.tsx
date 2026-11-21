@@ -207,13 +207,11 @@ function paperStyle(paper: Paper): CSSProperties {
 }
 
 export function Stage({
-  presentationOpen = false,
   onAddFrame,
   insets = NO_INSETS,
   bounds,
   docked = false,
 }: {
-  presentationOpen?: boolean
   onAddFrame: () => void
   /** px the top bar, floating panels and islands cover at each of the
    *  stage's edges — fits centre in what is left, and there is no room
@@ -262,6 +260,10 @@ export function Stage({
   const [labelLayer, setLabelLayer] = useState<HTMLDivElement | null>(null)
   const labelLayerRef = useRef<HTMLDivElement | null>(null)
   const stageSize = useRef({ width: 0, height: 0 })
+  const wheelStageRect = useRef<DOMRect | null>(null)
+  useLayoutEffect(() => {
+    wheelStageRect.current = null
+  }, [bounds?.left, bounds?.top, bounds?.right, bounds?.bottom])
   const attachLabelLayer = useCallback((el: HTMLDivElement | null) => {
     labelLayerRef.current = el
     if (el) {
@@ -393,9 +395,10 @@ export function Stage({
       }
       /* only on a change: rewriting the text replaces its node on every pan
          tick, and a node inserted anywhere re-runs `body:has(…)` rules */
-      const zoomText = `${Math.round(vp.zoom * 100)}%`
-      if (zoomLabelRef.current && zoomLabelRef.current.textContent !== zoomText)
-        zoomLabelRef.current.textContent = zoomText
+      if (zoomChanged && zoomLabelRef.current) {
+        const zoomText = `${Math.round(vp.zoom * 100)}%`
+        if (zoomLabelRef.current.textContent !== zoomText) zoomLabelRef.current.textContent = zoomText
+      }
     }
     apply(useStore.getState().viewport)
     let settle = 0
@@ -421,8 +424,14 @@ export function Stage({
       if (s.viewport === prev.viewport) return
       apply(s.viewport)
       if (ref.current) sendViewport(s.viewport, stageSize.current)
+      // Every zoom at or below 100% uses the same layout. Keep the timeout
+      // through a pan only when a previous zoom still needs to settle.
+      if (!settle && s.viewport.zoom === prev.viewport.zoom) return
       window.clearTimeout(settle)
+      settle = 0
+      if (s.viewport.zoom <= 1 && layoutZoomRef.current === 1) return
       settle = window.setTimeout(() => {
+        settle = 0
         setLayoutZoom(layoutZoomFor(useStore.getState().viewport.zoom, MAX_ZOOM))
       }, 250)
     })
@@ -509,6 +518,7 @@ export function Stage({
       if (!entry) return
       const { width, height } = entry.contentRect
       stageSize.current = { width, height }
+      wheelStageRect.current = null
       sendViewport(useStore.getState().viewport, stageSize.current)
       retarget()
     })
@@ -761,15 +771,20 @@ export function Stage({
     let zoomDelta = 0
     let pinchClientX = 0
     let pinchClientY = 0
+    let lastPinchInput = -Infinity
+    const clearStageRect = () => {
+      wheelStageRect.current = null
+    }
 
     function flush() {
       raf = 0
       const vp = useStore.getState().viewport
       let { x, y, zoom } = vp
       if (zoomDelta !== 0 && el) {
-        /* Wheel events can arrive more than once per paint. Read layout once,
-           before writing the frame's camera transform. */
-        const rect = el.getBoundingClientRect()
+        /* The stage stays put during the gesture, only its world moves.
+           Reuse its origin so a reading does not flush the previous zoom's
+           pending style and layout work across every frame. */
+        const rect = (wheelStageRect.current ??= el.getBoundingClientRect())
         const pivotX = pinchClientX - rect.left
         const pivotY = pinchClientY - rect.top
         /* exp(-deltaY/100) is the browser's own pinch↔wheel mapping, so the
@@ -796,6 +811,9 @@ export function Stage({
       if ((e.target as Element | null)?.closest('[data-stage-scroll]')) return
       e.preventDefault()
       if (e.ctrlKey || e.metaKey) {
+        const now = performance.now()
+        if (now - lastPinchInput > 180) clearStageRect()
+        lastPinchInput = now
         pinchClientX = e.clientX
         pinchClientY = e.clientY
         zoomDelta += Math.max(-40, Math.min(40, e.deltaY))
@@ -808,8 +826,12 @@ export function Stage({
       if (!raf) raf = requestAnimationFrame(flush)
     }
     el.addEventListener('wheel', onWheel, { passive: false })
+    window.addEventListener('resize', clearStageRect)
+    window.addEventListener('scroll', clearStageRect, true)
     return () => {
       el.removeEventListener('wheel', onWheel)
+      window.removeEventListener('resize', clearStageRect)
+      window.removeEventListener('scroll', clearStageRect, true)
       if (raf) cancelAnimationFrame(raf)
     }
   }, [])
@@ -1354,7 +1376,6 @@ export function Stage({
                     frames={canvas?.frames ?? []}
                     layoutZoom={layoutZoom}
                     stage={ref}
-                    presentationOpen={presentationOpen}
                     onFollowLink={followFrameLink}
                   />
                 </FrameLabelLayer.Provider>
@@ -1569,23 +1590,17 @@ function FrameStack({
   frames,
   layoutZoom,
   stage,
-  presentationOpen,
   onFollowLink,
 }: {
   frames: Frame[]
   layoutZoom: number
-  presentationOpen: boolean
   onFollowLink: (source: Frame, href: string) => void
   stage: React.RefObject<HTMLDivElement | null>
 }) {
   const mounted = useMemo(() => [...frames].sort(byCreation), [frames])
   const rank = useMemo(() => new Map(frames.map((f, i) => [f.id, i + 1])), [frames])
   const layer = useRef<HTMLDivElement>(null)
-  const { eager, snapshots, admitted, request } = useFrameAdmission(frames, stage, layer)
-  const [playingId, setPlayingId] = useState<string | null>(null)
-  const stopPlaying = useCallback(() => setPlayingId(null), [])
-  const togglePlaying = useCallback((id: string) => setPlayingId((current) => (current === id ? null : id)), [])
-  if (presentationOpen && playingId !== null) setPlayingId(null)
+  const { eager, admitted, request } = useFrameAdmission(frames, stage, layer)
   const compactSectionTitles = useStore((s) => s.selectedSectionId !== null && s.viewport.zoom <= 0.05)
   return (
     <div ref={layer} className="absolute top-0 left-0 isolate">
@@ -1599,10 +1614,6 @@ function FrameStack({
             stack={rank.get(f.id)}
             layoutZoom={layoutZoom}
             loadDocument={eager || admitted.has(f.id)}
-            snapshots={snapshots}
-            playing={!presentationOpen && playingId === f.id}
-            onTogglePlayback={togglePlaying}
-            onStopPlayback={stopPlaying}
             compactSectionTitles={compactSectionTitles}
             requestDocument={request}
             onFollowLink={onFollowLink}
