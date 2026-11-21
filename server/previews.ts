@@ -41,6 +41,7 @@ export interface ImageRequest {
    *  meaningful for jpg — a png?preview would serve jpeg bytes under an
    *  image/png content-type, so the flag is ignored there. */
   preview: boolean
+  canvasSnapshot?: boolean
   /** a layer export: the CSS selector of the element to cut the render to */
   layer?: string
   ip: string
@@ -52,8 +53,8 @@ export type ImageResult = { status: 'ok'; buf: Buffer } | { status: 'rate-limite
 
 /** May reject when the render itself fails — the caller owns the 500. */
 export async function getImage(frame: Frame, req: ImageRequest): Promise<ImageResult> {
-  const preview = req.preview && req.ext === 'jpg'
-  const key = imageKey(frame.id, req.ext, req.scale, req.ext === 'jpg' ? req.quality : '', preview, req.layer)
+  const thumbnail = req.ext === 'jpg' && !req.layer && (req.canvasSnapshot ? 'canvas' : req.preview ? 'card' : false)
+  const key = imageKey(frame.id, req.ext, req.scale, req.ext === 'jpg' ? req.quality : '', thumbnail, req.layer)
   const cached = imgCache.get(key)
   let pending =
     cached && cached.updatedAt === frame.updatedAt && Date.now() - cached.at < IMG_CACHE_MS ? cached.buf : null
@@ -61,8 +62,8 @@ export async function getImage(frame: Frame, req: ImageRequest): Promise<ImageRe
   /* previews first try the persisted thumbnail: survives redeploys, serves
      instantly even when stale (thumbs revalidates in the background), and
      costs no Chromium boot — so it isn't metered either */
-  if (!pending && preview) {
-    const stored = await thumbs.getStored(frame)
+  if (!pending && thumbnail) {
+    const stored = await thumbs.getStored(frame, thumbnail)
     if (stored) {
       pending = Promise.resolve(stored)
       remember(key, pending, frame.updatedAt)
@@ -71,9 +72,9 @@ export async function getImage(frame: Frame, req: ImageRequest): Promise<ImageRe
 
   if (!pending) {
     if (!(await consumeRenderBudget(req.ip, req.isAuthenticated))) return { status: 'rate-limited' }
-    pending = preview
+    pending = thumbnail
       ? /* renders AND persists — the next cold start serves from storage */
-        thumbs.create(frame)
+        thumbs.create(frame, thumbnail)
       : loadScreenshot().then(async ({ renderFrame }) =>
           renderFrame(await store.renderSource(frame), req.scale, {
             type: req.ext === 'jpg' ? 'jpeg' : 'png',
@@ -92,10 +93,10 @@ function imageKey(
   ext: 'png' | 'jpg',
   scale: number,
   quality: number | '',
-  preview: boolean,
+  thumbnail: thumbs.ThumbKind | false,
   layer = '',
 ): string {
-  return `${id}:${ext}:${scale}:${quality}:${preview ? 'p' : ''}:${layer}`
+  return `${id}:${ext}:${scale}:${quality}:${thumbnail || ''}:${layer}`
 }
 
 /** Seeds the cache with a render another path already paid for. The MCP

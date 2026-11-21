@@ -70,6 +70,8 @@ export const canvas = {
   exportTitle: 'Export frames as a PDF',
   export: 'Export',
   share: 'Share',
+  playFramePreview: 'Play frame preview',
+  stopFramePreview: 'Stop frame preview',
   presentFromFrame: 'Present from this frame',
   presentPrototype: 'Present the prototype',
   addFrameToPresent: 'Add a frame to present',

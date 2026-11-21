@@ -105,6 +105,9 @@ White system (Doop UI v2, canvas guideline `doop-ui-system`): neutral greys, no 
   edits the tab label inline. Named groups keep related tabs together and persist per account. The
   split view places two labelled canvas editors side by side. See `DesktopTabs.tsx` and `App.tsx`.
 
+- Sections uses the same heading typography, disclosure and add affordance as the Layers list, immediately above its heading below Pages. The section list opens and closes independently and scrolls within the available rail height.
+- On the Doop Dev canvas, HTML artboards use still images with the full frame aspect ratio. Dense canvases use the same policy in the web editor. One frame can play inline through the Play/Stop control in its selected title. The toolbar's Present action opens the full prototype player. Unloaded canvas snapshots use the neutral panel background. Standalone drawing marks retain their normal rendering.
+
 ## Component catalogue (Storybook)
 
 - `bun run storybook` serves the catalogue on :6006; `bun run build-storybook` writes

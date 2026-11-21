@@ -483,7 +483,6 @@ export const CanvasSections = memo(function CanvasSections({
 export function SectionsPanel() {
   const canvas = usePageCanvas()
   const sections = useStore(activeSections)
-  const canEdit = useStore(canEditOpenCanvas)
   const selectedId = useStore((s) => s.selectedSectionId)
   const t = useT()
   const frameCounts = new Map<string, number>()
@@ -492,17 +491,7 @@ export function SectionsPanel() {
     if (section) frameCounts.set(section.id, (frameCounts.get(section.id) ?? 0) + 1)
   }
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-auto p-2">
-      {canEdit && (
-        <Button
-          variant="bare"
-          size={null}
-          className="mb-2 justify-between rounded-control bg-sub px-2.5 py-2 text-left text-label font-medium text-ink hover:bg-paper-deep"
-          onClick={() => useStore.getState().setTool('section')}
-        >
-          {t('canvas.sectionAdd')} <span className="text-ink-faint">⇧S</span>
-        </Button>
-      )}
+    <div className="flex flex-col px-2">
       {sections.length === 0 && <p className="px-2.5 py-2 text-label text-ink-soft">{t('canvas.sectionEmpty')}</p>}
       {sections.map((section) => (
         <Button
@@ -510,7 +499,7 @@ export function SectionsPanel() {
           size={null}
           key={section.id}
           title={section.name}
-          className="flex items-center justify-start gap-2 rounded-row px-2.5 py-2 text-left text-label text-ink hover:bg-sub"
+          className="flex items-center justify-start gap-2 rounded-row px-2.5 py-1.5 text-left text-label text-ink hover:bg-sub"
           aria-pressed={selectedId === section.id}
           onClick={() => useStore.getState().selectSection(section.id)}
           onDoubleClick={() => useStore.getState().focusSection(section.id)}

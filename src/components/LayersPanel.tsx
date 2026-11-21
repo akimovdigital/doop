@@ -67,7 +67,7 @@ import {
 } from './ui/panel'
 import { FrameworkPanel } from './FrameworkPanel'
 import { Button } from './ui/button'
-import { Disclosure } from './ui/collapsible'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible'
 import { Input } from './ui/input'
 import { Tooltip } from './ui/tooltip'
 import { Toolbar, ToolbarControl } from './ui/toolbar'
@@ -593,14 +593,31 @@ export function LayersPanel({
           under them, the search at the bottom within thumb's reach */}
           {pageCanvas && <PagesPanel key={pageCanvas.id} canvasId={pageCanvas.id} />}
           {pageCanvas && (
-            <Disclosure
-              label={t('canvas.sectionTab')}
-              className="mx-2 mt-1 max-h-[36%] flex-none overflow-auto rounded-row border border-line-soft"
-              triggerClassName="w-full flex-row-reverse px-2 py-1.5 text-label text-ink-soft"
-              contentClassName="mt-0"
-            >
-              <SectionsPanel />
-            </Disclosure>
+            <Collapsible className="mt-1.5 flex max-h-[36%] flex-none flex-col">
+              <div className="flex h-6 shrink-0 items-center justify-between pr-2.5 pl-3.5">
+                <CollapsibleTrigger
+                  className={cn('h-full flex-1 flex-row-reverse justify-end hover:text-ink', sectionHeading)}
+                >
+                  {t('canvas.sectionTab')}
+                </CollapsibleTrigger>
+                {!readOnly && (
+                  <Tooltip label={t('canvas.sectionAdd')} side="bottom">
+                    <Button
+                      variant="bare"
+                      size="icon-sm"
+                      className={sectionBtn}
+                      aria-label={t('canvas.sectionAdd')}
+                      onClick={() => useStore.getState().setTool('section')}
+                    >
+                      <PlusIcon className="size-3.5" />
+                    </Button>
+                  </Tooltip>
+                )}
+              </div>
+              <CollapsibleContent className="min-h-0 overflow-auto">
+                <SectionsPanel />
+              </CollapsibleContent>
+            </Collapsible>
           )}
           <div className={cn('mt-1.5 flex h-6 flex-none items-center justify-between pr-2.5 pl-3.5', sectionHeading)}>
             <span data-slot="frame-section-heading" className={sectionHeading}>

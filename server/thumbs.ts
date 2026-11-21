@@ -27,7 +27,15 @@ const MIN_REVALIDATE_MS = 30_000
 /** frames purged mid-render — a pending create must not re-persist them */
 const dead = new Set<string>()
 
-const keyFor = (frameId: string) => `thumb/${frameId}.jpg`
+export type ThumbKind = 'card' | 'canvas'
+
+const keyFor = (frameId: string, kind: ThumbKind) =>
+  kind === 'canvas' ? `thumb/${frameId}-canvas-v1.bin` : `thumb/${frameId}.jpg`
+
+/* Reduce density before capture so long pages keep their bottom edge. */
+function canvasDensity({ width, height }: Frame) {
+  return Math.min(1, 960 / width, 5600 / height, Math.sqrt(2_400_000 / (width * height)))
+}
 
 /* Global bound on concurrent preview renders. Per-frame dedupe caps repeat
    requests but not breadth: a post-restart dashboard of 50 stale canvases
@@ -44,19 +52,21 @@ const loadScreenshot = () => (screenshot ??= import('./screenshot.ts'))
 
 /** The preview render: card-sized, clipped, cheap — matches what /i/?preview
  *  serves, because this IS what /i/?preview serves. */
-async function render(frame: Frame): Promise<Buffer> {
+async function render(frame: Frame, kind: ThumbKind) {
   if (active >= MAX_CONCURRENT_RENDERS) await new Promise<void>((r) => waiting.push(r))
   active++
   try {
     const { renderFrame } = await loadScreenshot()
-    /* the html is read when the render starts, not when it was queued */
-    return await renderFrame(await store.renderSource(frame), Math.min(1, 640 / frame.width), {
+    /* Read the latest visual state only when the render starts. */
+    const source = await store.renderSource(frame)
+    const canvas = kind === 'canvas'
+    const buf = await renderFrame(source, canvas ? canvasDensity(source) : Math.min(1, 640 / source.width), {
       type: 'jpeg',
-      quality: 70,
-      maxHeight: PREVIEW_MAX_HEIGHT,
-      /* a dashboard tile can wait; an agent's screenshot should not */
+      quality: canvas ? 76 : 70,
+      ...(canvas ? { canvasSnapshot: true } : { maxHeight: PREVIEW_MAX_HEIGHT }),
       priority: 'background',
     })
+    return { buf, updatedAt: source.updatedAt }
   } finally {
     active--
     waiting.shift()?.()
@@ -65,28 +75,35 @@ async function render(frame: Frame): Promise<Buffer> {
 
 /** Render now, persist, and return the bytes. Deduped per frame; rejects on
  *  render failure (the caller decides what a failed render means). */
-export function create(frame: Frame): Promise<Buffer> {
-  const inflight = pending.get(frame.id)
+export function create(frame: Frame, kind: ThumbKind = 'card'): Promise<Buffer> {
+  const key = keyFor(frame.id, kind)
+  const inflight = pending.get(key)
   if (inflight) return inflight
-  lastAttempt.set(frame.id, Date.now())
-  const p = render(frame).then(async (buf) => {
+  lastAttempt.set(key, Date.now())
+  const p = render(frame, kind).then(async ({ buf, updatedAt }) => {
     /* persist is best-effort: a bucket hiccup must not fail the response
        that only needed the bytes */
     try {
       if (!dead.has(frame.id)) {
-        await storage.putObject(keyFor(frame.id), buf, 'image/jpeg')
-        written.set(frame.id, frame.updatedAt)
+        if (kind === 'canvas') {
+          // Keep the revision and image in one atomic object across restarts.
+          const snapshot = Buffer.concat([Buffer.from(`${updatedAt}\n`), buf])
+          await storage.putObject(key, snapshot, 'application/octet-stream')
+        } else {
+          await storage.putObject(key, buf, 'image/jpeg')
+          written.set(key, updatedAt)
+        }
         /* purge may have run during the put — its delete can land before
            our write finishes, so re-check and clean up our own orphan */
-        if (dead.has(frame.id)) await storage.deleteObject(keyFor(frame.id))
+        if (dead.has(frame.id)) await storage.deleteObject(key)
       }
     } catch (e) {
       console.error(`thumb persist failed for ${frame.id}:`, e)
     }
     return buf
   })
-  pending.set(frame.id, p)
-  p.catch(() => {}).finally(() => pending.delete(frame.id))
+  pending.set(key, p)
+  p.catch(() => {}).finally(() => pending.delete(key))
   return p
 }
 
@@ -95,10 +112,11 @@ export function create(frame: Frame): Promise<Buffer> {
  *  off (throttled, deduped, errors logged and swallowed) and the stored
  *  bytes are returned anyway: stale beats blank. Returns null when nothing
  *  is stored yet. */
-export async function getStored(frame: Frame): Promise<Buffer | null> {
+export async function getStored(frame: Frame, kind: ThumbKind = 'card'): Promise<Buffer | null> {
+  const key = keyFor(frame.id, kind)
   let buf: Buffer | null
   try {
-    buf = await storage.getObject(keyFor(frame.id))
+    buf = await storage.getObject(key)
   } catch (e) {
     console.error(`thumb read failed for ${frame.id}:`, e)
     return null
@@ -106,12 +124,18 @@ export async function getStored(frame: Frame): Promise<Buffer | null> {
   if (!buf) {
     /* the map claimed fresh but the object is gone (manual purge, new
        bucket) — forget, so the caller falls through to a live render */
-    written.delete(frame.id)
+    written.delete(key)
     return null
   }
-  const fresh = written.get(frame.id) === frame.updatedAt
-  const throttled = Date.now() - (lastAttempt.get(frame.id) ?? 0) < MIN_REVALIDATE_MS
-  if (!fresh && !throttled && !pending.has(frame.id))
+  if (kind === 'canvas') {
+    const header = Buffer.from(`${frame.updatedAt}\n`)
+    return buf.length > header.length && buf.subarray(0, header.length).equals(header)
+      ? buf.subarray(header.length)
+      : null
+  }
+  const fresh = written.get(key) === frame.updatedAt
+  const throttled = Date.now() - (lastAttempt.get(key) ?? 0) < MIN_REVALIDATE_MS
+  if (!fresh && !throttled && !pending.has(key))
     create(frame).catch((e) => console.error(`thumb revalidate failed for ${frame.id}:`, e))
   return buf
 }
@@ -120,7 +144,10 @@ export async function getStored(frame: Frame): Promise<Buffer | null> {
  *  thumb folder holds only live frames. Best-effort fire-and-forget. */
 export function purge(frameId: string): void {
   dead.add(frameId)
-  written.delete(frameId)
-  lastAttempt.delete(frameId)
-  storage.deleteObject(keyFor(frameId)).catch(() => {})
+  for (const kind of ['card', 'canvas'] as const) {
+    const key = keyFor(frameId, kind)
+    written.delete(key)
+    lastAttempt.delete(key)
+    void storage.deleteObject(key).catch(() => {})
+  }
 }

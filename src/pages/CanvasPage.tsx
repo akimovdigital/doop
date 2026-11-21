@@ -1029,7 +1029,13 @@ export function CanvasPage({
           bar, so every panel offset stays measured from there */}
       <div className="absolute inset-0 overflow-hidden" style={chromeVars}>
         {find && !presenting && !uiHidden && <FindBar mode={find} step={findStep} onClose={() => setFind(null)} />}
-        <Stage onAddFrame={addFrame} insets={stageInsets} bounds={stageBounds} docked={docked} />
+        <Stage
+          onAddFrame={addFrame}
+          insets={stageInsets}
+          bounds={stageBounds}
+          docked={docked}
+          presentationOpen={presenting !== null}
+        />
         <div
           className={cn(
             'pointer-events-none absolute inset-x-0 bottom-0 top-[50px] max-md:top-14 max-xs:top-[100px]',

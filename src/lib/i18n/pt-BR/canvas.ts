@@ -69,6 +69,8 @@ export const canvas: Catalog['canvas'] = {
   exportTitle: 'Exportar frames como PDF',
   export: 'Exportar',
   share: 'Compartilhar',
+  playFramePreview: 'Reproduzir prévia do quadro',
+  stopFramePreview: 'Parar prévia do quadro',
   presentFromFrame: 'Apresentar a partir deste frame',
   presentPrototype: 'Apresentar o protótipo',
   addFrameToPresent: 'Adicione um frame para apresentar',

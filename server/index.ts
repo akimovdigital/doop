@@ -581,6 +581,7 @@ app.get('/i/:id.:ext', async (req, res) => {
       quality: Math.min(100, Math.max(1, Number(req.query.quality) || 90)),
       /* ?preview — the dashboard-card variant; see previews.ts */
       preview: !layer && req.query.preview !== undefined,
+      canvasSnapshot: !layer && req.query.snapshot !== undefined,
       layer: layer ? layerSelector(layer) : undefined,
       ip: req.ip ?? 'unknown',
       /* the render limit targets anonymous hotlink abuse — a logged-in user

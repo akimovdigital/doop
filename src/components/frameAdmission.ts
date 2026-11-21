@@ -2,7 +2,6 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject
 import { rotatedBounds } from '../../shared/frameRotation'
 import type { Frame } from '../../shared/types'
 import { hasFrameDocument, onFrameDocument } from '../lib/frameBridge'
-import { isCanvasElement } from '../lib/drawing'
 import { useStore } from '../lib/store'
 
 const EAGER_FRAME_LIMIT = 16
@@ -13,7 +12,7 @@ const STARTS_PER_BATCH = 3
 const BOOT_TIMEOUT_MS = 2_000
 const NEAR_PX = 180
 const PAN_SETTLE_MS = 180
-const OVERVIEW_ZOOM = 0.12
+const MAX_EDIT_DOCUMENTS = 3
 
 export function useFrameAdmission(
   frames: Frame[],
@@ -31,7 +30,9 @@ export function useFrameAdmission(
     }
     return size <= EAGER_HTML_LIMIT || count <= SMALL_PAGE_FRAME_LIMIT
   }, [frames])
-  const overview = useStore((s) => !eager && s.viewport.zoom <= OVERVIEW_ZOOM && !s.prototypeMode)
+  const prototypeMode = useStore((s) => s.prototypeMode)
+  const snapshots = !prototypeMode && (!eager || import.meta.env.VITE_DOOP_STATIC_CANVAS === '1')
+  const snapshotPolicy = useRef(false)
   const [admitted, setAdmitted] = useState(new Set<string>())
   const started = useRef(new Set<string>())
   const booting = useRef(new Map<string, number>())
@@ -49,7 +50,6 @@ export function useFrameAdmission(
       .filter((frame) => !frame.hidden)
       .map((frame) => ({
         id: frame.id,
-        liveInOverview: isCanvasElement(frame.html),
         ...rotatedBounds(frame, frame.rotation ?? 0),
       }))
     const liveIds = new Set(live.map((frame) => frame.id))
@@ -60,6 +60,30 @@ export function useFrameAdmission(
       boots.delete(id)
       changed = true
     }
+    if (snapshots) {
+      if (!snapshotPolicy.current) {
+        ids.clear()
+        boots.clear()
+        changed = true
+      }
+      snapshotPolicy.current = true
+      wake.current = (id) => {
+        if (!liveIds.has(id)) return
+        ids.delete(id)
+        ids.add(id)
+        const selectedId = useStore.getState().selectedId
+        for (const candidate of ids) {
+          if (ids.size <= MAX_EDIT_DOCUMENTS) break
+          if (candidate !== selectedId && candidate !== id) ids.delete(candidate)
+        }
+        setAdmitted(new Set(ids))
+      }
+      if (changed) setAdmitted(new Set(ids))
+      return () => {
+        wake.current = null
+      }
+    }
+    snapshotPolicy.current = false
     if (eager) {
       // A frame already painted on a small page stays alive when new frames make it large.
       for (const id of liveIds) {
@@ -118,7 +142,7 @@ export function useFrameAdmission(
 
     function drain() {
       raf = 0
-      const { viewport, selectedId, ctxMenu, prototypeMode, streams } = useStore.getState()
+      const { viewport, selectedId, ctxMenu, prototypeMode } = useStore.getState()
       // A deliberate selection can jump the queue. The rest of the work is
       // bounded so independent sandbox bootstraps don't all land in one paint.
       let added = selectedId ? start(selectedId) : false
@@ -129,7 +153,7 @@ export function useFrameAdmission(
         const { x, y, zoom } = viewport
         const candidates = live
           .flatMap((frame) => {
-            if (ids.has(frame.id) || (overview && !frame.liveInOverview && !streams[frame.id])) return []
+            if (ids.has(frame.id)) return []
             const left = frame.x * zoom + x
             const top = frame.y * zoom + y
             const right = left + frame.width * zoom
@@ -171,8 +195,7 @@ export function useFrameAdmission(
       } else if (
         state.selectedId === previous.selectedId &&
         state.ctxMenu === previous.ctxMenu &&
-        state.prototypeMode === previous.prototypeMode &&
-        (!overview || state.streams === previous.streams)
+        state.prototypeMode === previous.prototypeMode
       )
         return
       if (ids.size < live.length) schedule()
@@ -194,7 +217,7 @@ export function useFrameAdmission(
       window.clearTimeout(idleTimer)
       for (const off of watches.values()) off()
     }
-  }, [frames, stage, layer, eager, overview])
+  }, [frames, stage, layer, eager, snapshots])
 
-  return { eager, overview, admitted, request }
+  return { eager: eager && !snapshots, snapshots, admitted, request }
 }

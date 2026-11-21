@@ -165,7 +165,7 @@ export async function loadFramePage(frame: Frame, options?: PageOptions): Promis
   }
 }
 
-async function loadFrameInto(page: Page, frame: Frame): Promise<void> {
+async function loadFrameInto(page: Page, frame: Frame, snapshotScale?: number): Promise<void> {
   const assetOrigin = new URL(env.BETTER_AUTH_URL).origin
   await guardPublicPageRequests(page, {
     allowUrl: (url) =>
@@ -179,8 +179,8 @@ async function loadFrameInto(page: Page, frame: Frame): Promise<void> {
     width: Math.max(1, Math.round(frame.width)),
     /* A viewport does not need to span an entire imported landing page for
        layout/computed-style inspection; full-page content remains in the DOM. */
-    height: Math.max(1, Math.min(Math.round(frame.height), 4000)),
-    deviceScaleFactor: 1,
+    height: Math.max(1, Math.min(Math.round(frame.height), snapshotScale === undefined ? 4000 : Infinity)),
+    deviceScaleFactor: snapshotScale ?? 1,
   })
   /* setContent leaves the page on about:blank, where the relative /a/...
      asset URLs of imported frames resolve nowhere. In the app an iframe
@@ -652,6 +652,7 @@ export interface RenderOptions extends PageOptions {
   type?: 'png' | 'jpeg'
   quality?: number
   maxHeight?: number
+  canvasSnapshot?: boolean
   /** cut the render to the box of the first element this CSS selector
    *  matches (a layer export); rejects with LayerNotFoundError when nothing
    *  visible matches */
@@ -668,11 +669,35 @@ export function renderFrame(
     'rendering the frame',
     RENDER_TIMEOUT_MS,
     async (page) => {
-      await loadFrameInto(page, frame)
+      await loadFrameInto(page, frame, opts.canvasSnapshot ? scale : undefined)
+      if (opts.canvasSnapshot) await settleCanvasSnapshot(page)
       return screenshotOn(page, frame, scale, opts)
     },
     { priority: opts.priority },
   )
+}
+
+/** Give images throughout the full viewport a chance to decode. Capture a
+ * settled entrance state, with looping CSS motion and media paused. */
+async function settleCanvasSnapshot(page: Page) {
+  await page.evaluate(async () => {
+    const images = [...document.images].map((img) => {
+      img.loading = 'eager'
+      return img.decode().catch(() => {})
+    })
+    await Promise.race([
+      Promise.all([document.fonts.ready, ...images]),
+      new Promise((resolve) => setTimeout(resolve, 650)),
+    ])
+    for (const animation of document.getAnimations()) {
+      if (Number.isFinite(animation.effect?.getComputedTiming().endTime) && animation.playbackRate !== 0) {
+        animation.finish()
+      } else {
+        animation.pause()
+      }
+    }
+    for (const media of document.querySelectorAll<HTMLMediaElement>('video, audio')) media.pause()
+  })
 }
 
 interface Clip {

@@ -178,6 +178,25 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
     }
   }
 
+  // Canvas edit documents are still. The independent prototype player
+  // uses the same runtime without this presentation rule.
+  var vStillSheet = null
+  var still = false
+  try {
+    vStillSheet = new CSSStyleSheet()
+    vStillSheet.replaceSync('*,:before,:after{animation-play-state:paused!important;transition:none!important}')
+  } catch (e) {}
+  function setStill(on) {
+    if (still === on) return
+    still = on
+    if (!vStillSheet) return
+    var sheets = document.adoptedStyleSheets.filter(function (sheet) { return sheet !== vStillSheet })
+    document.adoptedStyleSheets = on ? sheets.concat(vStillSheet) : sheets
+  }
+  document.addEventListener('play', function (event) {
+    if (still && event.target instanceof HTMLMediaElement) event.target.pause()
+  }, true)
+
   function render(html) {
     var doc
     try {
@@ -189,7 +208,7 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
       syncAttrs(document.body, doc.body)
       morphChildren(document.head, doc.head)
       morphChildren(document.body, doc.body)
-      activateScripts()
+      if (!still) activateScripts()
       syncPathVisibility()
     } catch (e) {
       if (doc) document.documentElement.innerHTML = doc.documentElement.innerHTML
@@ -1813,6 +1832,7 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
       parent.postMessage({ type: 'doop:style-gesture-result', reqId: d.reqId, info: changed ? inspect(d.selector) : null }, '*')
     }
     if (d.type === 'doop:html' && typeof d.html === 'string' && !editing) {
+      setStill(d.still === true)
       render(d.html)
       notifyFrameUpdated()
       protoHtmlChanged()

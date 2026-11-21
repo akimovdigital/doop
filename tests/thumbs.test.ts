@@ -93,6 +93,26 @@ describe('thumbs', () => {
     expect(mocks.deleteObject).toHaveBeenCalledWith('thumb/purged-during-put.jpg')
   })
 
+  it('keeps full canvas snapshots separate and serves the persisted revision after a restart', async () => {
+    const tall = { ...frame('canvas-snapshot'), width: 1800, height: 14_000, updatedAt: 12 }
+    const jpeg = Buffer.from('full snapshot')
+    mocks.renderFrame.mockResolvedValue(jpeg)
+    expect(await thumbs.create(tall, 'canvas')).toEqual(jpeg)
+    expect(mocks.renderFrame.mock.calls[0]?.[1]).toBeLessThanOrEqual(0.4)
+    expect(mocks.renderFrame).toHaveBeenCalledWith(expect.objectContaining({ height: 14_000 }), expect.any(Number), {
+      type: 'jpeg',
+      quality: 76,
+      priority: 'background',
+      canvasSnapshot: true,
+    })
+    const [key, persisted] = mocks.putObject.mock.calls[0]!
+    expect(key).toBe('thumb/canvas-snapshot-canvas-v1.bin')
+    mocks.getObject.mockResolvedValue(persisted)
+    expect(await thumbs.getStored(tall, 'canvas')).toEqual(jpeg)
+    expect(await thumbs.getStored({ ...tall, updatedAt: 13 }, 'canvas')).toBeNull()
+    expect(mocks.renderFrame).toHaveBeenCalledTimes(1)
+  })
+
   it('getStored serves stored bytes and refreshes stale ones in the background, deduped', async () => {
     deferredRenders()
     mocks.getObject.mockResolvedValue(Buffer.from('stale'))

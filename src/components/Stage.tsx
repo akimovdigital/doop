@@ -199,11 +199,13 @@ function paperStyle(paper: Paper): CSSProperties {
 }
 
 export function Stage({
+  presentationOpen = false,
   onAddFrame,
   insets = NO_INSETS,
   bounds,
   docked = false,
 }: {
+  presentationOpen?: boolean
   onAddFrame: () => void
   /** px the top bar, floating panels and islands cover at each of the
    *  stage's edges — fits centre in what is left, and there is no room
@@ -1287,7 +1289,13 @@ export function Stage({
               <CommentThreadLayer.Provider value={threadLayer}>
                 <CanvasSections stage={ref} world={worldRef} />
                 <FrameLabelLayer.Provider value={labelLayer}>
-                  <FrameStack key={activePageId} frames={canvas?.frames ?? []} layoutZoom={layoutZoom} stage={ref} />
+                  <FrameStack
+                    key={activePageId}
+                    frames={canvas?.frames ?? []}
+                    layoutZoom={layoutZoom}
+                    stage={ref}
+                    presentationOpen={presentationOpen}
+                  />
                 </FrameLabelLayer.Provider>
                 <GhostFrames />
                 <FlowOverlay />
@@ -1500,15 +1508,21 @@ function FrameStack({
   frames,
   layoutZoom,
   stage,
+  presentationOpen,
 }: {
   frames: Frame[]
   layoutZoom: number
+  presentationOpen: boolean
   stage: React.RefObject<HTMLDivElement | null>
 }) {
   const mounted = useMemo(() => [...frames].sort(byCreation), [frames])
   const rank = useMemo(() => new Map(frames.map((f, i) => [f.id, i + 1])), [frames])
   const layer = useRef<HTMLDivElement>(null)
-  const { eager, overview, admitted, request } = useFrameAdmission(frames, stage, layer)
+  const { eager, snapshots, admitted, request } = useFrameAdmission(frames, stage, layer)
+  const [playingId, setPlayingId] = useState<string | null>(null)
+  const stopPlaying = useCallback(() => setPlayingId(null), [])
+  const togglePlaying = useCallback((id: string) => setPlayingId((current) => (current === id ? null : id)), [])
+  if (presentationOpen && playingId !== null) setPlayingId(null)
   const compactSectionTitles = useStore((s) => s.selectedSectionId !== null && s.viewport.zoom <= 0.05)
   return (
     <div ref={layer} className="absolute top-0 left-0 isolate">
@@ -1522,7 +1536,10 @@ function FrameStack({
             stack={rank.get(f.id)}
             layoutZoom={layoutZoom}
             loadDocument={eager || admitted.has(f.id)}
-            overview={overview}
+            snapshots={snapshots}
+            playing={!presentationOpen && playingId === f.id}
+            onTogglePlayback={togglePlaying}
+            onStopPlayback={stopPlaying}
             compactSectionTitles={compactSectionTitles}
             requestDocument={request}
           />

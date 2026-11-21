@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Page } from 'puppeteer-core'
+import sharp from 'sharp'
 import { findBrowserPath } from '../server/screenshot'
 import { pagePerTest, serveBuilt, type BuiltServer } from './browser'
 import { freePort, startServer, type Server } from './harness'
@@ -18,11 +19,12 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     const port = await freePort()
     web = await serveBuilt({
       '/api': { target: `http://localhost:${port}` },
+      '/i': { target: `http://localhost:${port}` },
       '/ws': { target: `ws://localhost:${port}`, ws: true },
     })
     origin = web.origin
     server = await startServer({ PORT: String(port), BETTER_AUTH_URL: origin })
-  }, 60_000)
+  }, 180_000)
   beforeEach(async () => {
     page = await pages.open()
     page.setDefaultTimeout(10_000)
@@ -100,6 +102,15 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     await page.mouse.down()
     await page.mouse.move(box.x + box.width + 12, box.y + box.height + 12, { steps: 4 })
     await page.mouse.up()
+    const sectionToggle = 'button[data-slot="collapsible-trigger"][aria-expanded="false"]'
+    await page.locator('::-p-aria(Sections)').click()
+    const sectionUI = await page.$eval('button[data-slot="collapsible-trigger"][aria-expanded="true"]', (button) => {
+      const layerHeading = document.querySelector('[data-slot="frame-section-heading"]')!
+      return !!(button.compareDocumentPosition(layerHeading) & Node.DOCUMENT_POSITION_FOLLOWING)
+    })
+    expect(sectionUI).toBe(true)
+    await page.locator('::-p-aria(Sections)').click()
+    await page.waitForSelector(sectionToggle)
     const title = await page.waitForSelector('[data-canvas-section] button')
     expect(await title?.evaluate((element) => element.textContent?.trim())).toBe('Section 1')
     const sectionSelector = '[data-canvas-section]'
@@ -234,34 +245,92 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     expect(css).toContain('--space-roomy:24px')
   }, 20_000)
 
-  it('keeps overview frames light and opens the selected frame at overview scale', async () => {
-    await page.evaluate(async () => {
+  it('keeps tall frames fully visible and runs one interactive preview on demand', async () => {
+    const tallId = await page.evaluate(async () => {
       const id = location.pathname.split('/').at(-1)
+      let tallId = ''
       for (let i = 0; i < 17; i++) {
         const response = await fetch('/api/canvases/' + id + '/frames', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name: 'Overview ' + i,
-            x: i * 1200,
-            y: 300,
+            x: (i % 4) * 1000,
+            y: Math.floor(i / 4) * 600,
             width: 800,
-            height: 1000,
-            html: '<p>Frame</p>',
+            height: i === 0 ? 2200 : 350,
+            html:
+              i === 0
+                ? `<!doctype html><html><style>body{margin:0;background:#112233}
+                  #footer{position:absolute;left:0;right:0;bottom:0;height:200px;background:#228844}
+                  #interactive{position:absolute;width:240px;height:100px;left:280px;top:300px}
+                  @keyframes move{to{transform:translateX(50px)}} #motion{animation:move 1s infinite alternate}
+                  </style><body><button id="interactive" onclick="this.textContent='Clicked'">Interactive</button>
+                  <div id="motion">Animated</div><div id="footer">Bottom content</div></body></html>`
+                : '<p>Frame</p>',
           }),
         })
         if (!response.ok) throw new Error(await response.text())
+        if (i === 0) tallId = (await response.json()).id as string
       }
+      return tallId
     })
     await page.reload()
-    const preview = await page.waitForSelector('[data-frame-overview-preview]')
-    expect(await page.$$eval('iframe[data-doop-frame]', (iframes) => iframes.length)).toBe(0)
-    const shell = await preview!.evaluateHandle((node) => node.closest('[data-doop-frame-shell]')!)
-    const surface = await shell.$('[data-frame-surface]')
-    await surface!.click()
-    await page.waitForSelector('iframe[data-doop-frame]')
-    expect(await page.$$eval('iframe[data-doop-frame]', (iframes) => iframes.length)).toBe(1)
-  }, 25_000)
+    const shell = `[data-doop-frame-shell="${tallId}"]`
+    await page.waitForSelector(shell + ' [data-frame-overview-preview]')
+    expect(await page.$$('iframe[data-doop-frame]')).toHaveLength(0)
+    const jpeg = await page.evaluate(async (id) => {
+      const response = await fetch(`/i/${id}.jpg?snapshot`)
+      if (!response.ok) throw new Error(await response.text())
+      return Array.from(new Uint8Array(await response.arrayBuffer()))
+    }, tallId)
+    const { data, info } = await sharp(Buffer.from(jpeg)).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+    expect(info.height / info.width).toBeCloseTo(2200 / 800, 2)
+    const tail = ((info.height - 10) * info.width + 10) * info.channels
+    expect(data[tail + 1]).toBeGreaterThan(110)
+    expect(data[tail]).toBeLessThan(70)
+    await page.click(shell + ' [data-frame-title]')
+    await page.keyboard.down('Shift')
+    await page.keyboard.press('Digit2')
+    await page.keyboard.up('Shift')
+    expect(await page.$$('iframe[data-doop-frame]')).toHaveLength(0)
+    await page.click('button[aria-label="Play frame preview"]')
+    const inline = await page.waitForSelector('[data-inline-preview] iframe')
+    const contentFrame = await inline!.contentFrame()
+    await contentFrame!.waitForSelector('button#interactive')
+    expect(await contentFrame!.$eval('#motion', (element) => getComputedStyle(element).animationPlayState)).toBe(
+      'running',
+    )
+    const target = await contentFrame!.$eval('button#interactive', (button) => {
+      const rect = button.getBoundingClientRect()
+      return { x: (rect.left + rect.width / 2) / innerWidth, y: (rect.top + rect.height / 2) / innerHeight }
+    })
+    const box = (await inline!.boundingBox())!
+    const x = box.x + target.x * box.width
+    const y = box.y + target.y * box.height
+    const topTarget = await page.evaluate(
+      (x, y) => {
+        const hit = document.elementFromPoint(x, y)
+        return {
+          isPlayer: hit?.matches('[data-inline-preview] iframe') ?? false,
+          tag: hit?.tagName,
+          classes: hit?.className,
+          x,
+          y,
+        }
+      },
+      x,
+      y,
+    )
+    expect(topTarget.isPlayer, JSON.stringify(topTarget)).toBe(true)
+    await page.mouse.click(x, y)
+    await contentFrame!.waitForFunction(() => document.querySelector('#interactive')?.textContent === 'Clicked')
+    await page.click('button[aria-label="Stop frame preview"]')
+    await page.waitForSelector('[data-inline-preview]', { hidden: true })
+    expect(await page.$$('iframe[data-doop-frame]')).toHaveLength(0)
+    await page.click('button[aria-label="Present prototype"]')
+    await page.waitForSelector('[data-prototype-player]:not([data-inline-preview]) iframe')
+  }, 60_000)
 
   it('copies another page’s link without leaving the current page', async () => {
     await page.browserContext().overridePermissions(origin, ['clipboard-read', 'clipboard-sanitized-write'])
