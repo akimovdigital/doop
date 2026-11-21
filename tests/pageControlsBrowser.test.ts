@@ -82,6 +82,46 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     await page.evaluate(() => new Promise(requestAnimationFrame))
   }
 
+  it('keeps the dark canvas colour at low zoom and restores the chrome with Escape', async () => {
+    await page.evaluate(() => localStorage.setItem('doop-theme', 'dark'))
+    await page.reload()
+    await page.waitForSelector('[data-page-id]')
+    await page.evaluate(async () => {
+      const stage = document.querySelector('.stage')!
+      for (let i = 0; i < 15; i++) {
+        stage.dispatchEvent(
+          new WheelEvent('wheel', {
+            deltaY: 40,
+            ctrlKey: true,
+            clientX: 700,
+            clientY: 190,
+            bubbles: true,
+            cancelable: true,
+          }),
+        )
+        await new Promise(requestAnimationFrame)
+      }
+    })
+    await page.waitForFunction(() => {
+      const stage = document.querySelector<HTMLElement>('.stage')
+      return Number(stage?.style.getPropertyValue('--zoom')) === 0.01
+    })
+    const paper = await page.screenshot({ clip: { x: 650, y: 150, width: 80, height: 80 } })
+    const colours = (await sharp(paper).stats()).channels.slice(0, 3)
+    for (const { mean } of colours) {
+      expect(mean).toBeGreaterThanOrEqual(19)
+      expect(mean).toBeLessThan(23)
+    }
+    expect(await page.$('[data-dot-grid][hidden]')).not.toBeNull()
+    await page.keyboard.down('Meta')
+    await page.keyboard.press('.')
+    await page.keyboard.up('Meta')
+    await page.waitForSelector('button[aria-label="Show interface"]', { visible: true })
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('[data-page-id]', { visible: true })
+    expect(await page.$('button[aria-label="Show interface"]')).toBeNull()
+  })
+
   it('draws, styles and moves a section with its frame and opens its link', async () => {
     await page.evaluate(async () => {
       const response = await fetch('/api/canvases/' + location.pathname.split('/').at(-1) + '/frames', {
@@ -278,6 +318,27 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     await page.reload()
     const shell = `[data-doop-frame-shell="${tallId}"]`
     await page.waitForSelector(shell + ' [data-frame-overview-preview]')
+    await page.setViewport({ width: 1400, height: 560 })
+    const tree = '[role="tree"]'
+    await page.waitForFunction(
+      (selector) => {
+        const rail = document.querySelector(selector)!
+        return rail.scrollHeight > rail.clientHeight
+      },
+      {},
+      tree,
+    )
+    await page.keyboard.down('Meta')
+    await page.keyboard.press('a')
+    await page.keyboard.up('Meta')
+    await page.waitForFunction(
+      (selector) => document.querySelectorAll(selector).length === 17,
+      {},
+      `${tree} [aria-selected="true"]`,
+    )
+    expect(await page.$eval(tree, (rail) => rail.scrollTop)).toBe(0)
+    await page.keyboard.press('Escape')
+    await page.setViewport({ width: 1400, height: 900 })
     expect(await page.$$('iframe[data-doop-frame]')).toHaveLength(0)
     const jpeg = await page.evaluate(async (id) => {
       const response = await fetch(`/i/${id}.jpg?snapshot`)

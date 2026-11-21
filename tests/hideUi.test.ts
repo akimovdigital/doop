@@ -41,6 +41,14 @@ describe('⌘. hide UI', () => {
     expect(useStore.getState().uiHidden).toBe(false)
   })
 
+  it('shows the chrome on a direct switch to a different canvas', () => {
+    const canvas = { id: 'c1', name: 'Canvas', frames: [] } as unknown as Canvas
+    useStore.getState().setCanvas(canvas)
+    useStore.getState().toggleUiHidden()
+    useStore.getState().setCanvas({ ...canvas, id: 'c2' })
+    expect(useStore.getState().uiHidden).toBe(false)
+  })
+
   it('acts only over the canvas view, outside PresentMode', () => {
     expect(canHideUi({ view: 'canvas', presenting: false })).toBe(true)
     /* the board has no canvas chrome; PresentMode keeps its own controls */

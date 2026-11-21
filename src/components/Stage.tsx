@@ -96,6 +96,12 @@ function worldTransform(vp: Viewport, k: number): string {
   return `translate(${vp.x / k}px, ${vp.y / k}px) scale(${vp.zoom / k})`
 }
 
+const DOT_GRID_SPACING = 26
+/* Below this spacing, each dot's footprint covers too much of its tile.
+   Fade before the grid can tint the entire paper at overview zoom. */
+const DOT_GRID_FADE_FROM = 4
+const DOT_GRID_FADE_TO = 10
+
 /* The pixel grid, as Figma draws it zoomed in: a hairline on every design-px
    boundary. Below PIXEL_GRID_FROM the cells are too small to read as anything
    but a tint, so it fades in from there and is fully on at PIXEL_GRID_FULL. */
@@ -327,6 +333,8 @@ export function Stage({
   useLayoutEffect(() => {
     let lastPaintedZoom: number | undefined
     let lastPixelGridOpacity: number | undefined
+    let lastDotOpacity: number | undefined
+    let dotGridOverhang = 0
     function apply(vp: { x: number; y: number; zoom: number }) {
       const world = worldRef.current
       const grid = gridRef.current
@@ -335,18 +343,36 @@ export function Stage({
       world.style.transform = worldTransform(vp, layoutZoomRef.current)
       /* the camera's offset, for chrome drawn in screen px (FrameLabelLayer) */
       if (labelLayerRef.current) labelLayerRef.current.style.transform = `translate(${vp.x}px, ${vp.y}px)`
-      const period = 26 * vp.zoom
       const zoomChanged = vp.zoom !== lastPaintedZoom
+      const period = DOT_GRID_SPACING * vp.zoom
+      const dotOpacity = Math.min(
+        1,
+        Math.max(0, (period - DOT_GRID_FADE_FROM) / (DOT_GRID_FADE_TO - DOT_GRID_FADE_FROM)),
+      )
+      if (dotOpacity !== lastDotOpacity) {
+        grid.hidden = dotOpacity === 0
+        grid.style.opacity = String(dotOpacity)
+        lastDotOpacity = dotOpacity
+      }
       if (zoomChanged) {
         stage.style.setProperty('--zoom', String(vp.zoom))
-        grid.style.backgroundSize = `${period}px ${period}px`
-        /* one period of overhang: the layer slides back by up to a period */
-        grid.style.width = grid.style.height = `calc(100% + ${period}px)`
+        if (dotOpacity > 0) {
+          grid.style.backgroundSize = `${period}px ${period}px`
+          /* Reserve one tile. Reuse the same layout within each range of
+             zoom so sizing the full-screen layer stays off the gesture path. */
+          const overhang = 2 ** Math.ceil(Math.log2(period))
+          if (overhang !== dotGridOverhang) {
+            grid.style.width = grid.style.height = `calc(100% + ${overhang}px)`
+            dotGridOverhang = overhang
+          }
+        }
         lastPaintedZoom = vp.zoom
       }
-      const gx = (((vp.x % period) + period) % period) - period
-      const gy = (((vp.y % period) + period) % period) - period
-      grid.style.transform = `translate(${gx}px, ${gy}px)`
+      if (dotOpacity > 0) {
+        const gx = (((vp.x % period) + period) % period) - period
+        const gy = (((vp.y % period) + period) % period) - period
+        grid.style.transform = `translate(${gx}px, ${gy}px)`
+      }
       const pixels = pixelGridRef.current
       if (pixels) {
         const opacity = useStore.getState().viewOptions.pixelGrid ? pixelGridOpacity(vp.zoom) : 0
@@ -751,10 +777,12 @@ export function Stage({
            (below) keeps discrete mouse-wheel notches from over-jumping */
         const factor = Math.exp(-zoomDelta * 0.01)
         const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * factor))
-        const scale = next / zoom
-        x = pivotX - (pivotX - x) * scale
-        y = pivotY - (pivotY - y) * scale
-        zoom = next
+        if (next !== zoom) {
+          const scale = next / zoom
+          x = pivotX - (pivotX - x) * scale
+          y = pivotY - (pivotY - y) * scale
+          zoom = next
+        }
         zoomDelta = 0
       }
       x -= panX
@@ -1296,6 +1324,8 @@ export function Stage({
             {/* dot grid on its own composited layer: panning is transform-only
             (zero paint), zooming repaints just this layer's tiny tile */}
             <div
+              hidden
+              data-dot-grid=""
               className="pointer-events-none absolute left-0 top-0 origin-top-left will-change-transform [background-image:radial-gradient(circle,var(--dot)_1.2px,transparent_1.2px)]"
               ref={gridRef}
             />

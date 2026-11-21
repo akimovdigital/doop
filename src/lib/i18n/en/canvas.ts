@@ -84,6 +84,7 @@ export const canvas = {
   pasteImageFailed: 'Couldn’t paste image — {error}',
   dropImageFailed: 'Couldn’t add the dropped image — {error}',
   uiHidden: 'UI hidden · {key}. to show',
+  showInterface: 'Show interface',
   memorySuggestionReview: 'Memory suggestion — review',
   hideForNow: 'Hide for now',
   openMemory: 'Open Memory',

@@ -383,7 +383,7 @@ export const useStore = create<State>((set, get) => ({
       /* leaving a canvas (CanvasPage unmounts or its id changes) ends ⌘.
          hide-UI, so the next canvas never opens with its chrome gone; a
          re-join of the same canvas keeps it */
-      uiHidden: canvas ? s.uiHidden : false,
+      uiHidden: !!canvas && canvas.id === s.canvas?.id && s.uiHidden,
       selectedSectionId: canvas?.id === s.canvas?.id ? s.selectedSectionId : null,
       activePageId: canvas
         ? canvas.id === s.canvas?.id && canvasPages(canvas).some((p) => p.id === s.activePageId)
@@ -815,7 +815,12 @@ export const useStore = create<State>((set, get) => ({
   toggleUiHidden: () => set((s) => ({ uiHidden: !s.uiHidden, ...(s.uiHidden ? {} : { selectedGuideId: null }) })),
   setPrototypeMode: (prototypeMode) => set({ prototypeMode }),
   /* every ordinary camera move (pan, zoom, fit, fly-to) is ours, so it ends a follow */
-  setViewport: (viewport) => set({ viewport, following: null }),
+  setViewport: (viewport) =>
+    set((s) => {
+      const { x, y, zoom } = s.viewport
+      if (x !== viewport.x || y !== viewport.y || zoom !== viewport.zoom) return { viewport, following: null }
+      return s.following ? { following: null } : s
+    }),
   /* fires on every pointermove during a drag — skip the no-op transitions
      so unsnapped drags don't render the (empty) guide layer each frame */
   setSnapGuides: (snapGuides) =>

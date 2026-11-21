@@ -268,6 +268,7 @@ export function LayersPanel({
   const [drag, setDrag] = useState<VisibleRow | null>(null)
   const [drop, setDrop] = useState<Drop | null>(null)
   const rowsRef = useRef<VisibleRow[]>([])
+  const treeRef = useRef<HTMLDivElement>(null)
   const didDrag = useRef(false)
 
   /* the selected frame opens on its own, and a selection made inside a frame
@@ -320,6 +321,22 @@ export function LayersPanel({
   const currentKey = selectedElement
     ? rowKey(selectedElement.frameId, selectedElement.selector)
     : (rows.find((r) => isRoot(r) && r.frame.id === selectedId)?.key ?? selectedId)
+
+  const revealKey =
+    selectedIds.length <= 1 && pickedRows.size <= 1 && rows.some((row) => row.key === currentKey) ? currentKey : null
+  /* A single picked layer may sit out of sight. Scroll only the tree, so
+     selecting a layer cannot move the canvas or its surrounding panels. */
+  useEffect(() => {
+    const tree = treeRef.current
+    if (!tree || tab !== 'layers' || !revealKey) return
+    const row = tree.querySelector(`[role="treeitem"][data-row-key="${CSS.escape(revealKey)}"]`)
+    if (!row) return
+    const bounds = row.getBoundingClientRect()
+    const top = tree.getBoundingClientRect().top + tree.clientTop
+    const bottom = top + tree.clientHeight
+    if (bounds.top < top) tree.scrollTop += bounds.top - top
+    else if (bounds.bottom > bottom) tree.scrollTop += bounds.bottom - bottom
+  }, [revealKey, tab])
 
   /* a layer row opens the element properties panel; a frame row closes it
      and leaves the frame's own inspector to the frame-name click */
@@ -652,6 +669,7 @@ export function LayersPanel({
             </span>
           </div>
           <PanelBody
+            ref={treeRef}
             className={cn('px-2 pb-2 outline-none', drag && 'cursor-grabbing')}
             role="tree"
             tabIndex={0}
@@ -1102,16 +1120,10 @@ function Row({
   onClick,
   ...rest
 }: RowProps) {
-  const ref = useRef<HTMLDivElement>(null)
   const t = useT()
-  /* a selection made in the frame may sit far down the tree — bring it into view */
-  useEffect(() => {
-    if (selected) ref.current?.scrollIntoView({ block: 'nearest' })
-  }, [selected])
   return (
     <div
       {...rest}
-      ref={ref}
       role="treeitem"
       aria-selected={selected}
       className={cn(

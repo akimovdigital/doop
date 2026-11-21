@@ -440,6 +440,12 @@ export function CanvasPage({
         return
       }
       if (e.key === 'Escape') {
+        const state = useStore.getState()
+        if (bare && !e.defaultPrevented && !presenting && state.uiHidden) {
+          e.preventDefault()
+          state.toggleUiHidden()
+          return
+        }
         select(null)
         useStore.getState().setFollowing(null)
       }
@@ -1027,6 +1033,16 @@ export function CanvasPage({
       {/* the canvas runs under the transparent top bar to the window's top
           edge; the floating chrome gets its own layer that starts below the
           bar, so every panel offset stays measured from there */}
+      {uiHidden && (
+        <Button
+          size="sm"
+          className="absolute right-3.5 bottom-3.5 z-40 shadow-float"
+          aria-label={t('canvas.showInterface')}
+          onClick={toggleHideUi}
+        >
+          {t('canvas.showInterface')}
+        </Button>
+      )}
       <div className="absolute inset-0 overflow-hidden" style={chromeVars}>
         {find && !presenting && !uiHidden && <FindBar mode={find} step={findStep} onClose={() => setFind(null)} />}
         <Stage
