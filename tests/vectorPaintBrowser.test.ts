@@ -70,6 +70,52 @@ describe.skipIf(!findBrowserPath())('vector paint in the Design panel', { timeou
     )
   }
 
+  it('tracks standalone stroke overflow without observing an animated HTML subtree', async () => {
+    await page.evaluateOnNewDocument(() => {
+      if (window === window.top) return
+      const scope = window as Window & { deliveredRecords?: number }
+      scope.deliveredRecords = 0
+      const NativeObserver = MutationObserver
+      window.MutationObserver = class extends NativeObserver {
+        constructor(callback: MutationCallback) {
+          super((records, observer) => {
+            scope.deliveredRecords! += records.length
+            callback(records, observer)
+          })
+        }
+      }
+    })
+    await page.reload()
+    await page.waitForFunction(() => (window as unknown as Fixture).messages.some((m) => m.type === 'doop:frame-ready'))
+    frame = page.frames().find((f) => f !== page.mainFrame())!
+    await page.evaluate(
+      (html) => document.querySelector('iframe')!.contentWindow!.postMessage({ type: 'doop:html', html }, '*'),
+      PATH_HTML.replace(' data-doop-canvas-element="true"', '').replace('stroke-width="2"', 'stroke-width="100"'),
+    )
+    await frame.waitForSelector('#vec path')
+    const animated = await frame.evaluate(async () => {
+      const scope = window as Window & { deliveredRecords?: number }
+      const path = document.querySelector<SVGPathElement>('#vec path')!
+      scope.deliveredRecords = 0
+      for (let step = 1; step <= 8; step++) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+        path.style.opacity = String(step / 10)
+      }
+      return { records: scope.deliveredRecords, opacity: getComputedStyle(path).opacity }
+    })
+    expect(animated.opacity).toBe('0.8')
+    expect(animated.records).toBe(0)
+
+    await frame.evaluate(() => document.body.setAttribute('data-doop-canvas-element', 'true'))
+    const wanted = () =>
+      page.evaluate(
+        () => (window as unknown as Fixture).messages.filter((m) => m.type === 'doop:bleed-want').at(-1)?.px,
+      )
+    await expect.poll(wanted).toBeGreaterThan(0)
+    await frame.evaluate(() => document.body.replaceWith(document.createElement('body')))
+    await expect.poll(wanted).toBe(0)
+  })
+
   it('reports the path paint, not the box border', async () => {
     const info = await ask('doop:inspect', { selector: '#vec' })
     expect(info?.vector).toMatchObject({ stroke: 'rgb(255, 255, 255)', strokeWidth: 2, fill: 'none' })
