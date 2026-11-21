@@ -584,7 +584,14 @@ export interface PeerViewport {
 /* ---- websocket protocol ---- */
 
 export type ClientMessage =
-  | { type: 'join'; canvasId: string; clientId: string; name: string; kind: ActorKind }
+  | {
+      type: 'join'
+      canvasId: string
+      clientId: string
+      name: string
+      kind: ActorKind
+      initEncoding?: 'gzip'
+    }
   | { type: 'cursor'; x: number; y: number }
   | { type: 'viewport'; viewport: PeerViewport }
   | { type: 'editing'; frameId: string | null }

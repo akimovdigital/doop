@@ -53,6 +53,7 @@ import { geminiCloudWorkerFor } from './geminiCloudRuns.ts'
 import http from 'node:http'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { gzipSync } from 'node:zlib'
 import path from 'node:path'
 import express from 'express'
 import { eq, inArray } from 'drizzle-orm'
@@ -3439,7 +3440,7 @@ wss.on('connection', (ws, upgradeReq) => {
         .filter((c) => c.ws !== ws && !c.silent)
         .map((c) => c.presence)
       const agents = [...(agentPresences.get(msg.canvasId)?.values() ?? [])]
-      send(ws, {
+      const init: ServerMessage = {
         type: 'init',
         canvas: { ...canvas, role, landingPageId: landingPageOf(canvas), team: teamOfCanvas(canvas) },
         presences: [...others, ...agents],
@@ -3451,7 +3452,16 @@ wss.on('connection', (ws, upgradeReq) => {
         proposals: actions.getProposals(msg.canvasId),
         selfColor: presence.color,
         serverBuild: BUILD_ID,
-      })
+      }
+      if (msg.initEncoding === 'gzip') {
+        const json = JSON.stringify(init)
+        // Keep the room snapshot and the broadcasts after it in wire order.
+        // Small snapshots already arrive quickly as ordinary text.
+        const compressed = json.length >= 1024 * 1024 ? gzipSync(json, { level: 1 }) : null
+        ws.send(compressed && compressed.length < json.length ? compressed : json)
+      } else {
+        send(ws, init)
+      }
       /* An admin looking at a canvas must not act on it. Announcing presence
          would impersonate the owner in the room; maybePlay would have the
          demo agent perform on an untouched signup canvas; the card kick would

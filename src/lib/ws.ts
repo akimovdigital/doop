@@ -12,6 +12,7 @@ let joinedAsGuest = false
 let retryTimer: number | null = null
 /* the server build this page first connected under; survives reconnects */
 let loadedBuild: string | null = null
+let initEncodingSupported = typeof DecompressionStream === 'function'
 
 export function connect(canvasId: string, guest = false) {
   currentCanvasId = canvasId
@@ -39,25 +40,55 @@ function open() {
   const s = new WebSocket(`${proto}://${location.host}/ws`)
   socket = s
   const canvasId = currentCanvasId
+  let initDecoding: Promise<void> | null = null
+
+  function receive(json: string) {
+    if (socket !== s || s.readyState !== WebSocket.OPEN) return
+    let msg: ServerMessage
+    try {
+      msg = JSON.parse(json)
+    } catch {
+      return
+    }
+    handle(msg)
+  }
 
   s.onopen = () => {
     if (socket !== s) return
     const { clientId, name } = getIdentity()
     /* join first: flipping `connected` makes the Stage announce its camera,
        and the server drops anything sent before the socket has a canvas */
-    sendWs({ type: 'join', canvasId, clientId, name, kind: 'user' })
+    sendWs({
+      type: 'join',
+      canvasId,
+      clientId,
+      name,
+      kind: 'user',
+      ...(initEncodingSupported ? { initEncoding: 'gzip' } : {}),
+    })
     useStore.getState().setConnected(true)
   }
 
   s.onmessage = (ev) => {
     if (socket !== s) return
-    let msg: ServerMessage
-    try {
-      msg = JSON.parse(ev.data)
-    } catch {
+    if (typeof ev.data === 'string') {
+      const json = ev.data
+      if (initDecoding) void initDecoding.then(() => receive(json))
+      else receive(json)
       return
     }
-    handle(msg)
+    if (!initEncodingSupported || !(ev.data instanceof Blob) || initDecoding) return
+    const decoded = ev.data.stream().pipeThrough(new DecompressionStream('gzip'))
+    initDecoding = new Response(decoded)
+      .text()
+      .then(receive, () => {
+        // A failed decode can recover through the ordinary text protocol.
+        initEncodingSupported = false
+        s.close()
+      })
+      .finally(() => {
+        initDecoding = null
+      })
   }
 
   s.onclose = (ev) => {
