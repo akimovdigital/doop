@@ -164,17 +164,25 @@ const TOOL_ICONS: Record<Tool, React.ReactNode> = {
   section: <SectionIcon />,
 }
 
-const sendCursor = throttle((x: number, y: number) => sendWs({ type: 'cursor', x, y }), 50)
+const sendCursor = throttle((clientX: number, clientY: number, stage: HTMLElement) => {
+  if (!stage.isConnected) return
+  const rect = stage.getBoundingClientRect()
+  const { x, y, zoom } = useStore.getState().viewport
+  sendWs({
+    type: 'cursor',
+    x: Math.round((clientX - rect.left - x) / zoom),
+    y: Math.round((clientY - rect.top - y) / zoom),
+  })
+}, 50)
 /* the camera is shared so others can follow it — same cadence as the cursor */
 const sendViewport = throttle(
-  (vp: { x: number; y: number; zoom: number }, el: HTMLElement) =>
+  (vp: Viewport, size: { width: number; height: number }) =>
     sendWs({
       type: 'viewport',
       viewport: {
         ...vp,
         pageId: useStore.getState().activePageId ?? undefined,
-        width: el.clientWidth,
-        height: el.clientHeight,
+        ...size,
       },
     }),
   50,
@@ -242,6 +250,16 @@ export function Stage({
   const gridRef = useRef<HTMLDivElement>(null)
   const pixelGridRef = useRef<HTMLDivElement>(null)
   const [labelLayer, setLabelLayer] = useState<HTMLDivElement | null>(null)
+  const labelLayerRef = useRef<HTMLDivElement | null>(null)
+  const stageSize = useRef({ width: 0, height: 0 })
+  const attachLabelLayer = useCallback((el: HTMLDivElement | null) => {
+    labelLayerRef.current = el
+    if (el) {
+      const { x, y } = useStore.getState().viewport
+      el.style.transform = `translate(${x}px, ${y}px)`
+    }
+    setLabelLayer(el)
+  }, [])
   const [threadLayer, setThreadLayer] = useState<HTMLDivElement | null>(null)
   const zoomLabelRef = useRef<HTMLSpanElement>(null)
   const setViewport = useStore((s) => s.setViewport)
@@ -312,8 +330,7 @@ export function Stage({
       if (!world || !grid || !stage) return
       world.style.transform = worldTransform(vp, layoutZoomRef.current)
       /* the camera's offset, for chrome drawn in screen px (FrameLabelLayer) */
-      stage.style.setProperty('--vx', `${vp.x}px`)
-      stage.style.setProperty('--vy', `${vp.y}px`)
+      if (labelLayerRef.current) labelLayerRef.current.style.transform = `translate(${vp.x}px, ${vp.y}px)`
       const period = 26 * vp.zoom
       const zoomChanged = vp.zoom !== lastPaintedZoom
       if (zoomChanged) {
@@ -369,11 +386,11 @@ export function Stage({
       }
       /* a (re)connect needs the camera announced afresh — the server only
          knows what this socket has sent */
-      if (s.connected && !prev.connected && ref.current) sendViewport(s.viewport, ref.current)
+      if (s.connected && !prev.connected && ref.current) sendViewport(s.viewport, stageSize.current)
       if (s.viewOptions.pixelGrid !== prev.viewOptions.pixelGrid) apply(s.viewport)
       if (s.viewport === prev.viewport) return
       apply(s.viewport)
-      if (ref.current) sendViewport(s.viewport, ref.current)
+      if (ref.current) sendViewport(s.viewport, stageSize.current)
       window.clearTimeout(settle)
       settle = window.setTimeout(() => {
         setLayoutZoom(layoutZoomFor(useStore.getState().viewport.zoom, MAX_ZOOM))
@@ -458,9 +475,11 @@ export function Stage({
        ours need the new size, and if we are following, the leader's view
        has to be refitted to it */
     const el = ref.current
-    const ro = new ResizeObserver(() => {
-      if (!el) return
-      sendViewport(useStore.getState().viewport, el)
+    const ro = new ResizeObserver(([entry]) => {
+      if (!entry) return
+      const { width, height } = entry.contentRect
+      stageSize.current = { width, height }
+      sendViewport(useStore.getState().viewport, stageSize.current)
       retarget()
     })
     if (el) ro.observe(el)
@@ -1006,6 +1025,17 @@ export function Stage({
     const unlockSelection = lockTextSelection()
     let last = { x: e.clientX, y: e.clientY }
     let moved = false
+    let raf = 0
+    let pendingX = 0
+    let pendingY = 0
+
+    function flushPan() {
+      raf = 0
+      const vp = useStore.getState().viewport
+      if (!gesture.pinching && (pendingX || pendingY))
+        useStore.getState().setViewport({ ...vp, x: vp.x + pendingX, y: vp.y + pendingY })
+      pendingX = pendingY = 0
+    }
 
     function onMove(ev: PointerEvent) {
       if (ev.pointerId !== e.pointerId) return
@@ -1016,8 +1046,9 @@ export function Stage({
       /* a pinch owns the viewport while it lasts; keep tracking the finger
          so the pan resumes from where it is, not from where the pinch began */
       if (gesture.pinching) return
-      const vp = useStore.getState().viewport
-      useStore.getState().setViewport({ ...vp, x: vp.x + dx, y: vp.y + dy })
+      pendingX += dx
+      pendingY += dy
+      if (!raf) raf = requestAnimationFrame(flushPan)
     }
     /* a cancelled pointer (touch or pen taken by the system) ends the pan
        too, but is not a click */
@@ -1025,6 +1056,8 @@ export function Stage({
       if (ev.pointerId === e.pointerId) end()
     }
     function end() {
+      if (raf) cancelAnimationFrame(raf)
+      flushPan()
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onCancel)
@@ -1168,10 +1201,9 @@ export function Stage({
     window.addEventListener('pointercancel', onCancel)
   }
 
-  function onPointerMove(e: React.PointerEvent) {
+  function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
     drawing.onPointerMove(e)
-    const { x, y } = toWorld(e.clientX, e.clientY)
-    sendCursor(Math.round(x), Math.round(y))
+    sendCursor(e.clientX, e.clientY, e.currentTarget)
   }
 
   return (
@@ -1269,7 +1301,7 @@ export function Stage({
             </div>
             {/* the selected frame's size badge, in screen px (FrameLabelLayer); after
                 the world so no frame, however it stacks, covers it */}
-            <div className="pointer-events-none absolute inset-0" ref={setLabelLayer} />
+            <div className="pointer-events-none absolute inset-0" ref={attachLabelLayer} />
             {/* an open comment thread, in screen px above the badges, so no
                 badge covers it; CommentPin keeps it on its pin */}
             <div data-comment-ui className="pointer-events-none absolute inset-0" ref={setThreadLayer} />
@@ -1469,7 +1501,7 @@ function FrameStack({
   const mounted = useMemo(() => [...frames].sort(byCreation), [frames])
   const rank = useMemo(() => new Map(frames.map((f, i) => [f.id, i + 1])), [frames])
   const layer = useRef<HTMLDivElement>(null)
-  const { eager, admitted, request } = useFrameAdmission(frames, stage, layer)
+  const { eager, overview, admitted, request } = useFrameAdmission(frames, stage, layer)
   return (
     <div ref={layer} className="absolute top-0 left-0 isolate">
       {mounted.map((f) =>
@@ -1482,6 +1514,7 @@ function FrameStack({
             stack={rank.get(f.id)}
             layoutZoom={layoutZoom}
             loadDocument={eager || admitted.has(f.id)}
+            overview={overview}
             requestDocument={request}
           />
         ),

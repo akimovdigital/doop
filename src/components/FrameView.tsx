@@ -259,6 +259,7 @@ export const FrameView = memo(function FrameView({
   stack,
   layoutZoom,
   loadDocument = true,
+  overview = false,
   requestDocument,
 }: {
   frame: Frame
@@ -266,6 +267,7 @@ export const FrameView = memo(function FrameView({
   stack?: number
   layoutZoom: number
   loadDocument?: boolean
+  overview?: boolean
   requestDocument?: (frameId: string) => void
 }) {
   const t = useT()
@@ -335,6 +337,8 @@ export const FrameView = memo(function FrameView({
   /* after exiting edit mode, hold renders until the final serialized HTML
      lands in the store — otherwise a stale post would morph the edit away */
   const [suspendPost, setSuspendPost] = useState(false)
+  const showPreview =
+    overview && !standalone && !selected && !contextMenuOpen && !editing && !dragging && !resizing && !stream
 
   /* one throttle per frame, so a group drag broadcasts every member —
      a single throttle would keep only the last frame written each tick */
@@ -1745,10 +1749,10 @@ export const FrameView = memo(function FrameView({
                    the way an element's size badge sits */
                 className="pointer-events-none absolute whitespace-nowrap rounded-tag bg-[rgb(60,130,246)] px-2 py-1 text-label font-medium text-white tabular-nums"
                 style={{
-                  left: `calc(var(--vx, 0px) + ${frame.x + frame.width / 2}px * var(--zoom, 1))`,
+                  left: `calc(${frame.x + frame.width / 2}px * var(--zoom, 1))`,
                   /* under the box the turned frame covers, so a turn never
                      leaves the badge across the frame */
-                  top: `calc(var(--vy, 0px) + ${badgeBottom(frame)}px * var(--zoom, 1))`,
+                  top: `calc(${badgeBottom(frame)}px * var(--zoom, 1))`,
                   transform: `translate(-50%, ${LABEL_GAP + 4}px)`,
                 }}
               >
@@ -1908,6 +1912,7 @@ export const FrameView = memo(function FrameView({
               /* where the pointer is stays current through a drag or a resize
                  too: once the gesture's save lands, the hover is probed again
                  at the pointer's spot, which the gesture has moved */
+              if (showPreview || tool === 'hand' || tool === 'zoom' || panMode) return
               const at = designPoint(e, e.currentTarget, frame.rotation)
               hoverAt.current = at
               /* the Hand only pans, the Zoom only zooms, and a locked frame has nothing to pick: no
@@ -1920,15 +1925,27 @@ export const FrameView = memo(function FrameView({
                 resizing ||
                 frame.locked ||
                 !frame.html ||
-                !runtimeReady ||
-                tool === 'hand' ||
-                tool === 'zoom'
+                !runtimeReady
               )
                 return
               sendHover(at.x, at.y)
             }}
             onPointerLeave={leaveHover}
           >
+            {showPreview && frame.html && !githubPlaceholder && (
+              <img
+                data-frame-overview-preview=""
+                src={`/i/${frame.id}.jpg?preview`}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                fetchPriority="low"
+                className="pointer-events-none absolute top-0 left-0 h-auto w-full"
+                onError={(e) => {
+                  e.currentTarget.style.visibility = 'hidden'
+                }}
+              />
+            )}
             {/* always there, so the iframe never moves in the DOM (that reloads
                 it): it carries the iframe out by the bleed margin */}
             <div
@@ -1963,6 +1980,8 @@ export const FrameView = memo(function FrameView({
                       ? null
                       : { zoom: counterZoom(layoutZoom), transform: `scale(${layoutZoom})` }),
                     transformOrigin: '0 0',
+                    contentVisibility: showPreview ? 'hidden' : editing || selected ? 'visible' : 'auto',
+                    visibility: showPreview ? 'hidden' : undefined,
                     /* Chromium paints an opaque backdrop behind an iframe whose
                    colour scheme differs from its document's; the page's dark
                    scheme reaches this element by inheritance while a
