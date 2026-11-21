@@ -53,7 +53,7 @@ import { TOOLS, isDrawingTool, resolvePointerAction, toolForKey, type Tool } fro
 import { useCanvasDrawing } from './CanvasDrawing'
 import { CanvasSections } from './CanvasSections'
 import { activeSections } from '../lib/canvasSections'
-import { CommentThreadLayer, FrameLabelLayer } from './FrameLabelLayer'
+import { CommentThreadLayer, FrameLabelLayer, FrameTitleZoom, createFrameTitleZoom } from './FrameLabelLayer'
 import { pixelGridLines } from './PixelGrid'
 import { layoutZoomFor } from '../lib/layoutZoom'
 import { useT, type PlainMessageKey } from '../lib/i18n'
@@ -271,6 +271,7 @@ export function Stage({
   const pixelGridRef = useRef<HTMLDivElement>(null)
   const [labelLayer, setLabelLayer] = useState<HTMLDivElement | null>(null)
   const labelLayerRef = useRef<HTMLDivElement | null>(null)
+  const [titleZoom] = useState(() => createFrameTitleZoom(useStore.getState().viewport))
   const stageSize = useRef({ width: 0, height: 0 })
   const wheelStageRect = useRef<DOMRect | null>(null)
   useLayoutEffect(() => {
@@ -354,6 +355,7 @@ export function Stage({
       const stage = ref.current
       if (!world || !grid || !stage) return
       world.style.transform = worldTransform(vp, layoutZoomRef.current)
+      titleZoom.update(vp, stageSize.current)
       /* the camera's offset, for chrome drawn in screen px (FrameLabelLayer) */
       if (labelLayerRef.current) labelLayerRef.current.style.transform = `translate(${vp.x}px, ${vp.y}px)`
       const zoomChanged = vp.zoom !== lastPaintedZoom
@@ -444,7 +446,7 @@ export function Stage({
       unsub()
       window.clearTimeout(settle)
     }
-  }, [])
+  }, [titleZoom])
 
   /* a new layout zoom lands in the same commit as the frames' counter-zoom
      (FrameView), so no paint sees one without the other */
@@ -524,7 +526,9 @@ export function Stage({
       const { width, height } = entry.contentRect
       stageSize.current = { width, height }
       wheelStageRect.current = null
-      sendViewport(useStore.getState().viewport, stageSize.current)
+      const viewport = useStore.getState().viewport
+      titleZoom.update(viewport, stageSize.current)
+      sendViewport(viewport, stageSize.current)
       retarget()
     })
     if (el) ro.observe(el)
@@ -533,7 +537,7 @@ export function Stage({
       ro.disconnect()
       if (raf) cancelAnimationFrame(raf)
     }
-  }, [])
+  }, [titleZoom])
 
   /** where a fly-to lands: a frame fitted with padding, or a bare world
    *  point centred at the zoom we already have (a peer's cursor) */
@@ -1376,13 +1380,15 @@ export function Stage({
               <CommentThreadLayer.Provider value={threadLayer}>
                 <CanvasSections stage={ref} world={worldRef} />
                 <FrameLabelLayer.Provider value={labelLayer}>
-                  <FrameStack
-                    key={activePageId}
-                    frames={canvas?.frames ?? []}
-                    layoutZoom={layoutZoom}
-                    stage={ref}
-                    onFollowLink={followFrameLink}
-                  />
+                  <FrameTitleZoom.Provider value={titleZoom.register}>
+                    <FrameStack
+                      key={activePageId}
+                      frames={canvas?.frames ?? []}
+                      layoutZoom={layoutZoom}
+                      stage={ref}
+                      onFollowLink={followFrameLink}
+                    />
+                  </FrameTitleZoom.Provider>
                 </FrameLabelLayer.Provider>
                 <GhostFrames />
                 <FlowOverlay />

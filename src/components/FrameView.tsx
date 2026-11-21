@@ -17,7 +17,7 @@ import { isLayerLocked, standaloneSelector } from '../lib/layerEdits'
 import { documentRect } from '../lib/frameBleed'
 import { drawingDropFrame, moveDrawing, type DrawingHit } from '../lib/drawingMove'
 import { useElementMove } from './ElementMove'
-import { FrameLabelLayer } from './FrameLabelLayer'
+import { FrameLabelLayer, FrameTitleZoom } from './FrameLabelLayer'
 import { PathEditor } from './PathEditor'
 import { loadPathEdit, type PathEditSource } from '../lib/pathEditing'
 import { currentPageCanvas } from '../lib/pages'
@@ -393,6 +393,16 @@ export const FrameView = memo(function FrameView({
   }
   const elementMove = useElementMove(frame, layoutZoom)
   const labelLayer = useContext(FrameLabelLayer)
+  const registerTitle = useContext(FrameTitleZoom)
+  const releaseTitle = useRef<(() => void) | null>(null)
+  const { x, y, width, height, rotation } = frame
+  const attachTitle = useCallback(
+    (element: HTMLDivElement | null) => {
+      releaseTitle.current?.()
+      releaseTitle.current = element && registerTitle ? registerTitle(element, { x, y, width, height, rotation }) : null
+    },
+    [registerTitle, x, y, width, height, rotation],
+  )
   const [pathEdit, setPathEdit] = useState<PathEditSource | null>(null)
   const editRequest = useRef(0)
   const closePathEdit = useCallback(() => {
@@ -1936,6 +1946,7 @@ export const FrameView = memo(function FrameView({
               /* the Stage reads this off the press target */
               data-frame-locked={frame.locked ? '' : undefined}
               data-frame-title=""
+              ref={attachTitle}
               /* inside the frame's box, so the name stacks with its own frame:
                a frame added later covers it, an earlier one never does. It is
                counter-scaled from its bottom-left corner to screen px, so it

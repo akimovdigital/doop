@@ -97,6 +97,38 @@ describe.skipIf(!findBrowserPath())('page camera and snapping', { timeout: 30_00
     await (await item.asElement()!.toElement('div')).click()
   }
 
+  it('updates a frame title for the current zoom before it returns into view', async () => {
+    await load(canvas([frame('target', 'first', 3000)]))
+    const result = await page.evaluate(async () => {
+      const stage = document.querySelector<HTMLElement>('.stage')!
+      const title = stage.querySelector<HTMLElement>('[data-frame-title]')!
+      const shell = title.closest<HTMLElement>('[data-doop-frame-shell]')!
+      const tick = (options: WheelEventInit) => {
+        stage.dispatchEvent(new WheelEvent('wheel', { clientX: 300, clientY: 260, cancelable: true, ...options }))
+        return new Promise(requestAnimationFrame)
+      }
+      await tick({ deltaX: 10_000 })
+      const before = title.offsetWidth
+      await tick({ ctrlKey: true, deltaY: 25 })
+      const whileOutside = title.offsetWidth
+      const { x, y, zoom } = window.pageState().viewport
+      await tick({ deltaX: x + 3000 * zoom - 300, deltaY: y - 260 })
+      const titleBox = title.getBoundingClientRect()
+      const shellBox = shell.getBoundingClientRect()
+      return {
+        before,
+        whileOutside,
+        left: titleBox.left - stage.getBoundingClientRect().left,
+        widthError: titleBox.width - shellBox.width,
+        gap: shellBox.top - titleBox.bottom,
+      }
+    })
+    expect(result.whileOutside).toBe(result.before)
+    expect(result.left).toBeCloseTo(300, 0)
+    expect(result.widthError).toBeCloseTo(0, 0)
+    expect(result.gap).toBeCloseTo(6, 0)
+  })
+
   it('restores pan and zoom when returning to a page', async () => {
     await load(canvas([frame('directory', 'first', 0), frame('target', 'second', 3000)]))
     const initial = await page.evaluate(() => window.pageState().viewport)
