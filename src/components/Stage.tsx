@@ -1509,6 +1509,7 @@ function FrameStack({
   const rank = useMemo(() => new Map(frames.map((f, i) => [f.id, i + 1])), [frames])
   const layer = useRef<HTMLDivElement>(null)
   const { eager, overview, admitted, request } = useFrameAdmission(frames, stage, layer)
+  const compactSectionTitles = useStore((s) => s.selectedSectionId !== null && s.viewport.zoom <= 0.05)
   return (
     <div ref={layer} className="absolute top-0 left-0 isolate">
       {mounted.map((f) =>
@@ -1522,6 +1523,7 @@ function FrameStack({
             layoutZoom={layoutZoom}
             loadDocument={eager || admitted.has(f.id)}
             overview={overview}
+            compactSectionTitles={compactSectionTitles}
             requestDocument={request}
           />
         ),

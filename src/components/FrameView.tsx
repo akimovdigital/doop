@@ -260,6 +260,7 @@ export const FrameView = memo(function FrameView({
   layoutZoom,
   loadDocument = true,
   overview = false,
+  compactSectionTitles = false,
   requestDocument,
 }: {
   frame: Frame
@@ -268,6 +269,7 @@ export const FrameView = memo(function FrameView({
   layoutZoom: number
   loadDocument?: boolean
   overview?: boolean
+  compactSectionTitles?: boolean
   requestDocument?: (frameId: string) => void
 }) {
   const t = useT()
@@ -1762,7 +1764,7 @@ export const FrameView = memo(function FrameView({
             )}
           {/* a standalone element wears no name on the canvas, as a shape in
               Figma does not; the Layers rail names it */}
-          {!standalone && (
+          {!standalone && !(showPreview && compactSectionTitles) && (
             <div
               /* the Stage reads this off the press target */
               data-frame-locked={frame.locked ? '' : undefined}
