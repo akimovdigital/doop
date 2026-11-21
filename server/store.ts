@@ -8,6 +8,7 @@ import type { ComponentDef } from '../shared/components.ts'
 import { byStack, frontOf, stackOf } from '../shared/frameStack.ts'
 import { htmlLoaded, setHtml, setHtmlMissHandler, unloadHtml, withHtml } from './frameHtml.ts'
 import { afterCommit, inTransaction, recordUndo, requireBoundary } from './journal.ts'
+import type { PageLayoutWrite } from './pageSections.ts'
 import type { DesignToken } from '../shared/designTokens.ts'
 import type {
   Canvas,
@@ -30,6 +31,12 @@ export class PageLimitError extends Error {
 export class GuideLimitError extends Error {
   constructor() {
     super(`A canvas holds at most ${MAX_GUIDES} guides.`)
+  }
+}
+
+export class PageLayoutConflictError extends Error {
+  constructor(message = 'The canvas layout is changing. Please try again.') {
+    super(message)
   }
 }
 
@@ -84,6 +91,7 @@ class Store {
   private frameIndex = new Map<string, string>() // frameId -> canvasId
   /** the page copy in flight per canvas, so the next one waits for it */
   private pageCopies = new Map<string, Promise<unknown>>()
+  private pageLayouts = new Set<string>()
   /** canvases whose frame HTML is in memory -> when they were last used */
   private loaded = new Map<string, number>()
   private loading = new Map<string, Promise<void>>()
@@ -470,6 +478,7 @@ class Store {
    * limit; memory changes only once the copy is durable, as with
    * duplicateCanvas. Rejects with PageLimitError when the canvas is full. */
   duplicatePage(canvasId: string, pageId: string, by: string): Promise<PageCopy | undefined> {
+    this.requirePageLayoutIdle(canvasId)
     const previous = this.pageCopies.get(canvasId) ?? Promise.resolve()
     const task = previous.then(
       () => this.copyPage(canvasId, pageId, by),
@@ -494,11 +503,16 @@ class Store {
     const sourceFrames = pageFrames(canvas, pageId)
     const frameIds = new Map(sourceFrames.map((frame) => [frame.id, nanoid(10)]))
     const start = source.startFrameId && frameIds.get(source.startFrameId)
+    const sections = source.sections?.map((section) => ({ ...section, id: nanoid(10) }))
+    const landingIndex = source.sections?.findIndex((section) => section.id === source.landingSectionId) ?? -1
+    const landingSectionId = sections?.[landingIndex]?.id
     const page: CanvasPageInfo = {
       id: nanoid(10),
       name: copyPageName(source.name, names(pages)),
       ...(start ? { startFrameId: start } : {}),
       ...(source.background ? { background: source.background } : {}),
+      ...(sections?.length ? { sections } : {}),
+      ...(landingSectionId ? { landingSectionId } : {}),
     }
     /* links within the page follow the copy; links to other pages stay */
     const frames: Frame[] = sourceFrames.map((frame) => ({
@@ -546,6 +560,43 @@ class Store {
     return { source, page, pages: canvas.pages, frames, guides }
   }
 
+  requirePageLayoutIdle(canvasId: string) {
+    if (this.pageLayoutPending(canvasId)) throw new PageLayoutConflictError()
+  }
+
+  pageLayoutPending(canvasId: string): boolean {
+    return this.pageLayouts.has(canvasId)
+  }
+
+  /** Apply a section edit and all affected geometry only after the transaction
+   * commits. Block conflicting structure/frame edits while it is in flight. */
+  async commitPageLayout(canvasId: string, layout: PageLayoutWrite, applyComments: () => void): Promise<void> {
+    this.requirePageLayoutIdle(canvasId)
+    if (this.pageCopies.has(canvasId)) throw new PageLayoutConflictError()
+    const canvas = this.canvases.get(canvasId)
+    if (!canvas) throw new PageLayoutConflictError('The canvas no longer exists.')
+    this.pageLayouts.add(canvasId)
+    const updatedAt = layout.frameMoves.reduce(
+      (latest, frame) => Math.max(latest, frame.updatedAt),
+      Math.max(canvas.updatedAt + 1, Date.now()),
+    )
+    try {
+      await persist.savePageLayout(canvas, layout, updatedAt, () => {
+        canvas.pages = layout.pages
+        if (layout.guides) canvas.guides = layout.guides
+        if (layout.frameMoves.length) {
+          const byId = new Map(canvas.frames.map((frame) => [frame.id, frame]))
+          for (const { id, ...placement } of layout.frameMoves) Object.assign(byId.get(id)!, placement)
+          canvas.frames.sort(byStack)
+        }
+        canvas.updatedAt = Math.max(canvas.updatedAt, updatedAt)
+        applyComments()
+      })
+    } finally {
+      this.pageLayouts.delete(canvasId)
+    }
+  }
+
   /** Replace the page list. Returns the saved pages (flow starts kept) and
    *  the guides that went with deleted pages, so peers can drop them;
    *  undefined when the canvas is gone. */
@@ -555,6 +606,7 @@ class Store {
   ): { pages: import('../shared/types.ts').CanvasPageInfo[]; dropped: CanvasGuide[] } | undefined {
     const canvas = this.canvases.get(canvasId)
     if (!canvas) return undefined
+    this.requirePageLayoutIdle(canvasId)
     requireBoundary('store.setPages')
     this.remember(canvas, ['pages', 'guides', 'updatedAt'])
     const firstId = canvasPages(canvas)[0]!.id
@@ -568,15 +620,17 @@ class Store {
       }
     }
     /* a page-list save renames, reorders, adds or deletes pages — it never
-       moves a flow start or recolours a page, which only setFlowStart and
-       setPageBackground change */
+       moves a flow start, recolours a page or changes its sections */
     const current = canvasPages(canvas)
-    const merged = pages.map(({ startFrameId: _start, background: _background, ...page }) => {
+    const merged = pages.map((page) => {
       const kept = current.find((p) => p.id === page.id)
       return {
-        ...page,
+        id: page.id,
+        name: page.name,
         ...(kept?.startFrameId ? { startFrameId: kept.startFrameId } : {}),
         ...(kept?.background ? { background: kept.background } : {}),
+        ...(kept?.sections?.length ? { sections: kept.sections } : {}),
+        ...(kept?.landingSectionId ? { landingSectionId: kept.landingSectionId } : {}),
       }
     })
     canvas.pages = merged
@@ -593,6 +647,7 @@ class Store {
   setFlowStart(canvasId: string, pageId: string, frameId: string | null) {
     const canvas = this.canvases.get(canvasId)
     if (!canvas) return undefined
+    this.requirePageLayoutIdle(canvasId)
     const pages = canvasPages(canvas)
     if (!pages.some((p) => p.id === pageId)) return undefined
     requireBoundary('store.setFlowStart')
@@ -611,6 +666,7 @@ class Store {
   setPageBackground(canvasId: string, pageId: string, background: string | null) {
     const canvas = this.canvases.get(canvasId)
     if (!canvas) return undefined
+    this.requirePageLayoutIdle(canvasId)
     const pages = canvasPages(canvas)
     if (!pages.some((p) => p.id === pageId)) return undefined
     requireBoundary('store.setPageBackground')
@@ -630,6 +686,7 @@ class Store {
   setGuide(canvasId: string, guide: CanvasGuide): CanvasGuide | undefined {
     const canvas = this.canvases.get(canvasId)
     if (!canvas) return undefined
+    this.requirePageLayoutIdle(canvasId)
     const guides = canvas.guides ?? []
     const exists = guides.some((g) => g.id === guide.id)
     if (!exists && guides.length >= MAX_GUIDES) throw new GuideLimitError()
@@ -644,6 +701,7 @@ class Store {
   deleteGuide(canvasId: string, guideId: string): boolean {
     const canvas = this.canvases.get(canvasId)
     if (!canvas?.guides?.some((g) => g.id === guideId)) return false
+    this.requirePageLayoutIdle(canvasId)
     requireBoundary('store.deleteGuide')
     this.remember(canvas, ['guides'])
     canvas.guides = canvas.guides.filter((g) => g.id !== guideId)
@@ -659,6 +717,7 @@ class Store {
   deleteCanvas(id: string): Canvas | undefined {
     const c = this.canvases.get(id)
     if (!c) return undefined
+    this.requirePageLayoutIdle(id)
     requireBoundary('store.deleteCanvas')
     const loadedAt = this.loaded.get(id)
     for (const f of c.frames) this.frameIndex.delete(f.id)
@@ -1147,6 +1206,7 @@ class Store {
   ): Frame | undefined {
     const c = this.canvases.get(canvasId)
     if (!c) return undefined
+    this.requirePageLayoutIdle(canvasId)
     const pageId = input.pageId ?? canvasPages(c)[0]!.id
     if (!canvasPages(c).some((page) => page.id === pageId)) return undefined
     const frames = pageFrames(c, pageId)
@@ -1221,6 +1281,7 @@ class Store {
   ): Frame | undefined {
     const frame = this.getFrame(frameId)
     if (!frame) return undefined
+    this.requirePageLayoutIdle(frame.canvasId)
     if (
       patch.pageId !== undefined &&
       !canvasPages(this.canvases.get(frame.canvasId)!).some((p) => p.id === patch.pageId)
@@ -1271,6 +1332,7 @@ class Store {
     if (!canvasId) return undefined
     const c = this.canvases.get(canvasId)
     if (!c) return undefined
+    this.requirePageLayoutIdle(c.id)
     const idx = c.frames.findIndex((f) => f.id === frameId)
     if (idx === -1) return undefined
     requireBoundary('store.deleteFrame')

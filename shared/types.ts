@@ -131,6 +131,31 @@ export interface CommunityItem {
   frames: { id: string; name: string; width: number; height: number }[]
 }
 
+export interface CanvasSection {
+  id: string
+  name: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** Update layout without re-sending the editable HTML of every moved frame. */
+export interface CanvasFrameMove {
+  id: string
+  pageId: string
+  x: number
+  y: number
+  z?: number
+  updatedAt: number
+  updatedBy: string
+}
+
+export interface CanvasPageLayout {
+  pages: CanvasPageInfo[]
+  frameMoves: CanvasFrameMove[]
+}
+
 export interface CanvasPageInfo {
   id: string
   name: string
@@ -143,6 +168,10 @@ export interface CanvasPageInfo {
    *  background route or MCP tool; page-list saves keep it, as they keep
    *  the flow start. */
   background?: string
+  /** Editable canvas containers. Their frames remain ordinary page frames. */
+  sections?: CanvasSection[]
+  /** Preferred initial camera region for a large consolidated page. */
+  landingSectionId?: string
 }
 
 /** A ruler guide: an infinite line on one page of a canvas, in world px.
@@ -591,6 +620,7 @@ export type ClientMessage =
       name: string
       kind: ActorKind
       initEncoding?: 'gzip'
+      pageLayoutMoves?: true
     }
   | { type: 'cursor'; x: number; y: number }
   | { type: 'viewport'; viewport: PeerViewport }
@@ -638,7 +668,7 @@ export type ServerMessage =
   | { type: 'frame:deleted'; frameId: string; actor: Actor }
   | { type: 'frame:streaming'; frameId: string; active: boolean; actor: Actor }
   | { type: 'canvas:renamed'; name: string; actor: Actor }
-  | { type: 'canvas:pages'; pages: CanvasPageInfo[]; actor: Actor }
+  | { type: 'canvas:pages'; pages: CanvasPageInfo[]; frameMoves?: CanvasFrameMove[]; actor: Actor }
   /** a ruler guide was added or moved (guide set) or removed (null) */
   | { type: 'guide'; id: string; guide: CanvasGuide | null; actor: Actor }
   /** a component changed, or was deleted (`component` null) */

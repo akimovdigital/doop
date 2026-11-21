@@ -13,6 +13,7 @@ import type { DesignToken, TokenType } from '../../shared/designTokens.ts'
 import { parseRunnerPick } from '../../shared/agentRunner.ts'
 import { byStack } from '../../shared/frameStack.ts'
 import { unloadHtml } from '../frameHtml.ts'
+import type { PageLayoutWrite } from '../pageSections.ts'
 import type {
   ActivityItem,
   ActorKind,
@@ -60,13 +61,62 @@ function canvasColumns(c: Canvas) {
   }
 }
 
+const canvasWrites = new Map<string, QueuedWrite>()
+
 export function saveCanvas(c: Canvas) {
-  swallow(
+  void queueRowWrite(canvasWrites, c.id, c.id, () =>
     db
       .insert(t.canvases)
       .values({ id: c.id, ...canvasColumns(c), createdAt: c.createdAt })
       .onConflictDoUpdate({ target: t.canvases.id, set: canvasColumns(c) }),
   )
+}
+
+/** Geometry, page metadata and page pins change as one durable operation. */
+export async function savePageLayout(
+  canvas: Canvas,
+  layout: PageLayoutWrite,
+  updatedAt: number,
+  apply: () => void,
+): Promise<void> {
+  const moved = new Set(layout.frameMoves.map((frame) => frame.id))
+  const frames = canvas.frames.filter((frame) => moved.has(frame.id))
+  // The store keeps this layout stable while writing. Drain any earlier edit
+  // to these frames so it cannot put the old geometry back afterward.
+  await Promise.all(
+    frames.map(async (frame) => {
+      while (frameWritesInFlight.has(frame.id)) {
+        await Promise.allSettled(frameWritesInFlight.get(frame.id)!)
+      }
+      if (frameWritePending(frame.id)) await saveFrameNow(frame)
+    }),
+  )
+  await queueRowWrite(canvasWrites, canvas.id, canvas.id, async () => {
+    await db.transaction(async (tx) => {
+      const [storedCanvas] = await tx
+        .update(t.canvases)
+        .set({ pages: layout.pages, guides: layout.guides ?? canvas.guides ?? null, updatedAt })
+        .where(eq(t.canvases.id, canvas.id))
+        .returning({ id: t.canvases.id })
+      if (!storedCanvas) throw new Error('Cannot save the layout of a missing canvas.')
+      for (const { id, ...move } of layout.frameMoves) {
+        const [frame] = await tx
+          .update(t.frames)
+          .set(move)
+          .where(and(eq(t.frames.id, id), eq(t.frames.canvasId, canvas.id)))
+          .returning({ id: t.frames.id })
+        if (!frame) throw new Error('Cannot move a missing frame.')
+      }
+      for (const { id, pageId, x, y } of layout.comments ?? []) {
+        await tx
+          .update(t.comments)
+          .set({ pageId, x, y })
+          .where(and(eq(t.comments.id, id), eq(t.comments.canvasId, canvas.id)))
+      }
+    })
+    // Keep this before later queued ordinary canvas writes read the live row.
+    apply()
+  })
 }
 
 /** Persist a newly duplicated canvas as one unit. Unlike ordinary live edits,
@@ -571,8 +621,8 @@ export async function savePageCopy(c: Canvas, frames: Frame[]): Promise<void> {
    copy, or reload the stored row over a newer one still being written. */
 const dirtyFrames = new Map<string, number>()
 
-/** writes of a frame on their way to the database, counted */
-const writesInFlight = new Map<string, number>()
+/** Writes of a frame on their way to the database. */
+const frameWritesInFlight = new Map<string, Set<Promise<void>>>()
 
 function markDirty(frameId: string) {
   dirtyFrames.set(frameId, (dirtyFrames.get(frameId) ?? 0) + 1)
@@ -604,15 +654,17 @@ export function saveFrame(f: Frame, immediate = false) {
   )
 }
 
-async function writeFrame(f: Frame) {
-  writesInFlight.set(f.id, (writesInFlight.get(f.id) ?? 0) + 1)
-  try {
-    await writeFrameRow(f)
-  } finally {
-    const left = (writesInFlight.get(f.id) ?? 1) - 1
-    if (left > 0) writesInFlight.set(f.id, left)
-    else writesInFlight.delete(f.id)
+function writeFrame(f: Frame) {
+  const writes = frameWritesInFlight.get(f.id) ?? new Set<Promise<void>>()
+  const task = writeFrameRow(f)
+  writes.add(task)
+  frameWritesInFlight.set(f.id, writes)
+  const done = () => {
+    writes.delete(task)
+    if (!writes.size) frameWritesInFlight.delete(f.id)
   }
+  void task.then(done, done)
+  return task
 }
 
 async function writeFrameRow(f: Frame) {
@@ -655,7 +707,7 @@ export function frameWritePending(frameId: string): boolean {
  *  write failed. The idle sweep calls this for the frames that keep their
  *  canvas from being dropped. */
 export function retryFrameWrite(f: Frame) {
-  if (dirtyFrames.has(f.id) && !frameTimers.has(f.id) && !writesInFlight.has(f.id)) saveFrame(f)
+  if (dirtyFrames.has(f.id) && !frameTimers.has(f.id) && !frameWritesInFlight.has(f.id)) saveFrame(f)
 }
 
 /** Move a frame to another page without touching its html, for a frame
@@ -862,7 +914,9 @@ export function deleteCanvas(canvasId: string) {
       db.delete(t.feedback).where(eq(t.feedback.canvasId, canvasId)),
     ),
   )
-  swallow(db.delete(t.comments).where(eq(t.comments.canvasId, canvasId)))
+  void queueRowWrite(canvasWrites, canvasId, canvasId, () =>
+    db.delete(t.comments).where(eq(t.comments.canvasId, canvasId)),
+  )
   swallow(db.delete(t.activity).where(eq(t.activity.canvasId, canvasId)))
   swallow(db.delete(t.guidelines).where(eq(t.guidelines.canvasId, canvasId)))
   swallow(
@@ -882,7 +936,7 @@ export function deleteCanvas(canvasId: string) {
   swallow(db.delete(t.decisions).where(eq(t.decisions.canvasId, canvasId)))
   swallow(db.delete(t.memoryProposals).where(eq(t.memoryProposals.canvasId, canvasId)))
   swallow(db.delete(t.canvasMembers).where(eq(t.canvasMembers.canvasId, canvasId)))
-  swallow(db.delete(t.canvases).where(eq(t.canvases.id, canvasId)))
+  void queueRowWrite(canvasWrites, canvasId, canvasId, () => db.delete(t.canvases).where(eq(t.canvases.id, canvasId)))
 }
 
 export function deleteFrame(frameId: string) {
@@ -945,10 +999,11 @@ interface QueuedWrite {
 }
 
 /** Chain `write` after the row's earlier writes, in order. */
-function queueRowWrite(queue: Map<string, QueuedWrite>, id: string, canvasId: string, write: () => Promise<unknown>) {
+function queueRowWrite<T>(queue: Map<string, QueuedWrite>, id: string, canvasId: string, write: () => Promise<T>) {
   const queued = (queue.get(id)?.write ?? Promise.resolve()).then(write, write)
   queue.set(id, { canvasId, write: queued })
   swallow(queued.finally(() => queue.get(id)?.write === queued && queue.delete(id)))
+  return queued
 }
 
 /** Settles once every write queued so far for this canvas's rows has. */
@@ -1004,7 +1059,7 @@ export function saveTask(canvasId: string, task: AgentTask) {
           reply: row.reply,
         },
       })
-  queueRowWrite(taskWrites, task.id, canvasId, write)
+  void queueRowWrite(taskWrites, task.id, canvasId, write)
 }
 
 /* One feedback row is often saved twice in a row (its reply, then its
@@ -1048,16 +1103,16 @@ export function saveFeedback(fb: TaskFeedback) {
           reply: row.reply,
         },
       })
-  queueRowWrite(feedbackWrites, fb.id, fb.canvasId, write)
+  void queueRowWrite(feedbackWrites, fb.id, fb.canvasId, write)
 }
 
 export function saveComment(c: ElementComment) {
-  swallow(writeComment(c))
+  void saveCommentNow(c)
 }
 
 /** The comment's write, for a caller that must know it landed. */
 export function saveCommentNow(c: ElementComment): Promise<void> {
-  return writeComment(c)
+  return queueRowWrite(canvasWrites, c.canvasId, c.canvasId, () => writeComment(c))
 }
 
 async function writeComment(c: ElementComment): Promise<void> {
@@ -1143,6 +1198,7 @@ export async function flush(getFrame: (id: string) => Frame | undefined): Promis
     }),
   )
   await pendingVersionWrites(() => true)
+  await Promise.allSettled([...canvasWrites.values()].map((entry) => entry.write))
   draining = true
   for (const wake of [...retryWaits]) wake()
   await pendingComponentWrites()

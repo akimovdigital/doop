@@ -60,7 +60,14 @@ import { eq, inArray } from 'drizzle-orm'
 import { toNodeHandler, fromNodeHeaders } from 'better-auth/node'
 import { oAuthDiscoveryMetadata } from 'better-auth/plugins'
 import { WebSocketServer, WebSocket } from 'ws'
-import { GuideLimitError, PageLimitError, store } from './store.ts'
+import { GuideLimitError, PageLayoutConflictError, PageLimitError, store } from './store.ts'
+import {
+  consolidatePages,
+  MAX_SECTION_COORDINATE,
+  MAX_SECTIONS_PER_PAGE,
+  moveSection,
+  PageLayoutLimitError,
+} from './pageSections.ts'
 import { parseGuide } from '../shared/guides.ts'
 import { getImage } from './previews.ts'
 import { LayerNotFoundError, layerRefFromQuery, layerSelector } from './layerExport.ts'
@@ -251,6 +258,8 @@ interface Conn {
    *  signed-out guest on a link-shared canvas. */
   userId?: string
   presence: Presence
+  /** This client can apply a geometry batch together with the page list. */
+  pageLayoutMoves?: boolean
   /** an admin viewing as someone else: receives updates, emits nothing.
    *  Showing their borrowed identity as a live cursor would tell the room
    *  the owner is here when they aren't. */
@@ -336,6 +345,13 @@ function send(ws: WebSocket, msg: ServerMessage) {
 function broadcast(canvasId: string, msg: ServerMessage, excludeClientId?: string) {
   for (const c of room(canvasId)) {
     if (excludeClientId && c.presence.clientId === excludeClientId) continue
+    if (msg.type === 'canvas:pages' && msg.frameMoves?.length && !c.pageLayoutMoves) {
+      // Older clients ignore frameMoves. Send the frames before removing their old pages.
+      for (const { id } of msg.frameMoves) {
+        const frame = store.getFrame(id)
+        if (frame) send(c.ws, { type: 'frame:updated', frame, actor: msg.actor })
+      }
+    }
     const shown = c.userId ? msg : forGuest(msg)
     if (shown) send(c.ws, shown)
   }
@@ -2239,6 +2255,104 @@ app.put('/api/canvases/:id/pages', (req, res) => {
   res.json(actions.setCanvasPages(canvas.id, clean, actor))
 })
 
+const sectionPath = '/api/canvases/:id/pages/:pageId/sections/:sectionId'
+const sectionCoordinate = z.number().min(-MAX_SECTION_COORDINATE).max(MAX_SECTION_COORDINATE)
+const sectionPoint = z.object({ x: sectionCoordinate, y: sectionCoordinate })
+const pageName = z.string().trim().min(1).max(100)
+const sectionInput = sectionPoint.extend({
+  name: pageName,
+  width: z.number().min(1).max(MAX_SECTION_COORDINATE),
+  height: z.number().min(1).max(MAX_SECTION_COORDINATE),
+})
+
+app.put(sectionPath, async (req, res, next) => {
+  const canvas = requireCanvas(req, res, req.params.id, 'edit')
+  if (!canvas) return
+  const { pageId, sectionId } = req.params
+  const page = canvasPages(canvas).find((p) => p.id === pageId)
+  if (!page) return res.status(404).json({ error: 'page not found' })
+  const input = sectionInput.safeParse(req.body)
+  if (!/^[a-zA-Z0-9_-]{1,100}$/.test(sectionId) || !input.success) {
+    return res.status(400).json({ error: 'Provide a valid section ID, name and positive-sized bounds.' })
+  }
+  const previous = page.sections ?? []
+  const section = { ...input.data, id: sectionId }
+  const exists = previous.some((s) => s.id === sectionId)
+  if (!exists && previous.length >= MAX_SECTIONS_PER_PAGE) {
+    return res.status(400).json({ error: `A page holds at most ${MAX_SECTIONS_PER_PAGE} sections.` })
+  }
+  const sections = exists ? previous.map((s) => (s.id === sectionId ? section : s)) : [...previous, section]
+  const pages = canvasPages(canvas).map((p) => (p === page ? { ...p, sections } : p))
+  try {
+    res.json(await actions.savePageLayout(canvas.id, { pages, frameMoves: [] }, userActor(req)))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete(sectionPath, async (req, res, next) => {
+  const canvas = requireCanvas(req, res, req.params.id, 'edit')
+  if (!canvas) return
+  const { pageId, sectionId } = req.params
+  const current = canvasPages(canvas)
+  const page = current.find((p) => p.id === pageId)
+  if (!page) return res.status(404).json({ error: 'page not found' })
+  const pages = page.sections?.some((s) => s.id === sectionId)
+    ? current.map((p) =>
+        p === page
+          ? {
+              ...p,
+              sections: page.sections!.filter((s) => s.id !== sectionId),
+              ...(p.landingSectionId === sectionId ? { landingSectionId: undefined } : {}),
+            }
+          : p,
+      )
+    : current
+  try {
+    res.json(await actions.savePageLayout(canvas.id, { pages, frameMoves: [] }, userActor(req)))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post(`${sectionPath}/move`, async (req, res, next) => {
+  const canvas = requireCanvas(req, res, req.params.id, 'edit')
+  if (!canvas) return
+  const { pageId, sectionId } = req.params
+  const input = sectionPoint.extend({ expected: sectionPoint.optional() }).safeParse(req.body)
+  if (!input.success) return res.status(400).json({ error: 'Provide a finite destination for the section.' })
+  const { x, y, expected } = input.data
+  const section = canvasPages(canvas)
+    .find((p) => p.id === pageId)
+    ?.sections?.find((s) => s.id === sectionId)
+  if (!section) return res.status(404).json({ error: 'section not found' })
+  if (expected && (section.x !== x || section.y !== y) && (section.x !== expected.x || section.y !== expected.y)) {
+    return res.status(409).json({ error: 'The section moved while you were dragging. Please try again.' })
+  }
+  const actor = userActor(req)
+  try {
+    const layout = moveSection(canvas, pageId, sectionId, { x, y }, actor.name)!
+    res.json(await actions.savePageLayout(canvas.id, layout, actor))
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/canvases/:id/pages/:pageId/consolidate', async (req, res, next) => {
+  const canvas = requireCanvas(req, res, req.params.id, 'edit')
+  if (!canvas) return
+  const name = pageName.safeParse(req.body?.name)
+  if (!name.success) return res.status(400).json({ error: 'Provide a page name of up to 100 characters.' })
+  const actor = userActor(req)
+  try {
+    const layout = consolidatePages(canvas, req.params.pageId, name.data, actor.name, actions.getComments(canvas.id))
+    if (!layout) return res.status(404).json({ error: 'page not found' })
+    res.json(await actions.savePageLayout(canvas.id, layout, actor))
+  } catch (error) {
+    next(error)
+  }
+})
+
 /* a page's own canvas colour (`#rrggbb`); null puts the theme paper back */
 app.put('/api/canvases/:id/pages/:pageId/background', (req, res) => {
   const canvas = requireCanvas(req, res, req.params.id, 'edit')
@@ -2320,6 +2434,7 @@ app.post('/api/canvases/:id/pages/:pageId/duplicate', async (req, res) => {
     res.json({ page: copy.page, pages: copy.pages, frames: copy.frames })
   } catch (e) {
     if (e instanceof PageLimitError || e instanceof GuideLimitError) return res.status(400).json({ error: e.message })
+    if (e instanceof PageLayoutConflictError) return res.status(409).json({ error: e.message })
     console.error('[pages] duplicate failed', e)
     res.status(500).json({ error: 'Could not duplicate the page. Please try again.' })
   }
@@ -2490,6 +2605,13 @@ const undoRequest: express.ErrorRequestHandler = (error, _req, res, next) => {
 const workBudgetRefusal: express.ErrorRequestHandler = (error, _req, res, next) => {
   if (!(error instanceof WorkBudgetError) || res.headersSent) return next(error)
   res.status(422).json({ error: error.message, code: 'work_budget_exceeded' })
+}
+
+const pageLayoutRefusal: express.ErrorRequestHandler = (error, _req, res, next) => {
+  if (res.headersSent) return next(error)
+  if (error instanceof PageLayoutConflictError) return res.status(409).json({ error: error.message })
+  if (error instanceof PageLayoutLimitError) return res.status(400).json({ error: error.message })
+  next(error)
 }
 
 app.get('/api/canvases/:id/components', (req, res) => {
@@ -3019,6 +3141,8 @@ app.patch('/api/comments/:id/anchor', async (req, res) => {
     anchor = { pageId, x: Number(x), y: Number(y) }
   } else return res.status(400).json({ error: 'frameId or pageId required' })
   const moved = await actions.moveComment(req.params.id, anchor, req.user!.name)
+  if (!moved && store.pageLayoutPending(found.canvasId))
+    return res.status(409).json({ error: 'The canvas layout is changing. Please try again.' })
   if (!moved) return res.status(404).json({ error: 'frame or page not found' })
   res.json(moved)
 })
@@ -3334,6 +3458,7 @@ if (env.isProduction) {
 /* after every route: a handler that threw is undone, and one that ran out of work budget
    answers 422 */
 app.use(undoRequest)
+app.use(pageLayoutRefusal)
 app.use(workBudgetRefusal)
 
 const server = http.createServer(app)
@@ -3344,14 +3469,20 @@ const wss = new WebSocketServer({ server, path: '/ws' })
    no cursor, nothing it sends is relayed) and without the team's
    conversation (GUEST_HIDDEN). Anything else — a private canvas, a missing
    one — is the same 4401, so the sign-in screen does not reveal which. */
-function joinAsGuest(ws: WebSocket, canvasId: string, clientId: string, canvas: Canvas | undefined) {
+function joinAsGuest(
+  ws: WebSocket,
+  canvasId: string,
+  clientId: string,
+  canvas: Canvas | undefined,
+  pageLayoutMoves: boolean,
+) {
   const role = canvas && guestCanvasRole(canvas)
   if (!canvas || !role) {
     ws.close(4401, 'unauthorized')
     return
   }
   const presence: Presence = { clientId, name: '', color: colorFor(clientId), kind: 'user', activeFrameId: null }
-  conns.set(ws, { ws, canvasId, presence, silent: true })
+  conns.set(ws, { ws, canvasId, presence, silent: true, pageLayoutMoves })
   const { guidelines: _guidelines, references: _references, memberIds: _memberIds, ...shown } = canvas
   send(ws, {
     type: 'init',
@@ -3393,7 +3524,7 @@ wss.on('connection', (ws, upgradeReq) => {
         /* only a canvas the guest may open is loaded for them */
         if (canvas && guestCanvasRole(canvas)) canvas = await store.load(msg.canvasId)
         if (ws.readyState !== WebSocket.OPEN) return
-        joinAsGuest(ws, msg.canvasId, msg.clientId, canvas)
+        joinAsGuest(ws, msg.canvasId, msg.clientId, canvas, msg.pageLayoutMoves === true)
         return
       }
       if (!canvas) {
@@ -3435,7 +3566,14 @@ wss.on('connection', (ws, upgradeReq) => {
         activeFrameId: null,
       }
       const silent = !!(session.session as { impersonatedBy?: string | null }).impersonatedBy
-      conns.set(ws, { ws, canvasId: msg.canvasId, userId: session.user.id, presence, silent })
+      conns.set(ws, {
+        ws,
+        canvasId: msg.canvasId,
+        userId: session.user.id,
+        presence,
+        silent,
+        pageLayoutMoves: msg.pageLayoutMoves === true,
+      })
       const others = room(msg.canvasId)
         .filter((c) => c.ws !== ws && !c.silent)
         .map((c) => c.presence)

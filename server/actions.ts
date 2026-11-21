@@ -35,6 +35,7 @@ import {
 import { rosterFor, teamOfCanvas } from './customAgents.ts'
 import { canvasPages } from '../shared/pages.ts'
 import { FRAME_COMMENT_SELECTOR, isCanvasComment, type CommentAnchorInput } from '../shared/comments.ts'
+import type { PageLayoutWrite } from './pageSections.ts'
 import { isElementId } from '../shared/elementId.ts'
 import { parseRunnerPick, runnerKey, type RunnerPick } from '../shared/agentRunner.ts'
 import { hasElementId, stampElementId } from './elementIds.ts'
@@ -775,7 +776,7 @@ export async function ensureElementId(
   like?: string,
 ): Promise<{ id: string; frame: Frame } | undefined> {
   const frame = store.getFrame(frameId)
-  if (!frame || isFrameStreaming(frameId)) return undefined
+  if (!frame || isFrameStreaming(frameId) || store.pageLayoutPending(frame.canvasId)) return undefined
   const stamped = stampElementId(frame.html, selector.slice(0, MAX_ELEMENT_SELECTOR_CHARS), { like })
   if (!stamped) return undefined
   if (stamped.html === frame.html) {
@@ -963,12 +964,14 @@ export const moveComment = atomic(async function moveComment(
   if (!root) return undefined
   const canvas = store.getCanvas(root.canvasId)
   if (!canvas) return undefined
+  if (store.pageLayoutPending(canvas.id)) return undefined
   let anchor: CommentAnchor
   if ('frameId' in input) {
     const frame = store.getFrame(input.frameId)
     if (!frame || frame.canvasId !== root.canvasId) return undefined
     anchor = await frameAnchor(frame, input, by)
     if (!store.getFrame(frame.id)) return undefined
+    if (store.pageLayoutPending(canvas.id)) return undefined
   } else {
     if (!canvasPages(canvas).some((page) => page.id === input.pageId)) return undefined
     anchor = { pageId: input.pageId, x: input.x, y: input.y }
@@ -1091,6 +1094,7 @@ function postComment(
 ): ElementComment | undefined {
   const clean = text.trim()
   if (!clean) return undefined
+  if ('pageId' in anchor && store.pageLayoutPending(canvasId)) return undefined
   /* @Doop, @brand, @a11y… — whichever resident agent is mentioned picks it
      up; a person's name (`@Brand Smith`) is not an agent's */
   const mentioned = mentionedRole(mentions?.roleText ?? clean, canvasRoster(canvasId))
@@ -2454,6 +2458,31 @@ export const setCanvasPages = atomic(function setCanvasPages(
   for (const guide of saved?.dropped ?? []) broadcast(canvasId, { type: 'guide', id: guide.id, guide: null, actor })
   return next
 })
+
+/** Notify peers after the entire layout, including each frame position, is durable. */
+export async function savePageLayout(canvasId: string, layout: PageLayoutWrite, actor: Actor) {
+  const { pages, frameMoves, guides, comments } = layout
+  store.requirePageLayoutIdle(canvasId)
+  const current = store.getCanvas(canvasId)
+  if (current && pages === current.pages && !frameMoves.length) return { pages, frameMoves }
+  await store.commitPageLayout(canvasId, layout, () => {
+    if (comments?.length) {
+      const byId = new Map(comments.map((comment) => [comment.id, comment]))
+      for (const comment of getComments(canvasId)) {
+        const moved = byId.get(comment.id)
+        if (moved) Object.assign(comment, { pageId: moved.pageId, x: moved.x, y: moved.y })
+      }
+    }
+  })
+  broadcast(canvasId, { type: 'canvas:pages', pages, ...(frameMoves.length ? { frameMoves } : {}), actor })
+  for (const guide of guides ?? []) broadcast(canvasId, { type: 'guide', id: guide.id, guide, actor })
+  for (const comment of comments ?? []) {
+    const latest = findComment(comment.id)
+    if (latest) broadcast(canvasId, { type: 'comment', comment: latest })
+  }
+  touch(canvasId, actor, frameMoves[0]?.id)
+  return { pages, frameMoves }
+}
 
 /** Add one page at the end of the canvas, named `name`, with a fresh id; peers
  *  get the page list. Returns the new page and the whole list. */
