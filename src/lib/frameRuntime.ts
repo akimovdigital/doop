@@ -155,7 +155,30 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
     })
   }
   try {
-    new MutationObserver(checkBleed).observe(document.documentElement, { attributes: true, childList: true, subtree: true })
+    var trackedBody = null
+    var shapeObserver = null
+    var kindObserver = new MutationObserver(updateBleedTracking)
+    function updateBleedTracking() {
+      var body = document.body
+      // HTML animations can modify the DOM every frame. Only standalone
+      // shapes need their descendants watched for changes to stroke bounds.
+      if (body !== trackedBody) {
+        trackedBody = body
+        kindObserver.disconnect()
+        kindObserver.observe(document.documentElement, { childList: true })
+        if (body) kindObserver.observe(body, { attributeFilter: ['data-doop-canvas-element'] })
+      }
+      var standalone = !!body && body.hasAttribute('data-doop-canvas-element')
+      if (standalone && !shapeObserver) {
+        shapeObserver = new MutationObserver(checkBleed)
+        shapeObserver.observe(document.documentElement, { attributes: true, childList: true, subtree: true })
+      } else if (!standalone && shapeObserver) {
+        shapeObserver.disconnect()
+        shapeObserver = null
+      }
+      checkBleed()
+    }
+    updateBleedTracking()
   } catch (e) {}
   addEventListener('resize', checkBleed)
   function setOutlines(on) {
