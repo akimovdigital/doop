@@ -2259,36 +2259,61 @@ const sectionPath = '/api/canvases/:id/pages/:pageId/sections/:sectionId'
 const sectionCoordinate = z.number().min(-MAX_SECTION_COORDINATE).max(MAX_SECTION_COORDINATE)
 const sectionPoint = z.object({ x: sectionCoordinate, y: sectionCoordinate })
 const pageName = z.string().trim().min(1).max(100)
+const sectionColor = z
+  .string()
+  .regex(/^#[0-9a-f]{6}$/i)
+  .nullable()
 const sectionInput = sectionPoint.extend({
   name: pageName,
   width: z.number().min(1).max(MAX_SECTION_COORDINATE),
   height: z.number().min(1).max(MAX_SECTION_COORDINATE),
+  fill: sectionColor.optional(),
+  fillOpacity: z.number().min(0).max(100).optional(),
+  stroke: sectionColor.optional(),
+  strokeWidth: z.number().min(0).max(1000).optional(),
+  strokeOpacity: z.number().min(0).max(100).optional(),
+  strokeAlign: z.enum(['inside', 'center', 'outside']).optional(),
+  cornerRadius: z.number().min(0).max(MAX_SECTION_COORDINATE).optional(),
+  lockAspectRatio: z.boolean().optional(),
 })
+const sectionPatch = sectionInput.partial().strict()
 
-app.put(sectionPath, async (req, res, next) => {
-  const canvas = requireCanvas(req, res, req.params.id, 'edit')
+async function saveSection(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const { id, pageId, sectionId } = req.params as { id: string; pageId: string; sectionId: string }
+  const canvas = requireCanvas(req, res, id, 'edit')
   if (!canvas) return
-  const { pageId, sectionId } = req.params
-  const page = canvasPages(canvas).find((p) => p.id === pageId)
+  const pages = canvasPages(canvas)
+  const page = pages.find((p) => p.id === pageId)
   if (!page) return res.status(404).json({ error: 'page not found' })
-  const input = sectionInput.safeParse(req.body)
-  if (!/^[a-zA-Z0-9_-]{1,100}$/.test(sectionId) || !input.success) {
-    return res.status(400).json({ error: 'Provide a valid section ID, name and positive-sized bounds.' })
-  }
   const previous = page.sections ?? []
-  const section = { ...input.data, id: sectionId }
-  const exists = previous.some((s) => s.id === sectionId)
-  if (!exists && previous.length >= MAX_SECTIONS_PER_PAGE) {
+  const existing = previous.find((s) => s.id === sectionId)
+  const update = req.method === 'PATCH'
+  if (update && !existing) return res.status(404).json({ error: 'section not found' })
+  const input = (update ? sectionPatch : sectionInput).safeParse(req.body)
+  if (!/^[a-zA-Z0-9_-]{1,100}$/.test(sectionId) || !input.success) {
+    return res.status(400).json({ error: 'Provide valid section properties.' })
+  }
+  if (!existing && previous.length >= MAX_SECTIONS_PER_PAGE) {
     return res.status(400).json({ error: `A page holds at most ${MAX_SECTIONS_PER_PAGE} sections.` })
   }
-  const sections = exists ? previous.map((s) => (s.id === sectionId ? section : s)) : [...previous, section]
-  const pages = canvasPages(canvas).map((p) => (p === page ? { ...p, sections } : p))
+  // Older clients send a complete geometry record with no appearance keys.
+  const section = existing ? { ...existing, ...input.data } : { ...sectionInput.parse(req.body), id: sectionId }
+  const sections = existing ? previous.map((s) => (s.id === sectionId ? section : s)) : [...previous, section]
   try {
-    res.json(await actions.savePageLayout(canvas.id, { pages, frameMoves: [] }, userActor(req)))
+    res.json(
+      await actions.savePageLayout(
+        canvas.id,
+        { pages: pages.map((p) => (p === page ? { ...p, sections } : p)), frameMoves: [] },
+        userActor(req),
+      ),
+    )
   } catch (error) {
     next(error)
   }
-})
+}
+
+app.put(sectionPath, saveSection)
+app.patch(sectionPath, saveSection)
 
 app.delete(sectionPath, async (req, res, next) => {
   const canvas = requireCanvas(req, res, req.params.id, 'edit')

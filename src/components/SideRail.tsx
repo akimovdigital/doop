@@ -46,7 +46,7 @@ export function SideRail({
   /** the properties slot has something to show: a frame, or the page itself */
   inspectorAvailable: boolean
   /** what the slot would open: the selected frame, or the page's settings */
-  inspectTarget?: 'frame' | 'page'
+  inspectTarget?: 'frame' | 'page' | 'section'
   onToggleInspector: () => void
   me: { name: string; image?: string; color: string }
   onRenameSelf: () => void
@@ -71,7 +71,11 @@ export function SideRail({
         >
           {showInspector && (
             <ToolbarControl
-              label={inspectTarget === 'frame' ? t('canvas.inspectFrame') : t('canvas.pageSettings')}
+              label={
+                inspectTarget === 'frame'
+                  ? t('canvas.inspectFrame')
+                  : t(inspectTarget === 'section' ? 'canvas.sectionProperties' : 'canvas.pageSettings')
+              }
               onClick={onToggleInspector}
             >
               <SlidersIcon />

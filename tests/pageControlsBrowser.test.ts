@@ -80,7 +80,7 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     await page.evaluate(() => new Promise(requestAnimationFrame))
   }
 
-  it('draws a section with Shift+S and moves its frame in one update that survives reload', async () => {
+  it('draws, styles and moves a section with its frame and opens its link', async () => {
     await page.evaluate(async () => {
       const response = await fetch('/api/canvases/' + location.pathname.split('/').at(-1) + '/frames', {
         method: 'POST',
@@ -102,6 +102,56 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     await page.mouse.up()
     const title = await page.waitForSelector('[data-canvas-section] button')
     expect(await title?.evaluate((element) => element.textContent?.trim())).toBe('Section 1')
+    const sectionSelector = '[data-canvas-section]'
+    const inspector = '[data-section-inspector]'
+    expect(await page.$eval(sectionSelector, (node) => getComputedStyle(node).backgroundColor)).toMatch(/^rgb\(/)
+    await page.waitForSelector(inspector)
+    await page.locator(inspector + ' input[aria-label="Fill color"]').fill('#406080')
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(
+      () => getComputedStyle(document.querySelector('[data-canvas-section]')!).backgroundColor === 'rgb(64, 96, 128)',
+    )
+    await page.locator(inspector + ' input[aria-label="Fill opacity"]').fill('80')
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(
+      () =>
+        getComputedStyle(document.querySelector('[data-canvas-section]')!).backgroundColor === 'rgba(64, 96, 128, 0.8)',
+    )
+    expect(
+      await page.$$eval('[data-canvas-section] button[aria-label^="Resize section"]', (items) => items.length),
+    ).toBe(4)
+    await page.click(inspector + ' button[role="switch"]')
+    await page.waitForSelector(inspector + ' button[role="switch"][aria-checked="true"]')
+    const width = await page.$eval(
+      inspector + ' input[aria-label="Width"]',
+      (el) => (el as HTMLInputElement).valueAsNumber,
+    )
+    const height = await page.$eval(
+      inspector + ' input[aria-label="Height"]',
+      (el) => (el as HTMLInputElement).valueAsNumber,
+    )
+    await page.locator(inspector + ' input[aria-label="Width"]').fill(String(width + 30))
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(
+      (height) => {
+        const next = document.querySelector<HTMLInputElement>('[data-section-inspector] input[aria-label="Height"]')
+        return !!next && next.valueAsNumber > height
+      },
+      {},
+      height,
+    )
+    const resizedHeight = await page.$eval(
+      inspector + ' input[aria-label="Height"]',
+      (el) => (el as HTMLInputElement).valueAsNumber,
+    )
+    expect(resizedHeight).toBeCloseTo(((width + 30) * height) / width)
+    const beforeFit = await page.$eval('.world', (el) => (el as HTMLElement).style.transform)
+    await page.locator('::-p-aria(Zoom to section)').click()
+    await page.waitForFunction(
+      (before) => document.querySelector<HTMLElement>('.world')?.style.transform !== before,
+      {},
+      beforeFit,
+    )
     const handle = (await title!.boundingBox())!
     await page.mouse.move(handle.x + 10, handle.y + handle.height / 2)
     await page.mouse.down()
@@ -119,6 +169,18 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     await page.reload()
     await page.waitForSelector('[data-canvas-section]')
     expect(await page.$eval('[data-doop-frame-shell]', (node) => (node as HTMLElement).style.left)).toBe(movedX)
+    expect(await page.$eval(sectionSelector, (node) => getComputedStyle(node).backgroundColor)).toBe(
+      'rgba(64, 96, 128, 0.8)',
+    )
+    const sectionId = await page.$eval(sectionSelector, (node) => node.getAttribute('data-canvas-section'))
+    const pageId = await page.$eval('[data-page-id]', (node) => node.getAttribute('data-page-id'))
+    await page.goto(`${page.url()}?page=${encodeURIComponent(pageId!)}&section=${sectionId}`)
+    await page.waitForSelector('[data-section-inspector]')
+    const name = await page.$eval(
+      '[data-section-inspector] input[aria-label="Section name"]',
+      (el) => (el as HTMLInputElement).value,
+    )
+    expect(name).toBe('Section 1')
   }, 20_000)
 
   it('collects frame tokens in Framework and imports a portable DESIGN.md', async () => {

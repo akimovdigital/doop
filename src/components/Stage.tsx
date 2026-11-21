@@ -672,6 +672,13 @@ export function Stage({
       useStore.getState().setActivePage(page)
       return
     }
+    const sectionId = params?.get('section')
+    const section = sectionId ? activeSections(state).find((item) => item.id === sectionId) : undefined
+    if (section) {
+      cameraPage.current = activePageId
+      state.focusSection(section.id)
+      return
+    }
     if (cameraPage.current === activePageId) return
     cameraPage.current = activePageId
     const saved = pageCameras.current.get(activePageId)

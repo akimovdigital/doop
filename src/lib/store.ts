@@ -110,6 +110,7 @@ interface State {
   layersOpen: boolean
   /** which face the Layers panel shows: the layer tree, or Framework */
   layersTab: 'layers' | 'framework'
+  selectedSectionId: string | null
   sectionFocus: { id: string } | null
   /** ⌘. — every panel and toolbar is off screen, leaving only the canvas.
    *  A plain overlay flag: the panels' own open/closed state is untouched
@@ -278,6 +279,7 @@ interface State {
   setElementPanelOpen(v: boolean): void
   setLayersOpen(v: boolean): void
   setLayersTab(tab: State['layersTab']): void
+  selectSection(id: string): void
   focusSection(id: string): void
   toggleUiHidden(): void
   setPrototypeMode(on: boolean): void
@@ -351,6 +353,7 @@ export const useStore = create<State>((set, get) => ({
   elementPanelOpen: false,
   layersOpen: readLayersOpen(),
   layersTab: 'layers',
+  selectedSectionId: null,
   sectionFocus: null,
   uiHidden: false,
   prototypeMode: false,
@@ -377,6 +380,7 @@ export const useStore = create<State>((set, get) => ({
          hide-UI, so the next canvas never opens with its chrome gone; a
          re-join of the same canvas keeps it */
       uiHidden: canvas ? s.uiHidden : false,
+      selectedSectionId: canvas?.id === s.canvas?.id ? s.selectedSectionId : null,
       activePageId: canvas
         ? canvas.id === s.canvas?.id && canvasPages(canvas).some((p) => p.id === s.activePageId)
           ? s.activePageId
@@ -390,6 +394,8 @@ export const useStore = create<State>((set, get) => ({
       if (!s.canvas || !canvasPages(s.canvas).some((p) => p.id === id) || s.activePageId === id) return {}
       return {
         activePageId: id,
+        selectedSectionId: null,
+        sectionFocus: null,
         selectedId: null,
         selectedIds: [],
         selectedElement: null,
@@ -432,6 +438,11 @@ export const useStore = create<State>((set, get) => ({
         canvas,
         activePageId,
         selectedGuideId,
+        selectedSectionId: pages
+          .find((p) => p.id === activePageId)
+          ?.sections?.some((sct) => sct.id === s.selectedSectionId)
+          ? s.selectedSectionId
+          : null,
         ...(activePageId !== s.activePageId
           ? {
               selectedId: null,
@@ -659,18 +670,32 @@ export const useStore = create<State>((set, get) => ({
     if (frame && state.canvas) state.setActivePage(framePageId(state.canvas, frame))
     set((s) => {
       const selectedIds = selectedId ? [selectedId] : []
-      return s.selectedId === selectedId
+      return s.selectedId === selectedId && !s.selectedSectionId
         ? { selectedId, selectedIds }
-        : { selectedId, selectedIds, inspectorOpen: false, selectedElement: null, elementPanelOpen: false }
+        : {
+            selectedId,
+            selectedIds,
+            selectedSectionId: null,
+            inspectorOpen: false,
+            selectedElement: null,
+            elementPanelOpen: false,
+          }
     })
   },
   toggleSelect: (id) =>
     set((s) => {
       const selectedIds = s.selectedIds.includes(id) ? s.selectedIds.filter((x) => x !== id) : [...s.selectedIds, id]
       const selectedId = selectedIds[selectedIds.length - 1] ?? null
-      return selectedId === s.selectedId
+      return selectedId === s.selectedId && !s.selectedSectionId
         ? { selectedIds }
-        : { selectedIds, selectedId, inspectorOpen: false, selectedElement: null, elementPanelOpen: false }
+        : {
+            selectedIds,
+            selectedId,
+            selectedSectionId: null,
+            inspectorOpen: false,
+            selectedElement: null,
+            elementPanelOpen: false,
+          }
     }),
   selectMany: (ids) => {
     const state = get()
@@ -678,9 +703,16 @@ export const useStore = create<State>((set, get) => ({
     if (frame && state.canvas) state.setActivePage(framePageId(state.canvas, frame))
     set((s) => {
       const selectedId = ids[ids.length - 1] ?? null
-      return selectedId === s.selectedId
+      return selectedId === s.selectedId && !s.selectedSectionId
         ? { selectedIds: ids }
-        : { selectedIds: ids, selectedId, inspectorOpen: false, selectedElement: null, elementPanelOpen: false }
+        : {
+            selectedIds: ids,
+            selectedId,
+            selectedSectionId: null,
+            inspectorOpen: false,
+            selectedElement: null,
+            elementPanelOpen: false,
+          }
     })
   },
   setTool: (tool) => set((s) => (toolAllowed(tool, roleOf(s)) ? { tool } : {})),
@@ -759,7 +791,22 @@ export const useStore = create<State>((set, get) => ({
     set({ layersOpen })
   },
   setLayersTab: (layersTab) => set({ layersTab }),
-  focusSection: (id) => set({ sectionFocus: { id } }),
+  selectSection: (id) =>
+    set({
+      selectedSectionId: id,
+      selectedId: null,
+      selectedIds: [],
+      selectedElement: null,
+      selectedElements: [],
+      elementPanelOpen: false,
+      selectedGuideId: null,
+      inspectorOpen: true,
+      ctxMenu: null,
+    }),
+  focusSection: (id) => {
+    get().selectSection(id)
+    set({ sectionFocus: { id } })
+  },
   /* hidden guides cannot stay selected: Delete would remove one unseen */
   toggleUiHidden: () => set((s) => ({ uiHidden: !s.uiHidden, ...(s.uiHidden ? {} : { selectedGuideId: null }) })),
   setPrototypeMode: (prototypeMode) => set({ prototypeMode }),

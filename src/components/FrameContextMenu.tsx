@@ -3,6 +3,7 @@ import type { Frame } from '../../shared/types'
 import { errorMessage } from '../lib/api'
 import { copyFrames, duplicateFrames, hasFrameClip, pasteFrameAtScreen } from '../lib/frameClipboard'
 import { writeCanvasClipboard } from '../lib/canvasClipboard'
+import { wrapSelectionInSection } from '../lib/canvasSections'
 import { copyFramePng } from '../lib/frameExport'
 import { deleteFramesTracked } from '../lib/history'
 import { isStackLocked, setFramesHidden, setFramesLocked } from '../lib/layerEdits'
@@ -155,6 +156,9 @@ export function FrameContextMenu({
             >
               {t('stage.paste')}
               <MenuHint>{MOD_KEY}V</MenuHint>
+            </ContextMenuItem>
+            <ContextMenuItem onSelect={() => void wrapSelectionInSection(t('canvas.toolSection'))}>
+              {t('canvas.sectionWrap')}
             </ContextMenuItem>
             <ContextMenuItem onSelect={() => duplicateFrames(groupFrames())}>
               {groupSize > 1 ? t('stage.duplicateFrames', { count: groupSize }) : t('stage.duplicate')}

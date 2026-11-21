@@ -54,6 +54,25 @@ it('moves sections with their frames and consolidates pages durably', async () =
       frameMoves: [],
       pages: [expect.any(Object), { sections: [section] }, empty],
     })
+    const appearance = {
+      fill: '#405c7a',
+      fillOpacity: 85,
+      stroke: '#182937',
+      strokeWidth: 3,
+      strokeOpacity: 70,
+      strokeAlign: 'outside',
+      cornerRadius: 12,
+      lockAspectRatio: true,
+    }
+    expect(await json<CanvasPageLayout>(owner.patch(sectionPath, appearance))).toMatchObject({
+      frameMoves: [],
+      pages: [expect.any(Object), { sections: [{ ...section, ...appearance }] }, empty],
+    })
+    expect((await owner.patch(sectionPath, { fillOpacity: 101 })).status).toBe(400)
+    expect((await owner.patch(sectionPath, { stroke: 'invalid' })).status).toBe(400)
+    expect(await json<CanvasPageLayout>(owner.put(sectionPath, section))).toMatchObject({
+      pages: [expect.any(Object), { sections: [{ ...section, ...appearance }] }, empty],
+    })
     const expected = { x: 0, y: 0 }
     const moved = await json<CanvasPageLayout>(owner.post(`${sectionPath}/move`, { x: -110, y: 20, expected }))
     expect(moved.frameMoves).toMatchObject([{ id: linked.id, pageId: other.id, x: -98, y: 32 }])
@@ -95,6 +114,7 @@ it('moves sections with their frames and consolidates pages durably', async () =
     const restored = await json<Canvas>(owner.get(api))
     expect(restored.frames).toHaveLength(3)
     expect(restored.frames.find((f) => f.id === linked.id)).toMatchObject({ ...restoredLink, html: saved.html })
+    expect(restored.pages?.[0]?.sections?.find((s) => s.id === section.id)).toMatchObject(appearance)
     expect(restored.pages).toEqual(consolidated.pages)
     expect(restored.guides).toMatchObject([{ id: 'sample-guide', pageId: main!.id, at: 12 + restoredLink.x + 98 }])
 

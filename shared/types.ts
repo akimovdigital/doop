@@ -138,6 +138,15 @@ export interface CanvasSection {
   y: number
   width: number
   height: number
+  /** Omitted uses the canvas theme; null explicitly removes the paint. */
+  fill?: string | null
+  fillOpacity?: number
+  stroke?: string | null
+  strokeWidth?: number
+  strokeOpacity?: number
+  strokeAlign?: 'inside' | 'center' | 'outside'
+  cornerRadius?: number
+  lockAspectRatio?: boolean
 }
 
 /** Update layout without re-sending the editable HTML of every moved frame. */

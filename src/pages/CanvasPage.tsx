@@ -42,6 +42,8 @@ import {
   parseLibraryDrag,
 } from '../lib/components'
 import { Inspector } from '../components/Inspector'
+import { SectionInspector } from '../components/SectionInspector'
+import { selectedSection as getSelectedSection } from '../lib/canvasSections'
 import { PagePanel } from '../components/PagePanel'
 import { ElementPanel } from '../components/ElementPanel'
 import { ActivityPanel } from '../components/ActivityPanel'
@@ -721,6 +723,7 @@ export function CanvasPage({
   )
 
   const selectedFrame = canvas?.frames.find((f) => f.id === selectedId) ?? null
+  const selectedSection = useStore(getSelectedSection)
   /* the panel only shows when a frame-name click (or deep link) opened it —
      selecting a frame by clicking its surface must not slide it in */
   const inspectorOpen = useStore((s) => s.inspectorOpen)
@@ -738,10 +741,11 @@ export function CanvasPage({
   /* with nothing selected the slot is the page's own settings, once opened
      from the rail, until closed */
   const pagePanelOpen = useStore((s) => s.pagePanelOpen)
-  const pageShown = !readOnly && !selectedFrame && pagePanelOpen && !deferPanel
+  const sectionShown = !readOnly && !!selectedSection && inspectorOpen
+  const pageShown = !readOnly && !selectedFrame && !selectedSection && pagePanelOpen && !deferPanel
   /* the frame Inspector, the element panel or the Page panel, whichever has the slot */
   const propertiesShown =
-    (!readOnly && !!selectedFrame && !deferPanel && (!!panelElement || inspectorOpen)) || pageShown
+    (!readOnly && !!selectedFrame && !deferPanel && (!!panelElement || inspectorOpen)) || sectionShown || pageShown
   /* ⇧R docks the rulers on the canvas's top and left edges; the bar and the
      floating chrome step in past them (the same test Stage draws them by) */
   const rulers = useStore((s) => s.rulers)
@@ -1126,6 +1130,14 @@ export function CanvasPage({
           {!isMobile && !readOnly && selectedFrame && inspectorOpen && !panelElement && !deferPanel && (
             <Inspector frame={selectedFrame} surface={panelSurface} style={{ right: chrome.properties }} />
           )}
+          {!isMobile && sectionShown && selectedSection && (
+            <SectionInspector
+              key={selectedSection.id}
+              section={selectedSection}
+              surface={panelSurface}
+              style={{ right: chrome.properties }}
+            />
+          )}
           {!isMobile && pageShown && <PagePanel surface={panelSurface} style={{ right: chrome.properties }} />}
           {!isMobile && showActivity && (
             <ActivityPanel
@@ -1152,9 +1164,13 @@ export function CanvasPage({
               onToggleAgents={() => setShowActivity((open) => !open)}
               inspectorOpen={propertiesShown}
               inspectorAvailable={!readOnly}
-              inspectTarget={selectedFrame ? 'frame' : 'page'}
+              inspectTarget={selectedSection ? 'section' : selectedFrame ? 'frame' : 'page'}
               onToggleInspector={() => {
                 const s = useStore.getState()
+                if (selectedSection) {
+                  s.setInspectorOpen(!s.inspectorOpen)
+                  return
+                }
                 if (!selectedFrame) {
                   s.setPagePanelOpen(!s.pagePanelOpen)
                   return
@@ -1267,7 +1283,7 @@ export function CanvasPage({
               the open state they read from is untouched, so they are back
               as they were when ⌘. restores the chrome */}
           <Sheet
-            open={!readOnly && !!selectedFrame && inspectorOpen && !deferPanel && !uiHidden}
+            open={(sectionShown || (!readOnly && !!selectedFrame && inspectorOpen && !deferPanel)) && !uiHidden}
             onOpenChange={(open) => {
               if (!open) select(null)
             }}
@@ -1277,8 +1293,14 @@ export function CanvasPage({
               showCloseButton={false}
               className="max-h-[calc(100svh-56px)] gap-0 rounded-t-2xl border-line bg-surface p-0 shadow-pop data-[side=bottom]:h-[min(78svh,680px)]"
             >
-              <SheetTitle className="sr-only">{t('canvas.frameInspector')}</SheetTitle>
-              {selectedFrame && <Inspector frame={selectedFrame} surface="inline" />}
+              <SheetTitle className="sr-only">
+                {t(selectedSection ? 'canvas.sectionProperties' : 'canvas.frameInspector')}
+              </SheetTitle>
+              {selectedSection ? (
+                <SectionInspector key={selectedSection.id} section={selectedSection} surface="inline" />
+              ) : (
+                selectedFrame && <Inspector frame={selectedFrame} surface="inline" />
+              )}
             </SheetContent>
           </Sheet>
           <Sheet open={showActivity && !uiHidden} onOpenChange={setShowActivity}>

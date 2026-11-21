@@ -46,7 +46,15 @@ export function pageSearch(canvas: LinkedCanvas, search: string, activePageId: s
     params.delete('frame')
     params.delete('element')
   }
-  if (onLinkedFrame || activePageId === defaultPageId(canvas)) params.delete('page')
+  const sectionId = params.get('section')
+  if (
+    sectionId &&
+    !canvasPages(canvas)
+      .find((page) => page.id === activePageId)
+      ?.sections?.some((s) => s.id === sectionId)
+  )
+    params.delete('section')
+  if (onLinkedFrame || (activePageId === defaultPageId(canvas) && !params.has('section'))) params.delete('page')
   else params.set('page', activePageId)
   const next = params.toString()
   return next ? `?${next}` : ''

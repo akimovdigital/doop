@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid'
 import { rotatedBounds } from '../shared/frameRotation.ts'
 import { sortByStack } from '../shared/frameStack.ts'
 import { canvasPages, pageFrames } from '../shared/pages.ts'
-import { sectionContainsFrame } from '../shared/sections.ts'
+import { SECTION_BOUNDS_LIMIT, sectionContainsFrame } from '../shared/sections.ts'
 import type {
   Canvas,
   CanvasFrameMove,
@@ -14,7 +14,7 @@ import type {
 } from '../shared/types.ts'
 
 export const MAX_SECTIONS_PER_PAGE = 1000
-export const MAX_SECTION_COORDINATE = 1_000_000_000
+export const MAX_SECTION_COORDINATE = SECTION_BOUNDS_LIMIT
 
 export class PageLayoutLimitError extends Error {}
 
