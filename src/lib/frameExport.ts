@@ -52,7 +52,7 @@ async function failureOf(res: Response, label: string): Promise<string> {
    desktop shell's webview ignores Content-Disposition for types it can
    display (PNG and JPG) and would show the file
    in the window instead; with the attribute it opens the native save panel. */
-function saveBlob(blob: Blob, fileName: string) {
+export function saveBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url

@@ -108,8 +108,8 @@ interface State {
   elementPanelOpen: boolean
   /** the Layers rail is showing (desktop); the choice sticks across visits */
   layersOpen: boolean
-  /** which face the Layers panel shows: the layer tree, or the design tokens */
-  layersTab: 'layers' | 'sections' | 'tokens'
+  /** which face the Layers panel shows: the layer tree, or Framework */
+  layersTab: 'layers' | 'framework'
   sectionFocus: { id: string } | null
   /** ⌘. — every panel and toolbar is off screen, leaving only the canvas.
    *  A plain overlay flag: the panels' own open/closed state is untouched

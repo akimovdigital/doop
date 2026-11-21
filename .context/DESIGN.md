@@ -223,3 +223,10 @@ density="rail"` (the group caption with its chevron) and `DashNavItem density="r
 
 - `--breakpoint-xs`: `30rem`, `--breakpoint-md`: `56.25rem` - custom additions on top of
   Tailwind's defaults.
+
+## Canvas framework
+
+- The left rail contains Layers and Framework. Sections remain a collapsible part of Layers. Framework uses the existing panel tabs, file input, button and menu primitives. Overview shows palette swatches and sampled typography, spacing and radius values. Tokens opens the existing theme selector and the editable token groups.
+- Overview uses the canvas shell's surface tokens from `src/styles.css`. Light uses `--surface` #ffffff, `--sub` #f7f7f7, `--line-soft` #ececec, `--ink` #111111 and `--ink-soft` #5f5e5b. Dark uses #1c1c1c, #242424, rgba(255, 255, 255, 0.08), #f2f2f2 and #a9a8a5 in the same roles. Source names use the label size, variable names use the micro size in code type and values use tabular numerals.
+- Import previews new tokens from CSS, JSON, HTML, YAML, structured DESIGN.md and the selected frame. Confirmation adds new names. Existing names are kept. CSS, JSON, DESIGN.md and an HTML/CSS ZIP use the canvas's saved tokens. The ZIP supports importing a token stylesheet alongside a minimal page in Instatic. `src/components/FrameworkPanel.tsx` owns this UI, and `src/lib/frameworkFiles.ts` parses sources without running frame scripts.
+- On heavy pages at 12% zoom or below, large inactive frames use lazy, top-aligned JPEG thumbnails with the normal outline and name. Existing live documents stay mounted but their paint is skipped while the thumbnail is shown. Selection, editing, prototype mode and active streams show the live content. Thumbnail height is capped at 1200 design pixels. `frameAdmission.ts`, `Stage.tsx` and `FrameView.tsx` coordinate the overview and camera.

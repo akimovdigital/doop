@@ -121,6 +121,86 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     expect(await page.$eval('[data-doop-frame-shell]', (node) => (node as HTMLElement).style.left)).toBe(movedX)
   }, 20_000)
 
+  it('collects frame tokens in Framework and imports a portable DESIGN.md', async () => {
+    const canvasId = page.url().split('/').at(-1)!
+    const id = await page.evaluate(async (canvasId) => {
+      const response = await fetch('/api/canvases/' + canvasId + '/frames', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Framework source',
+          x: 480,
+          y: 240,
+          width: 260,
+          height: 140,
+          html: '<style>:root{--color-brand:#2468ae;--space-base:16px;--font-body:Inter} @media (prefers-color-scheme:dark){:root{--color-brand:#abcdff}}</style><main style="color:var(--color-brand)">Token sample</main>',
+        }),
+      })
+      if (!response.ok) throw new Error(await response.text())
+      const result = await response.json()
+      return result.id ?? result.frame.id
+    }, canvasId)
+    await page.goto(`${origin}/c/${canvasId}?frame=${id}`)
+    await page.waitForSelector('[data-doop-frame-shell] iframe')
+    await page.click('[role="tab"][title="Framework"]')
+    await page.waitForSelector('[data-framework-source]')
+    expect(await page.$eval('[data-framework-source]', (el) => el.textContent)).toContain('--space-base')
+    await page.locator('::-p-aria(Add to Framework)').click()
+    await page.waitForFunction(() =>
+      document.querySelector('[data-framework-panel] [role="status"]')?.textContent?.includes('Added 3 tokens'),
+    )
+    await page.evaluate(() => {
+      const files = new DataTransfer()
+      files.items.add(new File(['---\nname: Fixture\nspacing:\n  roomy: 24px\n---\n'], 'DESIGN.md'))
+      const input = document.querySelector<HTMLInputElement>('[data-framework-panel] input[type=file]')!
+      input.files = files.files
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await page.waitForFunction(() =>
+      document.querySelector('[data-framework-source]')?.textContent?.includes('--space-roomy'),
+    )
+    await page.locator('::-p-aria(Add to Framework)').click()
+    await page.waitForFunction(() =>
+      document.querySelector('[data-framework-panel] [role="status"]')?.textContent?.includes('Added 1 tokens'),
+    )
+    const css = await page.evaluate(
+      async (id) => (await fetch(`/api/canvases/${id}/tokens?format=css`)).text(),
+      canvasId,
+    )
+    expect(css).toContain('--color-brand:#2468ae')
+    expect(css).toContain('--color-brand:#abcdff')
+    expect(css).toContain('--space-roomy:24px')
+  }, 20_000)
+
+  it('keeps overview frames light and opens the selected frame at overview scale', async () => {
+    await page.evaluate(async () => {
+      const id = location.pathname.split('/').at(-1)
+      for (let i = 0; i < 17; i++) {
+        const response = await fetch('/api/canvases/' + id + '/frames', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'Overview ' + i,
+            x: i * 1200,
+            y: 300,
+            width: 800,
+            height: 1000,
+            html: '<p>Frame</p>',
+          }),
+        })
+        if (!response.ok) throw new Error(await response.text())
+      }
+    })
+    await page.reload()
+    const preview = await page.waitForSelector('[data-frame-overview-preview]')
+    expect(await page.$$eval('iframe[data-doop-frame]', (iframes) => iframes.length)).toBe(0)
+    const shell = await preview!.evaluateHandle((node) => node.closest('[data-doop-frame-shell]')!)
+    const surface = await shell.$('[data-frame-surface]')
+    await surface!.click()
+    await page.waitForSelector('iframe[data-doop-frame]')
+    expect(await page.$$eval('iframe[data-doop-frame]', (iframes) => iframes.length)).toBe(1)
+  }, 25_000)
+
   it('copies another page’s link without leaving the current page', async () => {
     await page.browserContext().overridePermissions(origin, ['clipboard-read', 'clipboard-sanitized-write'])
     const canvasPath = new URL(page.url()).pathname

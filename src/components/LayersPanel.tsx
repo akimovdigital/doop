@@ -65,8 +65,9 @@ import {
   type PanelResize,
   type PanelSurface,
 } from './ui/panel'
-import { TokensSection } from './TokensPanel'
+import { FrameworkPanel } from './FrameworkPanel'
 import { Button } from './ui/button'
+import { Disclosure } from './ui/collapsible'
 import { Input } from './ui/input'
 import { Tooltip } from './ui/tooltip'
 import { Toolbar, ToolbarControl } from './ui/toolbar'
@@ -80,9 +81,8 @@ import {
   EyeIcon,
   FrameIcon,
   LayersIcon,
-  SectionIcon,
   ComponentIcon,
-  BracesIcon,
+  PaletteIcon,
   LockIcon,
   LockOpenIcon,
   PanelCollapseIcon,
@@ -558,18 +558,15 @@ export function LayersPanel({
         surface === 'docked' && 'left-0 w-[264px] border-r',
       )}
     >
-      {/* the panel's two faces as icon tabs, the collapse control at the far end */}
+      {/* the panel's faces as icon tabs, the collapse control at the far end */}
       <PanelTabsRoot value={tab} onValueChange={(next) => setTab(next as typeof tab)} className="flex-none">
         <PanelHeader className="h-10 pl-2">
           <PanelTabs aria-label={t('panels.layersTabsAria')}>
             <PanelIconTab value="layers" icon={<LayersIcon />} title={t('panels.layersTitle')}>
               {t('panels.layersTitle')}
             </PanelIconTab>
-            <PanelIconTab value="sections" icon={<SectionIcon />} title={t('canvas.sectionTab')}>
-              {t('canvas.sectionTab')}
-            </PanelIconTab>
-            <PanelIconTab value="tokens" icon={<BracesIcon />} title={t('panels.layersTabTokens')}>
-              {t('panels.layersTabTokens')}
+            <PanelIconTab value="framework" icon={<PaletteIcon />} title="Framework">
+              Framework
             </PanelIconTab>
           </PanelTabs>
           {surface === 'inline' ? (
@@ -589,17 +586,22 @@ export function LayersPanel({
           )}
         </PanelHeader>
       </PanelTabsRoot>
-      {tab === 'sections' && <SectionsPanel />}
-      {tab === 'tokens' && (
-        <PanelBody className="flex flex-col pb-2">
-          <TokensSection />
-        </PanelBody>
-      )}
+      {tab === 'framework' && <FrameworkPanel key={pageCanvas?.id} />}
       {tab === 'layers' && (
         <>
           {/* Figma's order: the pages at the top, the frames of the active page
           under them, the search at the bottom within thumb's reach */}
           {pageCanvas && <PagesPanel key={pageCanvas.id} canvasId={pageCanvas.id} />}
+          {pageCanvas && (
+            <Disclosure
+              label={t('canvas.sectionTab')}
+              className="mx-2 mt-1 max-h-[36%] flex-none overflow-auto rounded-row border border-line-soft"
+              triggerClassName="w-full flex-row-reverse px-2 py-1.5 text-label text-ink-soft"
+              contentClassName="mt-0"
+            >
+              <SectionsPanel />
+            </Disclosure>
+          )}
           <div className={cn('mt-1.5 flex h-6 flex-none items-center justify-between pr-2.5 pl-3.5', sectionHeading)}>
             <span data-slot="frame-section-heading" className={sectionHeading}>
               {t('panels.layersTitle')}
@@ -721,24 +723,14 @@ export function LayersRailToggle({ docked = false }: { docked?: boolean }) {
         <LayersIcon />
       </ToolbarControl>
       <ToolbarControl
-        label={t('canvas.sectionTab')}
+        label="Framework"
         side="right"
         onClick={() => {
-          useStore.getState().setLayersTab('sections')
+          useStore.getState().setLayersTab('framework')
           setLayersOpen(true)
         }}
       >
-        <SectionIcon />
-      </ToolbarControl>
-      <ToolbarControl
-        label={t('panels.layersTabTokens')}
-        side="right"
-        onClick={() => {
-          useStore.getState().setLayersTab('tokens')
-          setLayersOpen(true)
-        }}
-      >
-        <BracesIcon />
+        <PaletteIcon />
       </ToolbarControl>
     </Toolbar>
   )
