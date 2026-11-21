@@ -364,6 +364,9 @@ fn build_canvas_window(
     incognito: bool,
 ) -> tauri::Result<WebviewWindow<ShellRuntime>> {
     let label_is_main = label == "main";
+    let show_without_animation = cfg!(target_os = "macos")
+        && app.config().identifier == "digital.akimov.doop-test"
+        && !migrating;
     let handle = app.clone();
     // Hosts that stay inside the shell; any other http(s) target opens
     // in the system browser. Hostless web schemes (about:, blob:) stay
@@ -468,7 +471,7 @@ fn build_canvas_window(
                 }
             })
             .title("doop")
-            .visible(!migrating)
+            .visible(!migrating && !show_without_animation)
             .inner_size(if label_is_main { 1440.0 } else { 1100.0 }, if label_is_main { 900.0 } else { 760.0 })
             .min_inner_size(900.0, 600.0)
             .on_navigation(move |url| {
@@ -485,8 +488,7 @@ fn build_canvas_window(
     #[cfg(target_os = "macos")]
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true)
-        .maximized(label_is_main && app.config().identifier == "digital.akimov.doop-test");
+        .hidden_title(true);
     #[cfg(not(chromium))]
     let builder = builder.incognito(incognito);
     #[cfg(chromium)]
@@ -496,8 +498,27 @@ fn build_canvas_window(
     {
         let window_to_position = window.clone();
         window.run_on_main_thread(move || {
-            if let Ok(ns_window) = window_to_position.ns_window() {
-                place_traffic_lights(ns_window);
+            use objc2::MainThreadMarker;
+            use objc2_app_kit::{NSScreen, NSWindow, NSWindowAnimationBehavior};
+
+            if let Ok(window_ptr) = window_to_position.ns_window() {
+                if show_without_animation {
+                    let main_thread = MainThreadMarker::new().expect("running on the main thread");
+                    // SAFETY: Tauri owns this live NSWindow, and this runs on the main thread.
+                    let ns_window = unsafe { &*window_ptr.cast::<NSWindow>() };
+                    ns_window.setAnimationBehavior(NSWindowAnimationBehavior::None);
+                    // Tauri's maximized builder shows the normal window before zooming it.
+                    // Start at the work area's size while the window is still hidden.
+                    if label_is_main {
+                        if let Some(screen) = ns_window.screen().or_else(|| NSScreen::mainScreen(main_thread)) {
+                            ns_window.setFrame_display_animate(screen.visibleFrame(), false, false);
+                        }
+                    }
+                }
+                place_traffic_lights(window_ptr);
+            }
+            if show_without_animation {
+                let _ = window_to_position.show();
             }
         })?;
     }
