@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Canvas, CanvasMeta, WorkspaceSummary } from '../../shared/types'
 import { colorFor } from '../../shared/types'
 import { api, errorMessage, paywalledWorkspace } from '../lib/api'
@@ -105,6 +105,36 @@ export function Home() {
   const [composerFocusAt, setComposerFocusAt] = useState(0)
   const { data: session } = authClient.useSession()
   const t = useT()
+  const ownerId = session?.user.id
+
+  /* pings can start overlapping reloads; a response older than one already
+     shown is dropped, or an invite's slow answer would bring back a canvas
+     removed after it */
+  const reloadSeq = useRef(0)
+  const shown = useRef({ canvases: 0, workspaces: 0 })
+  const reload = useCallback(() => {
+    const seq = ++reloadSeq.current
+    api
+      .listCanvases()
+      .then((list) => {
+        if (seq < shown.current.canvases) return
+        shown.current.canvases = seq
+        setCanvases(list)
+        /* every fresh list is a chance to drop tabs for canvases that are
+           gone — deleted here, in another session, or by someone else */
+        pruneTabs(ownerId, new Set(list.map((c) => c.id)))
+      })
+      .catch(console.error)
+    api
+      .listWorkspaces()
+      .then((res) => {
+        if (seq < shown.current.workspaces) return
+        shown.current.workspaces = seq
+        setWorkspaces(res.workspaces)
+        setWorkspacesLoaded(true)
+      })
+      .catch(console.error)
+  }, [ownerId])
 
   useEffect(() => {
     /* the rail on another page sends people here with a scope or a request
@@ -116,7 +146,7 @@ export function Home() {
       history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`)
     }
     reload()
-  }, [])
+  }, [reload])
 
   /* a canvas shared with (or taken from) this account, elsewhere: refetch so
      "Shared with me" follows without a reload */
@@ -258,36 +288,6 @@ export function Home() {
      stays put. In the browser it's a plain in-page navigation. */
   function open(id: string, title?: string) {
     if (!openCanvasTab(id, title)) navigate(`/c/${id}`)
-  }
-
-  /* pings can start overlapping reloads; a response older than one already
-     shown is dropped, or an invite's slow answer would bring back a canvas
-     removed after it */
-  const reloadSeq = useRef(0)
-  const shown = useRef({ canvases: 0, workspaces: 0 })
-
-  function reload() {
-    const seq = ++reloadSeq.current
-    api
-      .listCanvases()
-      .then((list) => {
-        if (seq < shown.current.canvases) return
-        shown.current.canvases = seq
-        setCanvases(list)
-        /* every fresh list is a chance to drop tabs for canvases that are
-           gone — deleted here, in another session, or by someone else */
-        pruneTabs(new Set(list.map((c) => c.id)))
-      })
-      .catch(console.error)
-    api
-      .listWorkspaces()
-      .then((res) => {
-        if (seq < shown.current.workspaces) return
-        shown.current.workspaces = seq
-        setWorkspaces(res.workspaces)
-        setWorkspacesLoaded(true)
-      })
-      .catch(console.error)
   }
 
   const first = session?.user.name?.split(' ')[0]

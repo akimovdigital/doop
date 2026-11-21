@@ -1,9 +1,9 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, type KeyboardEvent } from 'react'
 import { api } from '../lib/api'
 import { posthog } from '../lib/posthog'
 import { navigate } from '../App'
-import { Logo } from './Logo'
-import { XIcon } from './ui/icons'
+import { FrameIcon, HomeIcon, PinIcon, PlusIcon, UnpinIcon, XIcon } from './ui/icons'
+import { Tooltip } from './ui/tooltip'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -14,12 +14,14 @@ import {
 import { cn } from '@/lib/utils'
 import {
   TAB_SHORTCUTS,
+  canvasTabTarget,
   closeAllTabs,
   closeOtherTabs,
   closeTab,
   ensureTab,
   openCanvasTab,
   openExternal,
+  setCanvasTabPinned,
   useTabs,
 } from '../lib/desktop'
 import { chordHint } from '../lib/actions/chords'
@@ -28,7 +30,7 @@ import type { CanvasTab } from '../lib/desktop'
 import { useT } from '../lib/i18n'
 
 /**
- * Figma-style tab strip, desktop shell only. It sits where the title bar
+ * Tab strip, desktop shell only. It sits where the title bar
  * would be (the shell's title bar is an overlay: just the traffic lights,
  * floating over this strip) — so the strip doubles as the window's drag
  * handle via data-tauri-drag-region, which Tauri only honours on the exact
@@ -38,11 +40,22 @@ export function DesktopTabs({ path }: { path: string }) {
   const t = useT()
   const tabs = useTabs((s) => s.tabs)
   const activeId = path.match(/^\/c\/([^/]+)/)?.[1] ?? null
+  const strip = useRef<HTMLDivElement>(null)
 
   /* deep links and back/forward can land on a canvas the strip never opened */
   useEffect(() => {
     if (activeId) ensureTab(activeId)
   }, [activeId])
+
+  useEffect(() => {
+    const list = strip.current
+    const active = list?.querySelector('[aria-selected="true"]')
+    if (!list || !active) return
+    const visible = list.getBoundingClientRect()
+    const selected = active.getBoundingClientRect()
+    if (selected.left < visible.left) list.scrollLeft += selected.left - visible.left
+    else if (selected.right > visible.right) list.scrollLeft += selected.right - visible.right
+  }, [activeId, tabs])
 
   if (!isDesktopShell()) return null
 
@@ -52,59 +65,105 @@ export function DesktopTabs({ path }: { path: string }) {
     openCanvasTab(canvas.id, canvas.name)
   }
 
+  function moveTabFocus(event: KeyboardEvent<HTMLDivElement>) {
+    const target = event.target
+    if (!(target instanceof HTMLButtonElement) || target.getAttribute('role') !== 'tab') return
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      event.preventDefault()
+      const rect = target.getBoundingClientRect()
+      target.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: rect.left, clientY: rect.bottom }),
+      )
+      return
+    }
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+    const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="tab"]'))
+    const current = buttons.indexOf(target)
+    if (current < 0) return
+    event.preventDefault()
+    if (event.key === 'Home') buttons[0]?.focus()
+    else if (event.key === 'End') buttons.at(-1)?.focus()
+    else {
+      const step = event.key === 'ArrowRight' ? 1 : -1
+      buttons[(current + step + buttons.length) % buttons.length]?.focus()
+    }
+  }
+
   return (
     <div
       data-tauri-drag-region
-      className="fixed inset-x-0 top-0 z-[800] flex h-10 items-end gap-[3px] border-b border-line bg-paper-deep px-2"
+      className="fixed inset-x-0 top-0 z-[800] flex h-[38px] items-center gap-1 border-b border-line bg-paper-deep px-2 pt-[3px]"
     >
       {hasInsetTrafficLights() && <div data-tauri-drag-region className="w-[70px] flex-none" />}
-      <button
-        className={cn(
-          'mb-[4px] grid size-[30px] flex-none place-items-center rounded-lg border-0 bg-transparent text-ink-soft transition-colors hover:bg-ink/[0.06] hover:text-ink',
-          !activeId && 'bg-ink/[0.08] text-ink',
-        )}
-        onClick={() => navigate('/')}
-        title={withShortcut(t('canvas.allCanvases'), 0)}
-      >
-        <Logo className="size-[18px]" />
-      </button>
+      <Tooltip label={withShortcut(t('canvas.tabHome'), 0)} side="bottom" className="z-[825]">
+        <button
+          type="button"
+          className={cn(
+            'grid size-[30px] flex-none place-items-center rounded-md text-ink-soft hover:bg-ink/[0.06] hover:text-ink focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+            path === '/' && 'bg-ink/[0.08] text-ink',
+          )}
+          aria-label={t('canvas.tabHome')}
+          aria-current={path === '/' ? 'page' : undefined}
+          onClick={() => (path !== '/' || location.search) && navigate('/')}
+        >
+          <HomeIcon />
+        </button>
+      </Tooltip>
       <div
+        ref={strip}
         role="tablist"
         aria-label={t('canvas.openCanvases')}
-        className="flex min-w-0 items-end overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex min-w-0 items-center gap-[3px] overflow-x-auto overflow-y-hidden overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        onKeyDown={moveTabFocus}
       >
         {tabs.map((tab, index) => {
           const on = tab.id === activeId
+          const pinned = tab.pinned === true
           return (
             <ContextMenu key={tab.id}>
               <ContextMenuTrigger asChild>
                 <div
-                  role="tab"
-                  aria-selected={on}
-                  tabIndex={0}
-                  title={withShortcut(tab.name, index + 1)}
                   className={cn(
-                    'group relative -mb-px flex h-[36px] min-w-[110px] max-w-[210px] flex-1 basis-[210px] cursor-default items-center gap-1 rounded-t-[9px] border border-b-0 border-transparent pb-[2px] pl-3 pr-1.5 text-[12.5px] text-ink-soft',
-                    on ? 'border-line bg-surface text-ink' : 'transition-colors hover:bg-ink/[0.04]',
+                    'group relative h-[30px]',
+                    pinned ? 'w-[30px] flex-none' : 'min-w-[112px] max-w-[205px] flex-1 basis-[205px]',
                   )}
-                  onClick={() => navigate(`/c/${tab.id}`)}
-                  onKeyDown={(e) => e.key === 'Enter' && navigate(`/c/${tab.id}`)}
                   onAuxClick={(e) => e.button === 1 && closeTab(tab.id, path)}
                 >
-                  <span className="min-w-0 flex-1 truncate">{tab.name}</span>
-                  <button
-                    className={cn(
-                      'grid size-[18px] flex-none place-items-center rounded-[5px] border-0 bg-transparent p-0 text-ink-faint opacity-0 transition-opacity hover:bg-ink/[0.08] hover:text-ink group-hover:opacity-100',
-                      on && 'opacity-100',
-                    )}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      closeTab(tab.id, path)
-                    }}
-                    title={t('canvas.closeTab')}
-                  >
-                    <XIcon className="size-3" />
-                  </button>
+                  <Tooltip label={withShortcut(tab.name, index + 1)} side="bottom" className="z-[825]">
+                    <button
+                      id={`desktop-canvas-tab-${tab.id}`}
+                      role="tab"
+                      type="button"
+                      aria-label={tab.name}
+                      aria-selected={on}
+                      tabIndex={on || (!activeId && index === 0) ? 0 : -1}
+                      onClick={() => path !== `/c/${tab.id}` && navigate(canvasTabTarget(tab))}
+                      className={cn(
+                        'relative flex size-full items-center gap-1.5 rounded-md border border-transparent text-[12.5px] text-ink-soft hover:bg-ink/[0.05] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                        pinned ? 'justify-center' : 'px-2 pr-7',
+                        on &&
+                          'border-line bg-surface text-ink after:absolute after:inset-x-[7px] after:bottom-0 after:border-b-2 after:border-brand',
+                      )}
+                    >
+                      <FrameIcon size="rail" className="shrink-0" />
+                      {!pinned && <span className="min-w-0 truncate">{tab.name}</span>}
+                    </button>
+                  </Tooltip>
+                  {!pinned && (
+                    <button
+                      type="button"
+                      tabIndex={on ? 0 : -1}
+                      className={cn(
+                        'absolute right-1 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded-[5px] p-0 text-ink-faint opacity-0 hover:bg-ink/[0.08] hover:text-ink focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover:opacity-100',
+                        on && 'opacity-100',
+                      )}
+                      onClick={() => closeTab(tab.id, path)}
+                      aria-label={t('canvas.closeTab')}
+                      title={t('canvas.closeTab')}
+                    >
+                      <XIcon className="size-3" />
+                    </button>
+                  )}
                 </div>
               </ContextMenuTrigger>
               <TabContextMenu tab={tab} path={path} />
@@ -113,11 +172,13 @@ export function DesktopTabs({ path }: { path: string }) {
         })}
       </div>
       <button
-        className="mb-[4px] grid size-[30px] flex-none place-items-center rounded-lg border-0 bg-transparent text-[16px] leading-none text-ink-soft transition-colors hover:bg-ink/[0.06] hover:text-ink"
+        type="button"
+        className="grid size-[30px] flex-none place-items-center rounded-md text-ink-soft hover:bg-ink/[0.06] hover:text-ink focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         onClick={newCanvas}
+        aria-label={t('canvas.newCanvas')}
         title={t('canvas.newCanvas')}
       >
-        +
+        <PlusIcon size="rail" />
       </button>
     </div>
   )
@@ -129,15 +190,20 @@ function withShortcut(label: string, slot: number): string {
   return chord ? `${label} (${chordHint(chord)})` : label
 }
 
-/** Right-click menu on a tab: the browser-tab basics (Figma has the same
- *  set). Its content is portalled to the body, so it needs to clear the
+/** Right-click menu is portalled to the body, so it needs to clear the
  *  strip's own z-index to overlap it. */
 function TabContextMenu({ tab, path }: { tab: CanvasTab; path: string }) {
   const t = useT()
-  const url = `${location.origin}/c/${tab.id}`
+  const url = new URL(canvasTabTarget(tab), location.origin).href
   const on = path === `/c/${tab.id}`
+  const Icon = tab.pinned ? UnpinIcon : PinIcon
   return (
     <ContextMenuContent className="z-[850]">
+      <ContextMenuItem onSelect={() => setCanvasTabPinned(tab.id, !tab.pinned)}>
+        <Icon size="rail" />
+        {t(tab.pinned ? 'canvas.unpinTab' : 'canvas.pinTab')}
+      </ContextMenuItem>
+      <ContextMenuSeparator />
       <ContextMenuItem onSelect={() => navigator.clipboard.writeText(url)}>{t('canvas.copyLink')}</ContextMenuItem>
       {/* a full load of that canvas: the tab's own page when it's current,
           otherwise a hard navigation there (tabs are in-page routes, so

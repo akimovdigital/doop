@@ -1,5 +1,6 @@
+import { rememberTabPage } from './desktop'
 import { t } from './i18n'
-import { openingPageId, pageLink, pageSearch } from './pageLink'
+import { defaultPageId, openingPageId, pageLink, pageSearch } from './pageLink'
 import { useStore } from './store'
 
 /** Keep the address bar and the open page of canvas `canvasId` in step, for
@@ -16,6 +17,7 @@ export function followPageInUrl(canvasId: string): () => void {
   function write() {
     const { canvas, activePageId } = useStore.getState()
     if (!canvas || canvas.id !== canvasId || !activePageId || !onCanvas()) return
+    rememberTabPage(canvasId, activePageId === defaultPageId(canvas) ? undefined : activePageId)
     const search = pageSearch(canvas, location.search, activePageId)
     if (search === location.search) return
     history.replaceState(history.state, '', `${location.pathname}${search}${location.hash}`)

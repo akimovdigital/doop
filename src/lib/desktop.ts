@@ -26,7 +26,7 @@ import { NO_CANVAS, isViewCommand, runViewCommand, syncViewMenu } from './viewMe
 import { initAppMenu } from './appMenu'
 import { type Chord, matchesChord } from './actions/chords'
 
-export type CanvasTab = { id: string; name: string }
+export type CanvasTab = { id: string; name: string; pinned?: boolean; pageId?: string }
 
 type ShellWindow = Window & {
   __TAURI__?: {
@@ -55,7 +55,20 @@ function storageKey(id: string) {
 function load(id: string): CanvasTab[] {
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(storageKey(id)) ?? '[]')
-    return Array.isArray(parsed) ? parsed.filter((t): t is CanvasTab => typeof t?.id === 'string') : []
+    if (!Array.isArray(parsed)) return []
+    const seen = new Set<string>()
+    const tabs: CanvasTab[] = []
+    for (const tab of parsed) {
+      if (typeof tab?.id !== 'string' || !tab.id || seen.has(tab.id)) continue
+      seen.add(tab.id)
+      tabs.push({
+        id: tab.id,
+        name: typeof tab.name === 'string' ? tab.name : 'Untitled canvas',
+        ...(tab.pinned === true && { pinned: true }),
+        ...(typeof tab.pageId === 'string' && tab.pageId && { pageId: tab.pageId }),
+      })
+    }
+    return tabs
   } catch {
     return []
   }
@@ -64,10 +77,11 @@ function load(id: string): CanvasTab[] {
 export const useTabs = create<{ tabs: CanvasTab[] }>(() => ({ tabs: [] }))
 
 function setTabs(tabs: CanvasTab[]) {
-  useTabs.setState({ tabs })
+  const ordered = [...tabs.filter((tab) => tab.pinned), ...tabs.filter((tab) => !tab.pinned)]
+  useTabs.setState({ tabs: ordered })
   if (!userId) return
   try {
-    localStorage.setItem(storageKey(userId), JSON.stringify(tabs))
+    localStorage.setItem(storageKey(userId), JSON.stringify(ordered))
   } catch {
     /* blocked storage only means tabs don't survive a relaunch */
   }
@@ -78,14 +92,15 @@ function setTabs(tabs: CanvasTab[]) {
  *  session resolved — a deep link's tab must survive the swap. */
 export function setTabsUser(id: string | null) {
   if (!isDesktopShell() || id === userId) return
+  const pending = userId === null ? useTabs.getState().tabs : []
   userId = id
   if (!id) {
     useTabs.setState({ tabs: [] })
     return
   }
   const restored = load(id)
-  const current = useTabs.getState().tabs
-  setTabs([...restored, ...current.filter((t) => !restored.some((r) => r.id === t.id))])
+  const restoredIds = new Set(restored.map((tab) => tab.id))
+  setTabs([...restored, ...pending.filter((tab) => !restoredIds.has(tab.id))])
 }
 
 /** Make sure a tab exists for the canvas and its label is current. Called on
@@ -99,19 +114,42 @@ export function ensureTab(id: string, name?: string) {
   else if (name && tab.name !== name) setTabs(tabs.map((t) => (t.id === id ? { ...t, name } : t)))
 }
 
+export function setCanvasTabPinned(id: string, pinned: boolean) {
+  const { tabs } = useTabs.getState()
+  const tab = tabs.find((item) => item.id === id)
+  if (!tab || Boolean(tab.pinned) === pinned) return
+  setTabs(tabs.map((item) => (item.id === id ? { ...item, pinned: pinned || undefined } : item)))
+}
+
+/** The current canvas page survives a visit to Home or another canvas. */
+export function rememberTabPage(id: string, pageId?: string) {
+  if (!isDesktopShell()) return
+  const { tabs } = useTabs.getState()
+  const tab = tabs.find((item) => item.id === id)
+  if (!tab || tab.pageId === pageId) return
+  setTabs(tabs.map((item) => (item.id === id ? { ...item, pageId } : item)))
+}
+
+export function canvasTabTarget(tab: CanvasTab): string {
+  const path = `/c/${encodeURIComponent(tab.id)}`
+  return tab.pageId ? `${path}?page=${encodeURIComponent(tab.pageId)}` : path
+}
+
 /** Open (or switch to) the tab for a canvas. False in plain browsers so
  *  callers fall back to a bare navigation. */
 export function openCanvasTab(id: string, name?: string): boolean {
   if (!isDesktopShell()) return false
   ensureTab(id, name)
-  navigate(`/c/${id}`)
+  const tab = useTabs.getState().tabs.find((item) => item.id === id)
+  if (tab && location.pathname !== `/c/${id}`) navigate(canvasTabTarget(tab))
   return true
 }
 
 /** Drop tabs whose canvases no longer exist. Home feeds this every fresh
  *  canvas list — deletes can happen in other sessions or by other people,
  *  so closing tabs at the delete button alone would still leave strays. */
-export function pruneTabs(liveIds: ReadonlySet<string>) {
+export function pruneTabs(ownerId: string | undefined, liveIds: ReadonlySet<string>) {
+  if (!ownerId || ownerId !== userId) return
   const { tabs } = useTabs.getState()
   const next = tabs.filter((t) => liveIds.has(t.id))
   if (next.length !== tabs.length) setTabs(next)
@@ -126,7 +164,7 @@ export function closeTab(id: string, currentPath: string) {
   /* closing the tab you're on lands you on its right neighbour, like Chrome */
   if (currentPath === `/c/${id}`) {
     const neighbour = next[Math.min(at, next.length - 1)]
-    navigate(neighbour ? `/c/${neighbour.id}` : '/')
+    navigate(neighbour ? canvasTabTarget(neighbour) : '/')
   }
 }
 
@@ -137,7 +175,7 @@ export function closeOtherTabs(id: string, currentPath: string) {
   const keep = useTabs.getState().tabs.find((t) => t.id === id)
   if (!keep) return
   setTabs([keep])
-  if (currentPath !== `/c/${id}`) navigate(`/c/${id}`)
+  if (currentPath !== `/c/${id}`) navigate(canvasTabTarget(keep))
 }
 
 /** ⌘1 (Ctrl+1 elsewhere) goes Home and ⌘2…⌘9 to the open tabs in strip
@@ -159,7 +197,7 @@ export function tabShortcutTarget(
   if (slot < 0) return null
   if (slot === 0) return '/'
   const tab = tabs[slot - 1]
-  return tab ? `/c/${tab.id}` : null
+  return tab ? canvasTabTarget(tab) : null
 }
 
 /** ⌘, (Ctrl+, elsewhere) opens Settings, as every Mac app and most desktop
@@ -359,7 +397,7 @@ export function initDesktopShell() {
       const target = shellShortcutTarget(e, useTabs.getState().tabs)
       if (target === null) return
       e.preventDefault()
-      if (target !== location.pathname) navigate(target)
+      if (target.split('?')[0] !== location.pathname) navigate(target)
     },
     true,
   )

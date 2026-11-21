@@ -248,7 +248,13 @@ export function App() {
        the banner: fixed screens (the canvas workspace) offset themselves */
     <>
       <DesktopTabs path={path} />
-      <div className="h-dvh overflow-auto pt-10 [--app-inset:40px]">{page}</div>
+      <div
+        role={canvasId ? 'tabpanel' : undefined}
+        aria-labelledby={canvasId ? `desktop-canvas-tab-${canvasId}` : undefined}
+        className="h-dvh overflow-auto pt-[38px] [--app-inset:38px]"
+      >
+        {page}
+      </div>
     </>
   ) : (
     page

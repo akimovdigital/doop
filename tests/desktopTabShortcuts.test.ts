@@ -1,10 +1,21 @@
 // @vitest-environment happy-dom
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 
 vi.mock('../src/App', () => ({ navigate: vi.fn() }))
 vi.mock('../src/lib/auth', () => ({ authClient: {} }))
 vi.mock('../src/lib/shell', async (load) => ({ ...(await load<object>()), isDesktopShell: () => true }))
-import { shellShortcutTarget, tabShortcutTarget } from '../src/lib/desktop'
+import {
+  closeTab,
+  ensureTab,
+  pruneTabs,
+  rememberTabPage,
+  setCanvasTabPinned,
+  setTabsUser,
+  shellShortcutTarget,
+  tabShortcutTarget,
+  useTabs,
+} from '../src/lib/desktop'
+import { navigate } from '../src/App'
 
 const tabs = [
   { id: 'a', name: 'A' },
@@ -18,6 +29,13 @@ const keys = (code: string, extra: Partial<KeyboardEvent> = {}) => ({
   altKey: false,
   shiftKey: false,
   ...extra,
+})
+
+afterEach(() => {
+  setTabsUser(null)
+  useTabs.setState({ tabs: [] })
+  localStorage.clear()
+  vi.clearAllMocks()
 })
 
 it('sends ⌘1 home and ⌘2 onwards to the open tabs in strip order', () => {
@@ -50,8 +68,7 @@ it('opens Settings on ⌘, (Ctrl+, off a Mac) and leaves the tab chords alone', 
 })
 
 it('hears the shortcuts from a field that stops its own keys', async () => {
-  const { initDesktopShell, useTabs } = await import('../src/lib/desktop')
-  const { navigate } = await import('../src/App')
+  const { initDesktopShell } = await import('../src/lib/desktop')
   const listener = vi.spyOn(document, 'addEventListener')
   try {
     initDesktopShell()
@@ -69,4 +86,44 @@ it('hears the shortcuts from a field that stops its own keys', async () => {
     for (const [name, handler, options] of listener.mock.calls) document.removeEventListener(name, handler, options)
     listener.mockRestore()
   }
+})
+
+it('restores existing tabs with their new pin and page state after the account is reloaded', () => {
+  localStorage.setItem('doop-open-tabs:alice', JSON.stringify(tabs))
+  setTabsUser('alice')
+  setCanvasTabPinned('b', true)
+  rememberTabPage('b', 'page b')
+  ensureTab('b', 'Renamed B')
+  setTabsUser(null)
+  setTabsUser('alice')
+
+  expect(useTabs.getState().tabs).toEqual([{ id: 'b', name: 'Renamed B', pinned: true, pageId: 'page b' }, tabs[0]])
+  expect(tabShortcutTarget(keys('Digit2', { metaKey: true }), useTabs.getState().tabs, true)).toBe('/c/b?page=page%20b')
+  setCanvasTabPinned('b', false)
+  expect(useTabs.getState().tabs[0]?.pinned).toBeUndefined()
+  rememberTabPage('b')
+  expect(tabShortcutTarget(keys('Digit2', { metaKey: true }), useTabs.getState().tabs, true)).toBe('/c/b')
+})
+
+it('keeps restored tabs and a pre-session canvas but does not mix accounts or prune them with a stale list', () => {
+  localStorage.setItem('doop-open-tabs:alice', JSON.stringify(tabs))
+  localStorage.setItem('doop-open-tabs:bob', JSON.stringify([{ id: 'c', name: 'C', pinned: true }]))
+  ensureTab('incoming', 'Incoming deep link')
+  setTabsUser('alice')
+  expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual(['a', 'b', 'incoming'])
+
+  setTabsUser('bob')
+  pruneTabs('alice', new Set(['a', 'b']))
+  expect(useTabs.getState().tabs).toEqual([{ id: 'c', name: 'C', pinned: true }])
+  pruneTabs('bob', new Set())
+  expect(useTabs.getState().tabs).toEqual([])
+})
+
+it('opens the neighbouring tab on its remembered page when closing the active tab', () => {
+  setTabsUser('alice')
+  ensureTab('a', 'A')
+  ensureTab('b', 'B')
+  rememberTabPage('b', 'overview')
+  closeTab('a', '/c/a')
+  expect(navigate).toHaveBeenCalledWith('/c/b?page=overview')
 })
