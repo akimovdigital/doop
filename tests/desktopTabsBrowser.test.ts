@@ -138,6 +138,9 @@ describe.skipIf(!findBrowserPath())('desktop tab actions', () => {
 
     await menu(second!)
     await item('Add to tab group').hover()
+    expect(
+      await page.$eval('[data-slot="context-menu-sub-trigger"]', (node) => node.querySelectorAll('svg').length),
+    ).toBe(1)
     await item('New group').click()
     await page.locator('input[aria-label="Group name"]').fill('Editorial')
     await page.keyboard.press('Enter')

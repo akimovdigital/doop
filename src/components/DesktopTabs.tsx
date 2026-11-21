@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNo
 import { api } from '../lib/api'
 import { posthog } from '../lib/posthog'
 import { navigate } from '../App'
-import { ChevronRightIcon, FrameIcon, HomeIcon, PlusIcon, XIcon } from './ui/icons'
+import { FrameIcon, HomeIcon, PlusIcon, XIcon } from './ui/icons'
 import { Tooltip } from './ui/tooltip'
 import {
   ContextMenu,
@@ -442,11 +442,8 @@ function TabContextMenu({
       </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuSub>
-        <ContextMenuSubTrigger>
-          {t('canvas.addToTabGroup')}
-          <ChevronRightIcon size="rail" className="ml-auto" aria-hidden="true" />
-        </ContextMenuSubTrigger>
-        <ContextMenuSubContent className="border border-line">
+        <ContextMenuSubTrigger>{t('canvas.addToTabGroup')}</ContextMenuSubTrigger>
+        <ContextMenuSubContent sideOffset={0} className="z-[850] min-w-[162px] border border-line">
           <ContextMenuItem onSelect={() => handOffFocus(() => onGroupEdit({ tabId: tab.id }))}>
             {t('canvas.newTabGroup')}
           </ContextMenuItem>

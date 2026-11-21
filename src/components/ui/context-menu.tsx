@@ -3,6 +3,7 @@ import * as ContextMenuPrimitive from '@radix-ui/react-context-menu'
 
 import { cn } from '@/lib/utils'
 import { menuItemVariants } from './menu'
+import { ChevronRightIcon } from './icons'
 import type { VariantProps } from 'class-variance-authority'
 
 /* Right-click menus on Radix: it owns the pointer anchor, the collision
@@ -67,16 +68,25 @@ function ContextMenuSeparator({ className, ...props }: React.ComponentProps<type
 
 const ContextMenuSub = ContextMenuPrimitive.Sub
 
-function ContextMenuSubTrigger({ className, ...props }: React.ComponentProps<typeof ContextMenuPrimitive.SubTrigger>) {
+/* A row that opens a submenu to its side (Copy/Paste as, Move to page). */
+function ContextMenuSubTrigger({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof ContextMenuPrimitive.SubTrigger>) {
   return (
     <ContextMenuPrimitive.SubTrigger
+      data-slot="context-menu-sub-trigger"
       className={cn(
         menuItemVariants(),
-        'cursor-pointer outline-none data-[highlighted]:bg-sub data-[state=open]:bg-sub',
+        'cursor-pointer outline-none data-[highlighted]:bg-sub data-[state=open]:bg-sub data-[disabled]:pointer-events-none data-[disabled]:text-ink-faint',
         className,
       )}
       {...props}
-    />
+    >
+      {children}
+      <ChevronRightIcon width={14} height={14} aria-hidden className="ml-auto text-ink-faint" />
+    </ContextMenuPrimitive.SubTrigger>
   )
 }
 
@@ -84,8 +94,10 @@ function ContextMenuSubContent({ className, ...props }: React.ComponentProps<typ
   return (
     <ContextMenuPrimitive.Portal>
       <ContextMenuPrimitive.SubContent
+        data-slot="context-menu-sub-content"
+        sideOffset={6}
         collisionPadding={8}
-        className={cn('z-[850] min-w-[162px] rounded-[12px] bg-surface p-1.5 shadow-pop', className)}
+        className={cn('z-[70] min-w-[190px] rounded-[12px] bg-surface p-1.5 shadow-pop', className)}
         {...props}
       />
     </ContextMenuPrimitive.Portal>
