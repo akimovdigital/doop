@@ -158,7 +158,7 @@ describe.skipIf(!findBrowserPath())('desktop tab actions', () => {
     ])
 
     const groupPicker = page.locator('button[aria-label="Tab groups"]')
-    await groupPicker.click()
+    await page.$eval('button[aria-label="Tab groups"]', (button) => (button as HTMLButtonElement).click())
     await page
       .locator('[role="menuitemradio"][data-state="unchecked"]')
       .filter((node) => node.textContent?.includes('Editorial') === true)

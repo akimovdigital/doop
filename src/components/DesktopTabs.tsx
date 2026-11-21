@@ -95,6 +95,7 @@ export function DesktopTabs({ path }: { path: string }) {
   const cancelDrag = useRef<(() => void) | null>(null)
   const [renaming, setRenaming] = useState<CanvasTab | null>(null)
   const [groupEdit, setGroupEdit] = useState<GroupEdit | null>(null)
+  const [groupMenuOpen, setGroupMenuOpen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const mostRecentGroupTab = useRef(new Map<string, string>())
   const groupCounts = new Map(groups.map((name) => [name, 0]))
@@ -363,12 +364,16 @@ export function DesktopTabs({ path }: { path: string }) {
           <HomeIcon size="rail" />
         </button>
       </Tooltip>
-      <DropdownMenu>
+      <DropdownMenu open={groupMenuOpen} onOpenChange={setGroupMenuOpen}>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
             aria-label={t('canvas.tabGroups')}
             title={visibleGroup ?? t('canvas.allTabGroups')}
+            onClick={(event) => {
+              // VoiceOver can activate the button without sending a pointerdown.
+              if (event.detail === 0) setGroupMenuOpen((open) => !open)
+            }}
             className="mx-1 flex h-[28px] min-w-0 max-w-[min(22vw,156px)] shrink-0 items-center gap-1.5 self-center rounded-[6px] border border-line bg-sub px-2 text-[11px] font-medium text-ink hover:bg-surface focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             <span className="truncate">{visibleGroup ?? t('canvas.allTabGroups')}</span>
