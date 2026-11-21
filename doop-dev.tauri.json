@@ -5,13 +5,16 @@
     "frontendDist": "http://127.0.0.1:4437"
   },
   "plugins": {
+    "updater": {
+      "endpoints": []
+    },
     "deep-link": {
       "desktop": {
         "schemes": []
       }
     }
   },
-  "version": "0.0.9",
+  "version": "0.0.10",
   "bundle": {
     "icon": [
       "icons/32x32.png",

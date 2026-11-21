@@ -53,17 +53,24 @@ enum Trigger {
 /// with one would silently change its server, and a debug build would be
 /// replaced by a release. On macOS the feed names the Chromium build, so the
 /// WebKit app updates into it and the Chromium app keeps updating from it.
-fn updates_enabled() -> bool {
-    !cfg!(debug_assertions)
+const OFFICIAL_BUNDLE_IDENTIFIER: &str = "design.doop.desktop";
+
+fn updates_allowed(identifier: &str, app_url: &str, debug: bool) -> bool {
+    !debug
+        && identifier == OFFICIAL_BUNDLE_IDENTIFIER
         && matches!(
-            crate::APP_URL.trim_end_matches('/'),
+            app_url.trim_end_matches('/'),
             "https://doop.design" | "https://www.doop.design"
         )
 }
 
+fn updates_enabled(app: &AppHandle) -> bool {
+    updates_allowed(&app.config().identifier, crate::APP_URL, cfg!(debug_assertions))
+}
+
 pub fn start(app: &AppHandle) {
     app.manage(UpdateState::default());
-    if !updates_enabled() {
+    if !updates_enabled(app) {
         return;
     }
     let app = app.clone();
@@ -80,7 +87,7 @@ pub fn start(app: &AppHandle) {
 /// so the next launch is the new version. Windows installs by running the
 /// installer, which relaunches the app, so it waits for the next prompt.
 pub fn install_on_quit(app: &AppHandle) {
-    if !cfg!(target_os = "macos") {
+    if !cfg!(target_os = "macos") || !updates_enabled(app) {
         return;
     }
     let Some(state) = app.try_state::<UpdateState>() else {
@@ -263,6 +270,9 @@ pub fn page_loading(app: &AppHandle) {
 /// shows the card again instead of hiding the update until the next check.
 #[tauri::command]
 pub fn update_card_ready(app: AppHandle) -> Option<serde_json::Value> {
+    if !updates_enabled(&app) {
+        return None;
+    }
     let state = app.state::<UpdateState>();
     state.page_card.store(true, Ordering::Release);
     let ready = state.ready.lock().ok()?;
@@ -274,6 +284,9 @@ pub fn update_card_ready(app: AppHandle) -> Option<serde_json::Value> {
 /// installed on quit.
 #[tauri::command]
 pub async fn update_restart(app: AppHandle) -> Result<(), String> {
+    if !updates_enabled(&app) {
+        return Err("Official updates are disabled for this build".into());
+    }
     let Some(kept) = take_kept(&app, |_| true) else {
         withdraw(&app, false);
         return Err("No update is ready".into());
@@ -332,16 +345,19 @@ pub mod menu {
 
     struct UpdateMenu(MenuItem<crate::ShellRuntime>);
 
-    pub fn item(app: &AppHandle) -> tauri::Result<MenuItem<crate::ShellRuntime>> {
+    pub fn item(app: &AppHandle) -> tauri::Result<Option<MenuItem<crate::ShellRuntime>>> {
+        if app.config().identifier != OFFICIAL_BUNDLE_IDENTIFIER {
+            return Ok(None);
+        }
         let item = MenuItem::with_id(app, MENU_ID, LABEL, true, None::<&str>)?;
         app.manage(UpdateMenu(item.clone()));
-        Ok(item)
+        Ok(Some(item))
     }
 
     /// Menu events run on the UI thread; the item stays disabled from the
     /// click through the result dialog so checks cannot stack.
     pub fn check(app: &AppHandle) {
-        if !updates_enabled() {
+        if !updates_enabled(app) {
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 dialog(
@@ -385,6 +401,13 @@ mod tests {
 
     #[test]
     fn debug_builds_never_update() {
-        assert!(!updates_enabled());
+        assert!(!updates_allowed("design.doop.desktop", "https://doop.design", true));
+    }
+
+    #[test]
+    fn dev_cannot_use_official_updates_even_when_built_with_the_official_url() {
+        assert!(!updates_allowed("digital.akimov.doop-test", "https://doop.design", false));
+        assert!(updates_allowed("design.doop.desktop", "https://doop.design", false));
+        assert!(!updates_allowed("design.doop.desktop", "http://127.0.0.1:4437", false));
     }
 }

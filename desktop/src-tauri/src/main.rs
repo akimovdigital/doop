@@ -194,7 +194,10 @@ fn app_submenu(app: &AppHandle) -> tauri::Result<Submenu<ShellRuntime>> {
     let hide = PredefinedMenuItem::hide(app, None)?;
     let hide_others = PredefinedMenuItem::hide_others(app, None)?;
     let quit = PredefinedMenuItem::quit(app, None)?;
-    let mut app_items: Vec<&dyn IsMenuItem<ShellRuntime>> = vec![&about, &check_updates];
+    let mut app_items: Vec<&dyn IsMenuItem<ShellRuntime>> = vec![&about];
+    if let Some(item) = &check_updates {
+        app_items.push(item);
+    }
     // only while another server is chosen: the way back from one that no
     // longer loads (src/server.rs)
     if let Some(item) = &server_reset {
