@@ -157,6 +157,56 @@ describe.skipIf(!findBrowserPath())('desktop tab actions', () => {
       'First canvas',
     ])
 
+    const groupPicker = page.locator('button[aria-label="Tab groups"]')
+    await groupPicker.click()
+    await page
+      .locator('[role="menuitemradio"][data-state="unchecked"]')
+      .filter((node) => node.textContent?.includes('Editorial') === true)
+      .click()
+    await page.waitForSelector(tab(second!) + '[aria-selected="true"]')
+    expect(await page.$(tab(first!))).toBeNull()
+    expect(await page.$eval('button[aria-label="Tab groups"]', (node) => node.textContent)).toBe('Editorial2')
+    await page.reload()
+    await page.waitForSelector('button[aria-label="Tab groups"][title="Editorial"]')
+    expect(await page.$(tab(first!))).toBeNull()
+    await groupPicker.click()
+    await page.locator('::-p-aria([name="All tabs 3"][role="menuitemradio"])').click()
+    await page.waitForSelector(tab(first!))
+    await page.click(tab(first!))
+    await page.waitForSelector(tab(first!) + '[aria-selected="true"]')
+    await page.setViewport({ width: 375, height: 650 })
+    await page.waitForFunction(
+      (id) => {
+        const selected = document.getElementById('desktop-canvas-tab-' + id)
+        const strip = selected?.closest('[role="tablist"]')
+        if (!selected || !strip) return false
+        const bounds = selected.getBoundingClientRect()
+        const viewport = strip.getBoundingClientRect()
+        return bounds.left >= viewport.left - 1 && bounds.right <= viewport.right + 1
+      },
+      {},
+      first,
+    )
+    expect(
+      await page.$eval('button[aria-label="New canvas"]', (node) => node.getBoundingClientRect().right),
+    ).toBeLessThanOrEqual(375)
+    await page.setViewport({ width: 900, height: 650 })
+
+    await groupPicker.click()
+    await item('New group').click()
+    await page.locator('input[aria-label="Group name"]').fill('Inbox')
+    await page.keyboard.press('Enter')
+    await page.waitForSelector('button[aria-label="Tab groups"][title="Inbox"]')
+    expect(await page.$eval('button[aria-label="Tab groups"]', (node) => node.textContent)).toBe('Inbox0')
+    expect(await page.$$('[role="tablist"][aria-label="Open canvases"] [role="tab"]')).toHaveLength(0)
+    await page.reload()
+    await page.waitForSelector('button[aria-label="Tab groups"][title="Inbox"]')
+    await groupPicker.click()
+    await item('Remove group').click()
+    await page.waitForSelector(tab(first!))
+    await page.click(tab(first!))
+    await page.waitForSelector(tab(first!) + '[aria-selected="true"]')
+
     await menu(second!)
     await item('Copy link').click()
     await page.waitForFunction(() => sessionStorage.getItem('test-clipboard')?.includes('/c/'))

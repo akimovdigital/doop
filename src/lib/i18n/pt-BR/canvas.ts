@@ -129,6 +129,8 @@ export const canvas: Catalog['canvas'] = {
   memorySuggestion: 'Memória · sugestão para revisar',
 
   openCanvases: 'Canvases abertos',
+  tabGroups: 'Grupos de abas',
+  allTabGroups: 'Todas as abas',
   closeTab: 'Fechar aba',
   newCanvas: 'Novo canvas',
   copyLink: 'Copiar link',
@@ -146,6 +148,7 @@ export const canvas: Catalog['canvas'] = {
   newTabGroup: 'Novo grupo',
   tabGroupName: 'Nome do grupo',
   renameTabGroup: 'Renomear grupo',
+  removeTabGroup: 'Remover grupo',
   removeFromTabGroup: 'Remover do grupo',
   moveToNewWindow: 'Mover para nova janela',
   tabWindowFailed: 'Não foi possível abrir uma nova janela.',

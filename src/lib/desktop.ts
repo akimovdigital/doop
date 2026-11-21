@@ -87,12 +87,48 @@ function load(id: string): CanvasTab[] {
   }
 }
 
-export const useTabs = create<{ tabs: CanvasTab[]; split: [string, string] | null }>(() => ({
+type TabGroups = { groupNames: string[]; groupFilter: string | null }
+
+export const useTabs = create<{ tabs: CanvasTab[]; split: [string, string] | null } & TabGroups>(() => ({
   tabs: [],
   split: null,
+  groupNames: [],
+  groupFilter: null,
 }))
 
-function setTabs(tabs: CanvasTab[]) {
+function groupStorageKey(id: string) {
+  return `doop-tab-groups:${id}`
+}
+
+function loadTabGroups(id: string): TabGroups {
+  try {
+    const saved = JSON.parse(tabStorage().getItem(groupStorageKey(id)) ?? '{}')
+    const groupNames: string[] = Array.isArray(saved?.groupNames)
+      ? saved.groupNames.filter((name: unknown) => typeof name === 'string' && name.trim() !== '')
+      : []
+    return { groupNames, groupFilter: typeof saved?.groupFilter === 'string' ? saved.groupFilter : null }
+  } catch {
+    return { groupNames: [], groupFilter: null }
+  }
+}
+
+function persistTabGroups() {
+  if (!userId) return
+  try {
+    const { groupNames, groupFilter } = useTabs.getState()
+    tabStorage().setItem(groupStorageKey(userId), JSON.stringify({ groupNames, groupFilter }))
+  } catch {
+    /* blocked storage only means the view resets on relaunch */
+  }
+}
+
+export function setTabGroupFilter(group: string | null) {
+  if (group === useTabs.getState().groupFilter) return
+  useTabs.setState({ groupFilter: group })
+  persistTabGroups()
+}
+
+function setTabs(tabs: CanvasTab[], groups: TabGroups = useTabs.getState()) {
   const buckets = new Map<string, CanvasTab[]>()
   for (const tab of tabs) {
     if (!tab.group) continue
@@ -100,6 +136,8 @@ function setTabs(tabs: CanvasTab[]) {
     members.push(tab)
     buckets.set(tab.group, members)
   }
+  const groupNames = [...new Set([...groups.groupNames, ...buckets.keys()])]
+  const groupFilter = groups.groupFilter && groupNames.includes(groups.groupFilter) ? groups.groupFilter : null
   const ordered = tabs.filter((tab) => tab.pinned)
   for (const tab of tabs) {
     if (tab.pinned) continue
@@ -112,6 +150,8 @@ function setTabs(tabs: CanvasTab[]) {
   useTabs.setState(({ split }) => ({
     tabs: ordered,
     split: split?.every((id) => ordered.some((tab) => tab.id === id)) ? split : null,
+    groupNames,
+    groupFilter,
   }))
   if (!userId) return
   try {
@@ -119,6 +159,7 @@ function setTabs(tabs: CanvasTab[]) {
   } catch {
     /* blocked storage only means tabs don't survive a relaunch */
   }
+  persistTabGroups()
 }
 
 /** Called by App whenever the session's user changes (including to null on
@@ -128,14 +169,14 @@ export function setTabsUser(id: string | null) {
   if (!isDesktopShell() || id === userId) return
   const pending = userId === null ? useTabs.getState().tabs : []
   userId = id
-  useTabs.setState({ split: null })
   if (!id) {
-    useTabs.setState({ tabs: [] })
+    useTabs.setState({ tabs: [], split: null, groupNames: [], groupFilter: null })
     return
   }
   const restored = load(id)
   const restoredIds = new Set(restored.map((tab) => tab.id))
-  setTabs([...restored, ...pending.filter((tab) => !restoredIds.has(tab.id))])
+  useTabs.setState({ split: null })
+  setTabs([...restored, ...pending.filter((tab) => !restoredIds.has(tab.id))], loadTabGroups(id))
 }
 
 /** Make sure a tab exists for the canvas and its label is current. Called on
@@ -162,8 +203,31 @@ export function groupCanvasTab(id: string, group?: string) {
 }
 
 export function renameCanvasTabGroup(previous: string, group: string) {
-  const { tabs } = useTabs.getState()
-  setTabs(tabs.map((tab) => (tab.group === previous ? { ...tab, group } : tab)))
+  const { tabs, groupFilter, groupNames } = useTabs.getState()
+  setTabs(
+    tabs.map((tab) => (tab.group === previous ? { ...tab, group } : tab)),
+    {
+      groupNames: groupNames.map((name) => (name === previous ? group : name)),
+      groupFilter: groupFilter === previous ? group : groupFilter,
+    },
+  )
+}
+
+export function createTabGroup(group: string) {
+  const { tabs, groupNames } = useTabs.getState()
+  setTabs(tabs, { groupNames: [...groupNames, group], groupFilter: group })
+}
+
+/** Keep the canvases open when their group is removed. */
+export function removeTabGroup(group: string) {
+  const { tabs, groupFilter, groupNames } = useTabs.getState()
+  setTabs(
+    tabs.map((tab) => (tab.group === group ? { ...tab, group: undefined } : tab)),
+    {
+      groupNames: groupNames.filter((name) => name !== group),
+      groupFilter: groupFilter === group ? null : groupFilter,
+    },
+  )
 }
 
 export async function renameCanvasTab(id: string, name: string) {

@@ -60,6 +60,8 @@ const click = (el: HTMLElement) =>
 beforeEach(() => {
   vi.mocked(navigate).mockClear()
   useTabs.setState({
+    groupNames: [],
+    groupFilter: null,
     tabs: [
       { id: 'a', name: 'A' },
       { id: 'b', name: 'B' },
@@ -158,5 +160,25 @@ describe('DesktopTabs drag reorder', () => {
     expect(order()).toEqual(['p', 'b', 'a', 'c'])
     expect(useTabs.getState().tabs.map((tab) => tab.group)).toEqual([undefined, 'Work', 'Work', undefined])
     expect(listEl().querySelector('[title="Work"]')?.parentElement?.style.transform).toBe('')
+  })
+
+  it('uses the saved order when the group picker hides earlier tabs', () => {
+    act(() =>
+      useTabs.setState({
+        groupNames: ['Work'],
+        groupFilter: 'Work',
+        tabs: [
+          { id: 'hidden', name: 'Hidden' },
+          { id: 'a', name: 'A', group: 'Work' },
+          { id: 'b', name: 'B', group: 'Work' },
+        ],
+      }),
+    )
+    stubRects()
+    expect(tabEls().map((tab) => tab.getAttribute('aria-label'))).toEqual(['A', 'B'])
+    down(tabEls()[0]!, 50)
+    move(160)
+    release(160)
+    expect(order()).toEqual(['hidden', 'b', 'a'])
   })
 })

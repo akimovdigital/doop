@@ -130,6 +130,8 @@ export const canvas = {
 
   /* desktop tab strip */
   openCanvases: 'Open canvases',
+  tabGroups: 'Tab groups',
+  allTabGroups: 'All tabs',
   closeTab: 'Close tab',
   newCanvas: 'New canvas',
   copyLink: 'Copy link',
@@ -147,6 +149,7 @@ export const canvas = {
   newTabGroup: 'New group',
   tabGroupName: 'Group name',
   renameTabGroup: 'Rename group',
+  removeTabGroup: 'Remove group',
   removeFromTabGroup: 'Remove from group',
   moveToNewWindow: 'Move to new window',
   tabWindowFailed: 'Could not open a new window.',
