@@ -87,7 +87,9 @@ export function FrameworkPanel() {
   const swatches = useMemo(() => tokens.filter((token) => token.type === 'color').slice(0, 10), [tokens])
   const guide = guidelines?.find((doc) => /^(design(?:\.md)?|design-system)$/i.test(doc.title ?? doc.name))
   const typography = tokens.filter((row) => row.type === 'fontFamily' || row.type === 'fontSize')
-  const spacing = tokens.filter((row) => row.type === 'spacing' || row.type === 'radius')
+  const spaces = tokens.filter((row) => row.type === 'spacing')
+  const radii = tokens.filter((row) => row.type === 'radius')
+  const spacing = spaces.length && radii.length ? [...spaces.slice(0, 2), ...radii.slice(0, 2)] : [...spaces, ...radii]
 
   async function readFiles(files: File[]) {
     if (!files.length || !reader || busy) return
