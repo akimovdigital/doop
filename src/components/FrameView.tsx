@@ -255,6 +255,15 @@ export const FrameView = memo(function FrameView({
   layoutZoom: number
 }) {
   const t = useT()
+  const { standalone, synced, github, githubPlaceholder } = useMemo(() => {
+    const github = isGithubFrame(frame.html)
+    return {
+      standalone: isCanvasElement(frame.html),
+      synced: isSyncedFrame(frame.html),
+      github,
+      githubPlaceholder: github && isGithubPlaceholder(frame.html),
+    }
+  }, [frame.html])
   const [menuTarget, setMenuTarget] = useState<
     'frame' | 'loading' | { selector: string | null; html: string; hit?: LiveHit }
   >('frame')
@@ -474,7 +483,7 @@ export const FrameView = memo(function FrameView({
     const world = stage?.querySelector('.world') ?? null
     /* a standalone element is one thing on the canvas: a drag of it alone
        can land in a frame, and can be called off */
-    const standaloneMove = mode === 'move' && isCanvasElement(frame.html) && group.length === 1 && !!stage
+    const standaloneMove = mode === 'move' && standalone && group.length === 1 && !!stage
     const toWorld = (clientX: number, clientY: number) => {
       const box = stage!.getBoundingClientRect()
       const vp = useStore.getState().viewport
@@ -1713,7 +1722,7 @@ export const FrameView = memo(function FrameView({
             )}
           {/* a standalone element wears no name on the canvas, as a shape in
               Figma does not; the Layers rail names it */}
-          {!isCanvasElement(frame.html) && (
+          {!standalone && (
             <div
               /* the Stage reads this off the press target */
               data-frame-locked={frame.locked ? '' : undefined}
@@ -1745,26 +1754,21 @@ export const FrameView = memo(function FrameView({
                   </span>
                 </Tooltip>
               )}
-              {isSyncedFrame(frame.html) && (
+              {synced && (
                 <Tooltip label={t('stage.syncedTip')} side="top" align="start">
                   <span className="flex shrink-0 items-center text-brand">
                     <SyncIcon width={11} height={11} />
                   </span>
                 </Tooltip>
               )}
-              {isGithubFrame(frame.html) && (
+              {github && (
                 <Tooltip
-                  label={
-                    isGithubPlaceholder(frame.html) ? t('stage.githubPlaceholderTip') : t('stage.githubImportedTip')
-                  }
+                  label={githubPlaceholder ? t('stage.githubPlaceholderTip') : t('stage.githubImportedTip')}
                   side="top"
                   align="start"
                 >
                   <span
-                    className={cn(
-                      'flex shrink-0 items-center',
-                      isGithubPlaceholder(frame.html) ? 'text-ink-faint' : 'text-brand',
-                    )}
+                    className={cn('flex shrink-0 items-center', githubPlaceholder ? 'text-ink-faint' : 'text-brand')}
                   >
                     <GithubIcon width={11} height={11} />
                   </span>
@@ -1824,11 +1828,11 @@ export const FrameView = memo(function FrameView({
             className={cn(
               /* a standalone shape's stroke spills past its box */
               'absolute inset-0',
-              !isCanvasElement(frame.html) && 'overflow-hidden',
+              !standalone && 'overflow-hidden',
               /* the white a design without a background sits on, one screen
                  pixel in from the edge: painted to the edge, it showed past the
                  scaled iframe's antialiased edge as a light seam */
-              !isCanvasElement(frame.html) &&
+              !standalone &&
                 "before:absolute before:inset-[calc(1px/var(--zoom,1))] before:bg-white before:content-['']",
               /* Select keeps the arrow, like Figma: the frame is a thing to
                  point at, not a handle. The Hand tool's grab and the Comment
@@ -1838,7 +1842,7 @@ export const FrameView = memo(function FrameView({
               /* no edge at rest, as in Figma: the artwork meets the canvas
                  directly. A hovered frame wears a soft one-screen-pixel brand ring
                  (the selected one has its own), a dragged one lifts */
-              !isCanvasElement(frame.html) &&
+              !standalone &&
                 (dragging
                   ? 'shadow-pop'
                   : !selected &&
@@ -1927,12 +1931,12 @@ export const FrameView = memo(function FrameView({
                    scheme reaches this element by inheritance while a
                    standalone element's document is light, so a shape on the
                    dark canvas sat on a white square */
-                  ...(isCanvasElement(frame.html) ? { colorScheme: 'light' } : null),
+                  ...(standalone ? { colorScheme: 'light' } : null),
                 }}
               />
             </div>
             {/* a standalone element is see-through: the paper's grid shows */}
-            {!isCanvasElement(frame.html) && <PixelGrid layoutZoom={layoutZoom} />}
+            {!standalone && <PixelGrid layoutZoom={layoutZoom} />}
             {!frame.html && (
               <div className="absolute inset-0 grid place-items-center bg-[repeating-linear-gradient(45deg,transparent_0_10px,rgba(28,26,21,0.025)_10px_20px)] text-[13px] text-ink-faint">
                 empty frame — add HTML

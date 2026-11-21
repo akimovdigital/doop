@@ -297,34 +297,46 @@ export function Stage({
      transform, the grid layer, the --zoom variable (which counter-scales
      labels/pins/cursors from CSS), and the zoom pill's % directly. */
   useLayoutEffect(() => {
+    let lastPaintedZoom: number | undefined
+    let lastPixelGridOpacity: number | undefined
     function apply(vp: { x: number; y: number; zoom: number }) {
       const world = worldRef.current
       const grid = gridRef.current
       const stage = ref.current
       if (!world || !grid || !stage) return
       world.style.transform = worldTransform(vp, layoutZoomRef.current)
-      stage.style.setProperty('--zoom', String(vp.zoom))
       /* the camera's offset, for chrome drawn in screen px (FrameLabelLayer) */
       stage.style.setProperty('--vx', `${vp.x}px`)
       stage.style.setProperty('--vy', `${vp.y}px`)
       const period = 26 * vp.zoom
-      grid.style.backgroundSize = `${period}px ${period}px`
-      /* one period of overhang: the layer slides back by up to a period */
-      grid.style.width = grid.style.height = `calc(100% + ${period}px)`
+      const zoomChanged = vp.zoom !== lastPaintedZoom
+      if (zoomChanged) {
+        stage.style.setProperty('--zoom', String(vp.zoom))
+        grid.style.backgroundSize = `${period}px ${period}px`
+        /* one period of overhang: the layer slides back by up to a period */
+        grid.style.width = grid.style.height = `calc(100% + ${period}px)`
+        lastPaintedZoom = vp.zoom
+      }
       const gx = (((vp.x % period) + period) % period) - period
       const gy = (((vp.y % period) + period) % period) - period
       grid.style.transform = `translate(${gx}px, ${gy}px)`
       const pixels = pixelGridRef.current
       if (pixels) {
         const opacity = useStore.getState().viewOptions.pixelGrid ? pixelGridOpacity(vp.zoom) : 0
-        pixels.hidden = opacity === 0
-        pixels.style.opacity = String(opacity)
-        /* the frames' own grids read the same fade */
-        stage.style.setProperty('--pixel-grid', String(opacity))
-        pixels.style.backgroundSize = `${vp.zoom}px ${vp.zoom}px`
-        const px = (((vp.x % vp.zoom) + vp.zoom) % vp.zoom) - vp.zoom
-        const py = (((vp.y % vp.zoom) + vp.zoom) % vp.zoom) - vp.zoom
-        pixels.style.transform = `translate(${px}px, ${py}px)`
+        const opacityChanged = opacity !== lastPixelGridOpacity
+        if (opacityChanged) {
+          pixels.hidden = opacity === 0
+          pixels.style.opacity = String(opacity)
+          /* the frames' own grids read the same fade */
+          stage.style.setProperty('--pixel-grid', String(opacity))
+          lastPixelGridOpacity = opacity
+        }
+        if (opacity !== 0) {
+          if (zoomChanged || opacityChanged) pixels.style.backgroundSize = `${vp.zoom}px ${vp.zoom}px`
+          const px = (((vp.x % vp.zoom) + vp.zoom) % vp.zoom) - vp.zoom
+          const py = (((vp.y % vp.zoom) + vp.zoom) % vp.zoom) - vp.zoom
+          pixels.style.transform = `translate(${px}px, ${py}px)`
+        }
       }
       /* only on a change: rewriting the text replaces its node on every pan
          tick, and a node inserted anywhere re-runs `body:has(…)` rules */
@@ -647,14 +659,19 @@ export function Stage({
     let panX = 0
     let panY = 0
     let zoomDelta = 0
-    let pivotX = 0
-    let pivotY = 0
+    let pinchClientX = 0
+    let pinchClientY = 0
 
     function flush() {
       raf = 0
       const vp = useStore.getState().viewport
       let { x, y, zoom } = vp
-      if (zoomDelta !== 0) {
+      if (zoomDelta !== 0 && el) {
+        /* Wheel events can arrive more than once per paint. Read layout once,
+           before writing the frame's camera transform. */
+        const rect = el.getBoundingClientRect()
+        const pivotX = pinchClientX - rect.left
+        const pivotY = pinchClientY - rect.top
         /* exp(-deltaY/100) is the browser's own pinch↔wheel mapping, so the
            zoom tracks the finger spread 1:1 like Figma; per-event clamping
            (below) keeps discrete mouse-wheel notches from over-jumping */
@@ -677,9 +694,8 @@ export function Stage({
       if ((e.target as Element | null)?.closest('[data-stage-scroll]')) return
       e.preventDefault()
       if (e.ctrlKey || e.metaKey) {
-        const rect = el!.getBoundingClientRect()
-        pivotX = e.clientX - rect.left
-        pivotY = e.clientY - rect.top
+        pinchClientX = e.clientX
+        pinchClientY = e.clientY
         zoomDelta += Math.max(-40, Math.min(40, e.deltaY))
       } else if (e.shiftKey && e.deltaX === 0) {
         panX += e.deltaY

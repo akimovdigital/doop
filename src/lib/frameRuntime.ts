@@ -94,7 +94,7 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
   var bleedWanted = 0
   var bleedCheck = 0
   function checkBleed() {
-    if (bleedCheck) return
+    if (bleedCheck || (!bleedWanted && !document.body?.hasAttribute('data-doop-canvas-element'))) return
     bleedCheck = requestAnimationFrame(function () {
       bleedCheck = 0
       var want = neededBleed()
