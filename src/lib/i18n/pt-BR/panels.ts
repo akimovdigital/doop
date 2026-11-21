@@ -10,7 +10,7 @@ export const panels: Catalog['panels'] = {
   layersNoMatch: 'Nada corresponde a “{query}”.',
   layersSearch: 'Buscar camadas',
   layersRailAria: 'Painel de camadas',
-  layersTabsAria: 'Camadas, componentes e tokens',
+  layersTabsAria: 'Camadas, seções e tokens',
   layersTabTokens: 'Tokens',
   layersRailCount: { one: 'Camadas · {count} frame', other: 'Camadas · {count} frames' },
   layersDesigning: 'criando…',

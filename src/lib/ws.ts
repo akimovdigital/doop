@@ -64,6 +64,7 @@ function open() {
       clientId,
       name,
       kind: 'user',
+      pageLayoutMoves: true,
       ...(initEncodingSupported ? { initEncoding: 'gzip' } : {}),
     })
     useStore.getState().setConnected(true)
@@ -215,7 +216,7 @@ function handle(msg: ServerMessage) {
       s.removeFrame(msg.frameId)
       break
     case 'canvas:pages':
-      s.setPages(msg.pages)
+      s.setPages(msg.pages, undefined, msg.frameMoves)
       break
     case 'guide':
       s.setGuideLocal(msg.id, msg.guide)

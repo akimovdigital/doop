@@ -4,12 +4,14 @@ import { findBrowserPath } from '../server/screenshot'
 import { fixtureUrl, pagePerTest } from './browser'
 import { openCanvasPage, showCanvasPage } from './canvasPageFixture'
 import type { Canvas, Frame } from '../shared/types'
+import type { inspectElement } from '../src/lib/frameBridge'
 
 declare global {
   interface Window {
     seedPages: (canvas: Canvas) => void
     openPage: (id: string) => void
     pickElement: (frameId: string, selector: string) => void
+    inspectFrame: typeof inspectElement
     frameHtml: (frameId: string) => string | undefined
     trace: unknown[]
     pageState: () => {
@@ -157,6 +159,36 @@ describe.skipIf(!findBrowserPath())('page camera and snapping', { timeout: 30_00
       viewport: { x: -2500, y: 300, zoom: 1 },
     })
     expect(await page.$('iframe[title="original"]')).toBeNull()
+  })
+
+  it('defers distant documents on a large page and retains those opened while moving around it', async () => {
+    const target = { ...frame('target', 'first', 0), html: '<main id="near">Near</main>' }
+    const distant = Array.from({ length: 20 }, (_, index) => ({
+      ...frame(`away-${index}`, 'first', 50000 + index * 10000),
+      html: '<main id="away">Away</main>',
+    }))
+    await load(canvas([target, ...distant]), '?frame=target')
+    await page.waitForFunction(() =>
+      window.trace.some((entry) => (entry as { msg?: string }).msg === 'doop:html-result'),
+    )
+    expect(await page.$('iframe[title="away-0"]')).toBeNull()
+    expect(await page.$$('[data-frame-title]')).toHaveLength(21)
+
+    const before = await page.evaluate(() => window.pageState().viewport)
+    const inspected = await page.evaluate(() => window.inspectFrame('away-1', '#away'))
+    expect(inspected).toMatchObject({ tag: 'main' })
+    expect(await page.evaluate(() => window.pageState().viewport)).toEqual(before)
+    expect(await page.$('iframe[title="away-0"]')).toBeNull()
+
+    await page.evaluate(() => {
+      const first = document.querySelector<HTMLIFrameElement>('iframe[title="target"]')!
+      first.dataset.testFrame = 'retained'
+      history.pushState(null, '', '?frame=away-0')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await page.waitForSelector('iframe[title="away-0"]')
+    expect(await page.$('iframe[title="target"][data-test-frame="retained"]')).not.toBeNull()
+    expect(await page.$('iframe[title="away-19"]')).toBeNull()
   })
 
   it.each(['first', 'second'])('selects a linked element after its frame mounts on the %s page', async (pageId) => {

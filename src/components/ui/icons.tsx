@@ -76,6 +76,10 @@ import {
   Layers,
   LayoutGrid,
   LayoutTemplate,
+  PanelsTopLeft,
+  House,
+  Pin,
+  PinOff,
   Link2,
   Lock,
   LockOpen,
@@ -390,6 +394,10 @@ export const HotspotIcon = icon(SquareMousePointer)
 export const MessageSquareIcon = icon(MessageSquare)
 /** draft a page: a page skeleton */
 export const LayoutTemplateIcon = icon(LayoutTemplate)
+export const SectionIcon = icon(PanelsTopLeft)
+export const HomeIcon = icon(House)
+export const PinIcon = icon(Pin)
+export const UnpinIcon = icon(PinOff)
 
 /* the plan and upgrade surfaces */
 export const RocketIcon = icon(Rocket)

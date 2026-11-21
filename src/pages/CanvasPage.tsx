@@ -80,7 +80,6 @@ import {
 } from '../lib/frameClipboard'
 import { clearHistory } from '../lib/history'
 import { deleteSelection, nudgeSelection } from '../lib/layerEdits'
-import { libraryResumeWaits } from '../lib/libraryResume'
 import { copyPicked, hasElementClip, pasteLayer } from '../lib/elementClipboard'
 import { isCanvasClipboard, writeCanvasClipboard } from '../lib/canvasClipboard'
 import { authClient } from '../lib/auth'
@@ -354,14 +353,6 @@ export function CanvasPage({
   useEffect(() => {
     if (canvas?.id === canvasId) ensureTab(canvas.id, canvas.name)
   }, [canvas, canvasId])
-
-  /* back from checkout on the way to a component library: open the Components
-     tab, whose panel holds the note and takes it from here */
-  useEffect(() => {
-    if (guest || !libraryResumeWaits(canvasId)) return
-    useStore.getState().setLayersOpen(true)
-    useStore.getState().setLayersTab('components')
-  }, [canvasId, guest])
 
   /* the open page rides in the URL (?page=), so a reload or a shared link lands on it */
   useEffect(() => followPageInUrl(canvasId), [canvasId])

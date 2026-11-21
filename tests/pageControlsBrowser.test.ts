@@ -80,6 +80,47 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     await page.evaluate(() => new Promise(requestAnimationFrame))
   }
 
+  it('draws a section with Shift+S and moves its frame in one update that survives reload', async () => {
+    await page.evaluate(async () => {
+      const response = await fetch('/api/canvases/' + location.pathname.split('/').at(-1) + '/frames', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Inside', x: 480, y: 240, width: 140, height: 110, html: '<p>Content</p>' }),
+      })
+      if (!response.ok) throw new Error(await response.text())
+    })
+    const frame = await page.waitForSelector('[data-doop-frame-shell]')
+    const box = (await frame!.boundingBox())!
+    const initialX = await frame!.evaluate((element) => Number.parseFloat((element as HTMLElement).style.left))
+    await page.keyboard.down('Shift')
+    await page.keyboard.press('s')
+    await page.keyboard.up('Shift')
+    await page.waitForSelector('button[aria-label="Section"][aria-pressed="true"]')
+    await page.mouse.move(box.x - 12, box.y - 12)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width + 12, box.y + box.height + 12, { steps: 4 })
+    await page.mouse.up()
+    const title = await page.waitForSelector('[data-canvas-section] button')
+    expect(await title?.evaluate((element) => element.textContent?.trim())).toBe('Section 1')
+    const handle = (await title!.boundingBox())!
+    await page.mouse.move(handle.x + 10, handle.y + handle.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(handle.x + 90, handle.y + handle.height / 2, { steps: 4 })
+    await page.mouse.up()
+    await page.waitForFunction(
+      (before) => {
+        const shell = document.querySelector<HTMLElement>('[data-doop-frame-shell]')
+        return shell && Number.parseFloat(shell.style.left) > before
+      },
+      {},
+      initialX,
+    )
+    const movedX = await page.$eval('[data-doop-frame-shell]', (node) => (node as HTMLElement).style.left)
+    await page.reload()
+    await page.waitForSelector('[data-canvas-section]')
+    expect(await page.$eval('[data-doop-frame-shell]', (node) => (node as HTMLElement).style.left)).toBe(movedX)
+  }, 20_000)
+
   it('copies another page’s link without leaving the current page', async () => {
     await page.browserContext().overridePermissions(origin, ['clipboard-read', 'clipboard-sanitized-write'])
     const canvasPath = new URL(page.url()).pathname

@@ -191,6 +191,8 @@ interface PendingAsk {
 const REPLY_TIMEOUT_MS = 2000
 
 const windows = new Map<string, Window>()
+const frameByWindow = new Map<Window, string>()
+const messageListeners = new Map<Window, Set<(event: MessageEvent) => void>>()
 /* ⌘Y outline mode, which a frame mounted later picks up when it registers */
 let outlines = false
 const changeListeners = new Map<string, Set<() => void>>()
@@ -203,12 +205,22 @@ function listen() {
   if (listening) return
   listening = true
   window.addEventListener('message', (ev: MessageEvent) => {
+    const source = ev.source as Window | null
+    if (source)
+      messageListeners.get(source)?.forEach((callback) => {
+        // Like separate DOM listeners, one handler's failure leaves the other
+        // subscribers and the pending RPC replies intact.
+        try {
+          callback(ev)
+        } catch (error) {
+          console.error(error)
+        }
+      })
     const data = ev.data as { type?: string; reqId?: number } | null
     if (data?.type === 'doop:frame-updated' || data?.type === 'doop:text-selection') {
       const listeners = data.type === 'doop:frame-updated' ? changeListeners : selectionListeners
-      for (const [frameId, win] of windows) {
-        if (ev.source === win) listeners.get(frameId)?.forEach((cb) => cb())
-      }
+      const frameId = source && frameByWindow.get(source)
+      if (frameId) listeners.get(frameId)?.forEach((cb) => cb())
       return
     }
     if (typeof data?.type !== 'string' || typeof data.reqId !== 'number') return
@@ -221,8 +233,24 @@ function listen() {
   })
 }
 
+/** Deliver sandbox messages directly to their frame, including the initial
+ *  boot signal before the runtime is ready to receive requests. */
+export function onFrameMessage(win: Window, callback: (event: MessageEvent) => void): () => void {
+  listen()
+  const listeners = messageListeners.get(win) ?? new Set()
+  messageListeners.set(win, listeners)
+  listeners.add(callback)
+  return () => {
+    listeners.delete(callback)
+    if (listeners.size === 0) messageListeners.delete(win)
+  }
+}
+
 export function registerFrameWindow(frameId: string, win: Window) {
+  const old = windows.get(frameId)
+  if (old) frameByWindow.delete(old)
   windows.set(frameId, win)
+  frameByWindow.set(win, frameId)
   if (outlines) win.postMessage({ type: 'doop:outlines', on: true }, '*')
   changeListeners.get(frameId)?.forEach((cb) => cb())
 }
@@ -230,19 +258,66 @@ export function registerFrameWindow(frameId: string, win: Window) {
 export function unregisterFrameWindow(frameId: string, win: Window) {
   if (windows.get(frameId) !== win) return
   windows.delete(frameId)
+  frameByWindow.delete(win)
   shownDocuments.delete(frameId)
+  initialDocuments.delete(frameId)
 }
 
 /* The HTML each frame's runtime has acknowledged showing; absent while a
    newer document is still on its way there. */
 const shownDocuments = new Map<string, string>()
 const documentListeners = new Map<string, Set<() => void>>()
+const initialDocuments = new Set<string>()
+const deferredFrames = new Map<string, { load: () => void; cancellations: Set<() => void> }>()
+
+/** A distant frame still has its controls and stored document, but no sandbox
+ *  until the camera approaches or a command explicitly needs its contents. */
+export function registerDeferredFrame(frameId: string, load: () => void) {
+  const entry = { load, cancellations: new Set<() => void>() }
+  deferredFrames.set(frameId, entry)
+  return () => {
+    if (deferredFrames.get(frameId) === entry) deferredFrames.delete(frameId)
+    for (const cancel of entry.cancellations) cancel()
+  }
+}
+
+export function hasFrameDocument(frameId: string) {
+  return initialDocuments.has(frameId)
+}
+
+export function onFrameDocument(frameId: string, cb: () => void): () => void {
+  return subscribe(documentListeners, frameId, cb)
+}
+
+function prepareFrameDocument(frameId: string, timeoutMs: number): Promise<boolean> {
+  const frame = deferredFrames.get(frameId)
+  if (!frame || hasFrameDocument(frameId)) return Promise.resolve(windows.has(frameId))
+  return new Promise((resolve) => {
+    const cancel = () => finish(false)
+    const off = onFrameDocument(frameId, () => {
+      if (hasFrameDocument(frameId)) finish(true)
+    })
+    const timer = window.setTimeout(cancel, timeoutMs)
+    function finish(ready: boolean) {
+      off()
+      window.clearTimeout(timer)
+      frame?.cancellations.delete(cancel)
+      resolve(ready)
+    }
+    frame.cancellations.add(cancel)
+    frame.load()
+  })
+}
 
 /** Record what the frame's runtime shows: the acknowledged HTML, or null
  *  once a newer document has been posted and not yet acknowledged. */
 export function noteFrameDocument(frameId: string, html: string | null) {
+  if (!windows.has(frameId)) return
   if (html === null) shownDocuments.delete(frameId)
-  else shownDocuments.set(frameId, html)
+  else {
+    shownDocuments.set(frameId, html)
+    initialDocuments.add(frameId)
+  }
   documentListeners.get(frameId)?.forEach((cb) => cb())
 }
 
@@ -266,6 +341,7 @@ export function frameShows(frameId: string, html: string): Promise<boolean> {
     }
     const timer = window.setTimeout(() => done(false), REPLY_TIMEOUT_MS)
     set.add(check)
+    deferredFrames.get(frameId)?.load()
   })
 }
 
@@ -294,12 +370,22 @@ function subscribe(listeners: Map<string, Set<() => void>>, frameId: string, cb:
 
 /** Post `{ type, ...payload }` to the frame and resolve with its reply, or
  *  null when the frame is not registered or never answers. */
-export function requestFrame(
+export async function requestFrame(
   frameId: string,
   type: `doop:${string}`,
   payload: Record<string, unknown>,
   timeoutMs = REPLY_TIMEOUT_MS,
 ): Promise<Record<string, unknown> | null> {
+  // Prototype scanning is passive; its onFrameChange subscription will read
+  // the live document once it boots. HTML itself starts that document.
+  if (
+    type !== 'doop:html' &&
+    type !== 'doop:proto-scan' &&
+    deferredFrames.has(frameId) &&
+    !hasFrameDocument(frameId) &&
+    !(await prepareFrameDocument(frameId, timeoutMs))
+  )
+    return null
   const win = windows.get(frameId)
   if (!win) return Promise.resolve(null)
   listen()
@@ -331,7 +417,7 @@ export interface FrameSnapshot {
  *  one that could not be read, never as unmounted: its saved HTML would
  *  render without what the runtime shows. */
 export async function snapshotFrame(frameId: string): Promise<FrameSnapshot | null> {
-  if (!windows.has(frameId)) return null
+  if (!windows.has(frameId) && !deferredFrames.has(frameId)) return null
   const reply = await requestFrame(frameId, 'doop:snapshot', {}, SNAPSHOT_TIMEOUT_MS)
   return { html: typeof reply?.html === 'string' ? reply.html : null }
 }

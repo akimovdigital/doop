@@ -8,6 +8,7 @@ import { usePageCanvas, currentPageCanvas } from '../lib/pages'
 import { sendWs } from '../lib/ws'
 import { throttle } from '../lib/throttle'
 import { FrameView, HiddenFrameView } from './FrameView'
+import { useFrameAdmission } from './frameAdmission'
 import { CanvasComments, type CanvasComposeAt } from './CanvasComments'
 import { placeComposer } from '../lib/composerPlacement'
 import { isCanvasComment, type CanvasComment } from '../../shared/comments'
@@ -41,12 +42,15 @@ import {
   FrameIcon,
   HandIcon,
   PrototypeModeIcon,
+  SectionIcon,
   TextIcon,
   VectorIcon,
   ZoomInIcon,
 } from './ui/icons'
 import { TOOLS, isDrawingTool, resolvePointerAction, toolForKey, type Tool } from '../lib/tools'
 import { useCanvasDrawing } from './CanvasDrawing'
+import { CanvasSections } from './CanvasSections'
+import { activeSections } from '../lib/canvasSections'
 import { CommentThreadLayer, FrameLabelLayer } from './FrameLabelLayer'
 import { pixelGridLines } from './PixelGrid'
 import { layoutZoomFor } from '../lib/layoutZoom'
@@ -55,7 +59,7 @@ import { NO_INSETS, fitBox, fitColumnStart, type StageInsets } from '../lib/view
 import { spaceWouldScroll } from '../lib/spaceScroll'
 import { ZOOM_DRAG_MIN, ZOOM_TOOL_STEP, zoomAtPoint, zoomToBox } from '../lib/zoomTool'
 
-const MIN_ZOOM = 0.08
+const MIN_ZOOM = 0.01
 /* The settled world is laid out at up to this zoom too (layoutZoomFor), so
    the desktop app stays sharp all the way in. That costs little: WebKit and
    Chromium both tile what is on screen, so backing memory follows the
@@ -157,6 +161,7 @@ const TOOL_ICONS: Record<Tool, React.ReactNode> = {
   path: <VectorIcon />,
   text: <TextIcon />,
   frame: <FrameIcon />,
+  section: <SectionIcon />,
 }
 
 const sendCursor = throttle((x: number, y: number) => sendWs({ type: 'cursor', x, y }), 50)
@@ -242,6 +247,7 @@ export function Stage({
   const setViewport = useStore((s) => s.setViewport)
   const canvas = usePageCanvas()
   const activePageId = useStore((s) => s.activePageId)
+  const sectionFocus = useStore((s) => s.sectionFocus)
   /* a page with a colour of its own paints the stage, dots in its contrast */
   const paper = usePaper()
   const select = useStore((s) => s.select)
@@ -593,8 +599,14 @@ export function Stage({
 
   const fit = useCallback(() => {
     const c = currentPageCanvas()
-    if (c) fitFrames(c.frames)
+    if (c) fitFrames([...c.frames, ...activeSections(useStore.getState())])
   }, [fitFrames])
+
+  useEffect(() => {
+    if (!sectionFocus) return
+    const section = activeSections(useStore.getState()).find((item) => item.id === sectionFocus.id)
+    if (section) fitFrames([section])
+  }, [sectionFocus, fitFrames])
 
   /* zoom to the selected frames — with nothing selected there is nothing to
      fit, so the view stays put */
@@ -645,7 +657,12 @@ export function Stage({
     cameraPage.current = activePageId
     const saved = pageCameras.current.get(activePageId)
     if (saved) setViewport(saved)
-    else fitFrames(canvas.frames, true)
+    else {
+      const sections = activeSections(state)
+      const landing = state.canvas?.pages?.find((item) => item.id === activePageId)?.landingSectionId
+      const section = sections.find((item) => item.id === landing)
+      fitFrames(section ? [section] : [...canvas.frames, ...sections], true)
+    }
   }, [canvas, activePageId, fitFrames, focusFrame, focusPoint, linkSearch, setViewport])
 
   /* wheel: pan / pinch-zoom — needs a non-passive listener. Trackpads fire
@@ -895,14 +912,14 @@ export function Stage({
       if (e.code === 'KeyZ' || e.key.toLowerCase() === 'z') release()
     }
     function onKey(e: KeyboardEvent) {
-      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.repeat) return
+      if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return
       if (e.key === 'Escape') {
         if (isTypingTarget(e.target) && !e.target.closest('[data-comment-ui], [data-drawing-input]')) return
         if (useStore.getState().tool !== 'select') useStore.getState().setTool('select')
         return
       }
       if (isTypingTarget(e.target)) return
-      const next = toolForKey(e.key)
+      const next = toolForKey(e.shiftKey ? `⇧${e.key}` : e.key)
       if (!next) return
       e.preventDefault()
       const previous = useStore.getState().tool
@@ -1176,13 +1193,15 @@ export function Stage({
                     ? ZOOM_CURSOR[altHeld ? 'out' : 'in']
                     : tool === 'comment'
                       ? COMMENT_CURSOR
-                      : isDrawingTool(tool)
-                        ? tool === 'text'
-                          ? 'cursor-text! [&_:not([data-comment-ui]_*)]:cursor-text!'
-                          : tool === 'path'
-                            ? PEN_CURSOR[drawing.penCursor]
-                            : 'cursor-crosshair! [&_:not([data-comment-ui]_*)]:cursor-crosshair!'
-                        : 'cursor-default',
+                      : tool === 'section'
+                        ? 'cursor-crosshair! [&_*]:cursor-crosshair!'
+                        : isDrawingTool(tool)
+                          ? tool === 'text'
+                            ? 'cursor-text! [&_:not([data-comment-ui]_*)]:cursor-text!'
+                            : tool === 'path'
+                              ? PEN_CURSOR[drawing.penCursor]
+                              : 'cursor-crosshair! [&_:not([data-comment-ui]_*)]:cursor-crosshair!'
+                          : 'cursor-default',
             )}
             style={{ ...bounds, ...paperStyle(paper) }}
             onPointerDownCapture={drawing.onPointerDown}
@@ -1227,8 +1246,9 @@ export function Stage({
               ref={worldRef}
             >
               <CommentThreadLayer.Provider value={threadLayer}>
+                <CanvasSections stage={ref} world={worldRef} />
                 <FrameLabelLayer.Provider value={labelLayer}>
-                  <FrameStack frames={canvas?.frames ?? []} layoutZoom={layoutZoom} />
+                  <FrameStack key={activePageId} frames={canvas?.frames ?? []} layoutZoom={layoutZoom} stage={ref} />
                 </FrameLabelLayer.Provider>
                 <GhostFrames />
                 <FlowOverlay />
@@ -1437,16 +1457,33 @@ function byCreation(a: Frame, b: Frame) {
  *  an iframe in the DOM reloads it, so a restack must not move any. The
  *  layer isolates the stack, so the overlays after it (cursors, guides, the
  *  marquee) stay above every frame. */
-function FrameStack({ frames, layoutZoom }: { frames: Frame[]; layoutZoom: number }) {
+function FrameStack({
+  frames,
+  layoutZoom,
+  stage,
+}: {
+  frames: Frame[]
+  layoutZoom: number
+  stage: React.RefObject<HTMLDivElement | null>
+}) {
   const mounted = useMemo(() => [...frames].sort(byCreation), [frames])
   const rank = useMemo(() => new Map(frames.map((f, i) => [f.id, i + 1])), [frames])
+  const layer = useRef<HTMLDivElement>(null)
+  const { eager, admitted, request } = useFrameAdmission(frames, stage, layer)
   return (
-    <div className="absolute top-0 left-0 isolate">
+    <div ref={layer} className="absolute top-0 left-0 isolate">
       {mounted.map((f) =>
         f.hidden ? (
           <HiddenFrameView key={f.id} frame={f} stack={rank.get(f.id)} />
         ) : (
-          <FrameView key={f.id} frame={f} stack={rank.get(f.id)} layoutZoom={layoutZoom} />
+          <FrameView
+            key={f.id}
+            frame={f}
+            stack={rank.get(f.id)}
+            layoutZoom={layoutZoom}
+            loadDocument={eager || admitted.has(f.id)}
+            requestDocument={request}
+          />
         ),
       )}
     </div>

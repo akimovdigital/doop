@@ -5,7 +5,7 @@
 import type { PlainMessageKey } from './i18n'
 
 export type DrawingTool = 'rectangle' | 'circle' | 'path' | 'text' | 'frame'
-export type Tool = 'select' | 'hand' | 'zoom' | 'comment' | DrawingTool
+export type Tool = 'select' | 'hand' | 'zoom' | 'comment' | 'section' | DrawingTool
 
 export function isDrawingTool(tool: Tool): tool is DrawingTool {
   return tool === 'rectangle' || tool === 'circle' || tool === 'path' || tool === 'text' || tool === 'frame'
@@ -16,6 +16,7 @@ export const TOOLS: { id: Tool; label: PlainMessageKey; key: string }[] = [
   { id: 'select', label: 'canvas.toolSelect', key: 'V' },
   { id: 'hand', label: 'canvas.toolHand', key: 'H' },
   { id: 'frame', label: 'canvas.toolFrame', key: 'F' },
+  { id: 'section', label: 'canvas.toolSection', key: '⇧S' },
   { id: 'rectangle', label: 'canvas.toolRectangle', key: 'R' },
   { id: 'circle', label: 'canvas.toolCircle', key: 'O' },
   { id: 'path', label: 'canvas.toolPath', key: 'P' },
@@ -60,6 +61,7 @@ export function resolvePointerAction({ tool, target, button, pointerType, spaceH
   if (tool === 'hand' || spaceHeld) return 'pan'
   if (tool === 'zoom') return 'zoom'
   if (isDrawingTool(tool)) return 'draw'
+  if (tool === 'section') return 'none'
   /* a finger on the background pans: touch has no space bar, and one-finger
      pan is how phones move around. The Comment tool is the exception — a tap
      is how a phone places a comment; the stage still pans a finger that

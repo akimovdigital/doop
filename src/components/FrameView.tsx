@@ -11,7 +11,16 @@ import { FrameLabelLayer } from './FrameLabelLayer'
 import { PathEditor } from './PathEditor'
 import { loadPathEdit, type PathEditSource } from '../lib/pathEditing'
 import { currentPageCanvas } from '../lib/pages'
-import { noteFrameDocument, registerFrameWindow, requestFrame, unregisterFrameWindow } from '../lib/frameBridge'
+import {
+  frameShows,
+  hasFrameDocument,
+  noteFrameDocument,
+  onFrameMessage,
+  registerDeferredFrame,
+  registerFrameWindow,
+  requestFrame,
+  unregisterFrameWindow,
+} from '../lib/frameBridge'
 import { api } from '../lib/api'
 import { sendWs } from '../lib/ws'
 import { throttle } from '../lib/throttle'
@@ -128,6 +137,7 @@ export function HiddenFrameView({ frame, stack }: { frame: Frame; stack?: number
   if (!selected) return null
   return (
     <div
+      data-doop-frame-shell={frame.id}
       className="pointer-events-none absolute"
       style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height, zIndex: stack }}
     >
@@ -248,11 +258,15 @@ export const FrameView = memo(function FrameView({
   frame,
   stack,
   layoutZoom,
+  loadDocument = true,
+  requestDocument,
 }: {
   frame: Frame
   /** its place in the page's paint order (the Stage's z-index), front highest */
   stack?: number
   layoutZoom: number
+  loadDocument?: boolean
+  requestDocument?: (frameId: string) => void
 }) {
   const t = useT()
   const { standalone, synced, github, githubPlaceholder } = useMemo(() => {
@@ -807,6 +821,9 @@ export const FrameView = memo(function FrameView({
   /* The iframe loads a bootstrap once; HTML is posted in and DOM-morphed in
      place, so updates never white-flash the frame with a full reload. */
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  useLayoutEffect(() => {
+    if (requestDocument) return registerDeferredFrame(frame.id, () => requestDocument(frame.id))
+  }, [frame.id, requestDocument])
   const localHtml = useRef<string | null>(null)
   // A posted document is not ready for hit testing until the iframe has
   // acknowledged it. Inline edits already live there and set this on save.
@@ -824,7 +841,10 @@ export const FrameView = memo(function FrameView({
   const keyPort = useRef<MessagePort | null>(null)
   /* saves a document the runtime serialized after a text edit (set below) */
   const saveEditedRef = useRef<(html: string, discrete: boolean) => void>(() => {})
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!loadDocument) return
+    const sandbox = iframeRef.current?.contentWindow
+    if (!sandbox) return
     /* a key pressed while the focus sits in this frame's document: replay
        it on the iframe, where it bubbles to the canvas shortcuts as if the
        page had the focus. Keys arrive over a private port handed to the
@@ -877,13 +897,13 @@ export const FrameView = memo(function FrameView({
         setBleed(Number.isFinite(px) ? Math.min(1024, Math.max(0, px)) : 0)
       }
     }
-    window.addEventListener('message', onMsg)
+    const off = onFrameMessage(sandbox, onMsg)
     return () => {
-      window.removeEventListener('message', onMsg)
+      off()
       keyPort.current?.close()
       keyPort.current = null
     }
-  }, [])
+  }, [loadDocument])
   /* the runtime insets its body by the margin once the iframe has grown by it */
   useLayoutEffect(() => {
     if (runtimeReady) iframeRef.current?.contentWindow?.postMessage({ type: 'doop:bleed', px: bleed }, '*')
@@ -897,12 +917,13 @@ export const FrameView = memo(function FrameView({
   }, [runtimeReady, frame.id])
   useEffect(() => {
     if (!runtimeReady || editing || suspendPost || html !== frame.html || html === localHtml.current) return
+    const iframe = iframeRef.current
     localHtml.current = null
     const request = ++htmlRequest.current
     noteFrameDocument(frame.id, null)
     let cancelled = false
     void requestFrame(frame.id, 'doop:html', { html }).then((reply) => {
-      if (!reply || request !== htmlRequest.current) return
+      if (!reply || !iframe || iframeRef.current !== iframe || request !== htmlRequest.current) return
       /* the runtime shows it whether or not this effect is still current */
       noteFrameDocument(frame.id, html)
       if (!cancelled) setRuntimeDocument({ html, request })
@@ -1104,15 +1125,24 @@ export const FrameView = memo(function FrameView({
     closeElementPopovers()
     probeIntent.current = intent
     probePoint.current = { x, y }
+    requestDocument?.(frame.id)
     probeTimer.current = window.setTimeout(
       () => {
         probeTimer.current = null
-        probeReq.current += 1
+        const reqId = ++probeReq.current
         /* a click picks a group as a whole; the Comment tool pins to what is under it */
-        iframeRef.current?.contentWindow?.postMessage(
-          { type: 'doop:probe', reqId: probeReq.current, x, y, grouped: intent !== 'comment', selected: pickedHere() },
-          '*',
-        )
+        const probe = () => {
+          if (reqId !== probeReq.current) return
+          iframeRef.current?.contentWindow?.postMessage(
+            { type: 'doop:probe', reqId, x, y, grouped: intent !== 'comment', selected: pickedHere() },
+            '*',
+          )
+        }
+        if (requestDocument && !hasFrameDocument(frame.id)) {
+          void frameShows(frame.id, frame.html).then((shown) => {
+            if (shown) probe()
+          })
+        } else probe()
       },
       intent === 'pick' ? 250 : 0,
     )
@@ -1221,7 +1251,7 @@ export const FrameView = memo(function FrameView({
      ring, grips and size badge, which size the shape with it, and never
      dresses the shape in a second outline and grips of its own, which would
      size it inside a shell that stays put */
-  const shellSel = useMemo(() => standaloneSelector(frame), [frame])
+  const shellSel = useMemo(() => (standalone ? standaloneSelector(frame) : null), [frame, standalone])
   const shellPicked = !!wantedSel && wantedSel === shellSel
   /* the shape's own layer lock holds the shell's grips too: a resize of the
      shell is a resize of the locked shape */
@@ -1299,7 +1329,10 @@ export const FrameView = memo(function FrameView({
     )
   }, [runtimeReady, wantedSel, probeSel, frame.id, html, frame.html])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!loadDocument) return
+    const sandbox = iframeRef.current?.contentWindow
+    if (!sandbox) return
     function onMsg(ev: MessageEvent) {
       if (ev.source !== iframeRef.current?.contentWindow) return
       if (ev.data?.type === 'doop:probe-result' && ev.data.reqId === probeReq.current) {
@@ -1416,9 +1449,8 @@ export const FrameView = memo(function FrameView({
         setPinPos((m) => ({ ...m, [ev.data.reqId]: rect ? { x: rect.x, y: rect.y } : null }))
       }
     }
-    window.addEventListener('message', onMsg)
-    return () => window.removeEventListener('message', onMsg)
-  }, [frame.id])
+    return onFrameMessage(sandbox, onMsg)
+  }, [frame.id, loadDocument])
 
   /* Esc dismisses popovers (edit mode has its own Esc path inside the iframe) */
   useEffect(() => {
@@ -1540,7 +1572,10 @@ export const FrameView = memo(function FrameView({
   }, [tool]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /* serialized edits stream out of the iframe; save through the human path */
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!loadDocument) return
+    const sandbox = iframeRef.current?.contentWindow
+    if (!sandbox) return
     function saveEdited(edited: string, discrete: boolean) {
       // The runtime already has this document. Echoing it through the HTML
       // throttle can overwrite a newer style edit still waiting to save.
@@ -1597,9 +1632,8 @@ export const FrameView = memo(function FrameView({
         })
       }
     }
-    window.addEventListener('message', onMsg)
-    return () => window.removeEventListener('message', onMsg)
-  }, [frame.id])
+    return onFrameMessage(sandbox, onMsg)
+  }, [frame.id, loadDocument])
 
   /* deselecting the frame ends the edit session. Selection lives in the
      store and the iframe has to be told, so this is a sync with an external
@@ -1637,6 +1671,7 @@ export const FrameView = memo(function FrameView({
     >
       <ContextMenuTrigger asChild>
         <div
+          data-doop-frame-shell={frame.id}
           /* the Stage reads this: a press on a locked frame is a press on the canvas */
           data-frame-locked={frame.locked ? '' : undefined}
           className={cn(
@@ -1680,6 +1715,7 @@ export const FrameView = memo(function FrameView({
               e.preventDefault()
               return
             }
+            requestDocument?.(frame.id)
             menuKind.current = 'element'
             setMenuTarget('loading')
             const rect = documentRect(iframeRef.current) ?? surface.getBoundingClientRect()
@@ -1901,15 +1937,16 @@ export const FrameView = memo(function FrameView({
                  belong to the canvas, so neither this box nor the iframe takes them */
               style={{ left: -bleed, top: -bleed, ...(bleed ? { pointerEvents: 'none' } : null) }}
             >
-              <iframe
-                ref={iframeRef}
-                className="relative block border-none bg-transparent"
-                data-bleed={bleed || undefined}
-                title={frame.name}
-                data-doop-frame=""
-                sandbox="allow-scripts"
-                srcDoc={FRAME_BOOTSTRAP}
-                /* The world is laid out at CSS zoom k (Stage), which an iframe
+              {loadDocument && (
+                <iframe
+                  ref={iframeRef}
+                  className="relative block border-none bg-transparent"
+                  data-bleed={bleed || undefined}
+                  title={frame.name}
+                  data-doop-frame=""
+                  sandbox="allow-scripts"
+                  srcDoc={FRAME_BOOTSTRAP}
+                  /* The world is laid out at CSS zoom k (Stage), which an iframe
                  passes into its document. Chromium takes it as pixel density:
                  the document keeps its design-px viewport and rasterizes at
                  k×, even out of process, where a transform on this element
@@ -1917,23 +1954,24 @@ export const FrameView = memo(function FrameView({
                  document out at the zoomed width, so there the zoom is undone
                  here (keeping viewport, vh/vw, media queries and runtime rects
                  in design px) and the scale restores the box. */
-                style={{
-                  width: frame.width + 2 * bleed,
-                  height: frame.height + 2 * bleed,
-                  /* while editing, the document takes the pointer back */
-                  ...(bleed ? { pointerEvents: editing ? 'auto' : 'none' } : null),
-                  ...(FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY
-                    ? null
-                    : { zoom: counterZoom(layoutZoom), transform: `scale(${layoutZoom})` }),
-                  transformOrigin: '0 0',
-                  /* Chromium paints an opaque backdrop behind an iframe whose
+                  style={{
+                    width: frame.width + 2 * bleed,
+                    height: frame.height + 2 * bleed,
+                    /* while editing, the document takes the pointer back */
+                    ...(bleed ? { pointerEvents: editing ? 'auto' : 'none' } : null),
+                    ...(FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY
+                      ? null
+                      : { zoom: counterZoom(layoutZoom), transform: `scale(${layoutZoom})` }),
+                    transformOrigin: '0 0',
+                    /* Chromium paints an opaque backdrop behind an iframe whose
                    colour scheme differs from its document's; the page's dark
                    scheme reaches this element by inheritance while a
                    standalone element's document is light, so a shape on the
                    dark canvas sat on a white square */
-                  ...(standalone ? { colorScheme: 'light' } : null),
-                }}
-              />
+                    ...(standalone ? { colorScheme: 'light' } : null),
+                  }}
+                />
+              )}
             </div>
             {/* a standalone element is see-through: the paper's grid shows */}
             {!standalone && <PixelGrid layoutZoom={layoutZoom} />}

@@ -1,7 +1,7 @@
 import type { PeerViewport } from '../../shared/types'
 import type { Viewport } from './store'
 
-export const FOLLOW_MIN_ZOOM = 0.08
+export const FOLLOW_MIN_ZOOM = 0.01
 /* the Stage's own limits: following never zooms past what the canvas allows */
 export const FOLLOW_MAX_ZOOM = 16
 

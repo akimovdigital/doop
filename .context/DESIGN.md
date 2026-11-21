@@ -91,6 +91,16 @@ White system (Doop UI v2, canvas guideline `doop-ui-system`): neutral greys, no 
   `text-paper`, never `text-white`, so it flips with the theme. `text-white` is for brand and
   accent fills and for dark overlays, which stay dark in both themes.
 
+### Canvas sections and desktop tabs
+
+- Sections use a `paper-deep` tint and a `line` outline. The selected section uses the `brand` tint
+  and outline. Its title uses a `surface` row and the 12px label scale. Titles keep their screen
+  size as the canvas zooms. Only the label and resize handle take pointer input, so the section
+  interior shares the normal frame, selection and pan interactions. See `CanvasSections.tsx`.
+- The desktop tab strip is 38 CSS px tall, with a space for the macOS window controls. Home keeps
+  canvas tabs open. Pinned tabs use a 30px icon slot, show their titles on hover and keep Doop’s
+  surface, selected and focus treatments. See `DesktopTabs.tsx` and `App.tsx`.
+
 ## Component catalogue (Storybook)
 
 - `bun run storybook` serves the catalogue on :6006; `bun run build-storybook` writes

@@ -9,6 +9,7 @@ import type {
   AgentTask,
   Canvas,
   CanvasGuide,
+  CanvasFrameMove,
   DesignDecision,
   ElementComment,
   Frame,
@@ -108,7 +109,8 @@ interface State {
   /** the Layers rail is showing (desktop); the choice sticks across visits */
   layersOpen: boolean
   /** which face the Layers panel shows: the layer tree, or the design tokens */
-  layersTab: 'layers' | 'components' | 'tokens'
+  layersTab: 'layers' | 'sections' | 'tokens'
+  sectionFocus: { id: string } | null
   /** ⌘. — every panel and toolbar is off screen, leaving only the canvas.
    *  A plain overlay flag: the panels' own open/closed state is untouched
    *  underneath, so toggling back shows exactly what was open before */
@@ -173,7 +175,11 @@ interface State {
 
   activePageId: string | null
   setActivePage(id: string): void
-  setPages(pages: import('../../shared/types').CanvasPageInfo[], canvasId?: string): void
+  setPages(
+    pages: import('../../shared/types').CanvasPageInfo[],
+    canvasId?: string,
+    frameMoves?: CanvasFrameMove[],
+  ): void
   /** paint one page locally (this client's own edit, before or after its save) */
   setPageBackgroundLocal(pageId: string, background: string | null): void
   setCanvas(c: Canvas | null): void
@@ -271,7 +277,8 @@ interface State {
   pickElements(frameId: string, selectors: string[]): void
   setElementPanelOpen(v: boolean): void
   setLayersOpen(v: boolean): void
-  setLayersTab(tab: 'layers' | 'components' | 'tokens'): void
+  setLayersTab(tab: State['layersTab']): void
+  focusSection(id: string): void
   toggleUiHidden(): void
   setPrototypeMode(on: boolean): void
   setViewport(v: Viewport): void
@@ -344,6 +351,7 @@ export const useStore = create<State>((set, get) => ({
   elementPanelOpen: false,
   layersOpen: readLayersOpen(),
   layersTab: 'layers',
+  sectionFocus: null,
   uiHidden: false,
   prototypeMode: false,
   viewport: { x: 0, y: 0, zoom: 1 },
@@ -404,11 +412,17 @@ export const useStore = create<State>((set, get) => ({
       })
       return { canvas: { ...s.canvas, pages } }
     }),
-  setPages: (pages, canvasId) =>
+  setPages: (pages, canvasId, frameMoves) =>
     set((s) => {
       if (!s.canvas || (canvasId !== undefined && s.canvas.id !== canvasId)) return {}
       const firstId = canvasPages(s.canvas)[0]!.id
-      const canvas = { ...s.canvas, pages, frames: s.canvas.frames.map((f) => ({ ...f, pageId: f.pageId ?? firstId })) }
+      const moves = frameMoves?.length ? new Map(frameMoves.map((move) => [move.id, move])) : null
+      const frames = s.canvas.frames.map((frame) => {
+        const move = moves?.get(frame.id)
+        if (move && move.updatedAt >= frame.updatedAt) return { ...frame, ...move }
+        return frame.pageId === undefined ? { ...frame, pageId: firstId } : frame
+      })
+      const canvas = { ...s.canvas, pages, frames }
       /* a deleted page takes its guides with it, as it does on the server */
       if (canvas.guides?.some((g) => !pages.some((p) => p.id === g.pageId)))
         canvas.guides = canvas.guides.filter((g) => pages.some((p) => p.id === g.pageId))
@@ -745,6 +759,7 @@ export const useStore = create<State>((set, get) => ({
     set({ layersOpen })
   },
   setLayersTab: (layersTab) => set({ layersTab }),
+  focusSection: (id) => set({ sectionFocus: { id } }),
   /* hidden guides cannot stay selected: Delete would remove one unseen */
   toggleUiHidden: () => set((s) => ({ uiHidden: !s.uiHidden, ...(s.uiHidden ? {} : { selectedGuideId: null }) })),
   setPrototypeMode: (prototypeMode) => set({ prototypeMode }),
@@ -839,7 +854,7 @@ export function canCommentOpenCanvas(s: Pick<State, 'canvas'>): boolean {
 
 /** Select, Hand and the Comment tool for commenters; every tool for editors. */
 export function toolAllowed(tool: Tool, role: CanvasRole): boolean {
-  if (isDrawingTool(tool)) return roleAllows(role, 'edit')
+  if (isDrawingTool(tool) || tool === 'section') return roleAllows(role, 'edit')
   if (tool === 'comment') return roleAllows(role, 'comment')
   return true
 }
