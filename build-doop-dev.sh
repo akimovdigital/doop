@@ -6,7 +6,7 @@ cd "$root/desktop"
 
 export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 export DOOP_APP_URL=http://127.0.0.1:4437
-export DOOP_TEST_LOGIN=1
+unset DOOP_TEST_LOGIN
 export CARGO_BUILD_JOBS=5
 export CARGO_PROFILE_RELEASE_LTO=false
 
