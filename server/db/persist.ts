@@ -1018,6 +1018,7 @@ export function saveTask(canvasId: string, task: AgentTask) {
     id: task.id,
     canvasId,
     agentName: task.agentName,
+    agentKey: task.agentKey ?? null,
     owner: task.owner ?? null,
     color: task.color,
     status: task.status,
@@ -1049,6 +1050,7 @@ export function saveTask(canvasId: string, task: AgentTask) {
           endedAt: row.endedAt,
           status: row.status,
           agentName: row.agentName,
+          agentKey: row.agentKey,
           color: row.color,
           claimedAt: row.claimedAt,
           failedAt: row.failedAt,
@@ -1370,6 +1372,7 @@ export async function hydrate(): Promise<Hydrated> {
     list.push({
       id: row.id,
       agentName: row.agentName,
+      ...(row.agentKey != null ? { agentKey: row.agentKey } : {}),
       ...(row.owner != null ? { owner: row.owner } : {}),
       color: row.color,
       status: row.status,

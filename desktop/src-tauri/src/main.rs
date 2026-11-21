@@ -10,6 +10,13 @@
 // only marks the page as desktop; opening links in the system browser goes
 // through the opener plugin, granted in capabilities/default.json.
 //
+// Windows opens with the native frame, and the page drops it itself
+// (set_decorations, granted in capabilities/default.json) and draws the
+// caption buttons at the end of the tab strip (src/lib/windowFrame.ts). The
+// page rather than the shell decides because the two ship apart: a server
+// running an older app never drops the frame, so the window always keeps a
+// way to be closed.
+//
 // Because tabs live in the page, the macOS menu is built here rather than
 // taken from Tauri's default: that one binds Cmd+W to "Close Window", which
 // on a single-window app closes the whole app. Ours binds Cmd+W to "Close
@@ -442,6 +449,11 @@ fn build_canvas_window(
             .on_page_load(move |window, payload| {
                 if label_is_main && payload.event() == PageLoadEvent::Started {
                     updates::page_loading(window.app_handle());
+                }
+                // Each full load restores the Windows frame until the new page draws its controls.
+                #[cfg(windows)]
+                if payload.event() == PageLoadEvent::Started {
+                    let _ = window.set_decorations(true);
                 }
                 #[cfg(all(chromium, target_os = "macos"))]
                 if migrating {

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { api } from '../lib/api'
 import { posthog } from '../lib/posthog'
 import { navigate } from '../App'
@@ -43,6 +43,8 @@ import {
 } from '../lib/desktop'
 import { chordHint } from '../lib/actions/chords'
 import { hasInsetTrafficLights, isDesktopShell } from '../lib/shell'
+import { useWindowFrame } from '../lib/windowFrame'
+import { WindowControls } from './WindowControls'
 import { canEditOpenCanvas, useStore } from '../lib/store'
 import { useT } from '../lib/i18n'
 
@@ -267,6 +269,7 @@ export function DesktopTabs({ path }: { path: string }) {
         </div>
       )}
       {groupEdit && <GroupNameDialog edit={groupEdit} onClose={() => setGroupEdit(null)} />}
+      <WindowControls className="-mr-2 ml-auto" />
     </div>
   )
 }
@@ -507,8 +510,34 @@ export function DesktopSplit({ tabs }: { tabs: [CanvasTab, CanvasTab] }) {
   )
 }
 
-/** Invisible drag handle for shell screens without the tab strip. */
-export function ShellDragBar() {
-  if (!hasInsetTrafficLights()) return null
-  return <div data-tauri-drag-region className="fixed inset-x-0 top-0 z-[950] h-6" />
+/** Invisible drag handle for shell screens without the tab strip (signed
+ *  out): the overlay title bar has no native drag area of its own. On
+ *  Windows, once the page owns the frame, it also carries the caption
+ *  buttons — these screens would otherwise have no way to close the window.
+ *  A fixed-position screen passed as `children` (the guest canvas, whose
+ *  toolbar sits 14px from the top) is moved below that bar through the
+ *  --app-inset contract (App.tsx) instead of having its toolbar covered. */
+export function ShellDragBar({ children }: { children?: ReactNode }) {
+  const customFrame = useWindowFrame((s) => s.custom)
+  if (customFrame)
+    return (
+      <>
+        <div
+          data-tauri-drag-region
+          className={cn(
+            'fixed inset-x-0 top-0 z-[950] flex h-8 justify-end',
+            children && 'border-b border-line bg-paper-deep',
+          )}
+        >
+          <WindowControls />
+        </div>
+        {children && <div className="[--app-inset:32px]">{children}</div>}
+      </>
+    )
+  return (
+    <>
+      {hasInsetTrafficLights() && <div data-tauri-drag-region className="fixed inset-x-0 top-0 z-[950] h-6" />}
+      {children}
+    </>
+  )
 }

@@ -13,7 +13,9 @@ import { CanvasComments, type CanvasComposeAt } from './CanvasComments'
 import { placeComposer } from '../lib/composerPlacement'
 import { isCanvasComment, type CanvasComment } from '../../shared/comments'
 import { elementIdSelector, isElementId } from '../../shared/elementId'
-import { canvasPages } from '../../shared/pages'
+import { resolveFrameLink } from '../lib/elementLink'
+import { openExternal } from '../lib/desktop'
+import { canvasPages, framePageId } from '../../shared/pages'
 import { FlowOverlay } from './FlowOverlay'
 import { PrototypeOverlay } from './PrototypeOverlay'
 import { GhostFrames } from './GhostFrames'
@@ -24,7 +26,7 @@ import { MeasureOverlay } from './MeasureOverlay'
 import { SnapGuides } from './SnapGuides'
 import { GuideLines, Rulers } from './Rulers'
 import { useIsMobile } from '../hooks/use-mobile'
-import { isTypingTarget, MOD_KEY } from '../lib/keys'
+import { isTypingTarget, MOD_KEY, pressedKey } from '../lib/keys'
 import { cn } from '../lib/utils'
 import { gesture } from '../lib/gesture'
 import { hasFrameClip, pasteFrameAtScreen } from '../lib/frameClipboard'
@@ -562,6 +564,33 @@ export function Stage({
     [setViewport, select, fitView],
   )
 
+  const followFrameLink = useCallback(
+    (source: Frame, href: string) => {
+      const { canvas, activePageId } = useStore.getState()
+      if (!canvas || source.canvasId !== canvas.id || framePageId(canvas, source) !== activePageId) return
+      const target = resolveFrameLink(canvas, href)
+      if (!target) return
+      if (target.kind === 'web') {
+        /* the desktop shell hands it to the system browser (its webview drops
+           popups); a browser opens a tab with no way back to this page */
+        if (openExternal(target.url)) return
+        /* mail and phone links go to the app the system has for them: a new
+           tab would stay behind empty */
+        if (/^(mailto|tel):/i.test(target.url)) window.location.href = target.url
+        else window.open(target.url, '_blank', 'noopener,noreferrer')
+        return
+      }
+      if (target.kind === 'anchor') return // the frame scrolls itself (FrameView)
+      if (target.kind === 'page') {
+        /* as a pick in the Pages panel: the Stage fits the page it opens */
+        useStore.getState().setActivePage(target.pageId)
+        return
+      }
+      focusFrame(target.frame, isElementId(target.element) ? elementIdSelector(target.element) : null)
+    },
+    [focusFrame],
+  )
+
   /* centre a canvas comment's pin at 100% on its page and open its thread
      (the link in a comment email) */
   const focusPoint = useCallback(
@@ -937,7 +966,7 @@ export function Stage({
       if (s.tool === 'zoom') s.setTool(held.previous)
     }
     function onKeyUp(e: KeyboardEvent) {
-      if (e.code === 'KeyZ' || e.key.toLowerCase() === 'z') release()
+      if (e.code === 'KeyZ' || pressedKey(e) === 'z') release()
     }
     function onKey(e: KeyboardEvent) {
       if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return
@@ -947,7 +976,8 @@ export function Stage({
         return
       }
       if (isTypingTarget(e.target)) return
-      const next = toolForKey(e.shiftKey ? `⇧${e.key}` : e.key)
+      const key = pressedKey(e)
+      const next = toolForKey(e.shiftKey && key ? `⇧${key}` : key)
       if (!next) return
       e.preventDefault()
       const previous = useStore.getState().tool
@@ -1295,6 +1325,7 @@ export function Stage({
                     layoutZoom={layoutZoom}
                     stage={ref}
                     presentationOpen={presentationOpen}
+                    onFollowLink={followFrameLink}
                   />
                 </FrameLabelLayer.Provider>
                 <GhostFrames />
@@ -1509,10 +1540,12 @@ function FrameStack({
   layoutZoom,
   stage,
   presentationOpen,
+  onFollowLink,
 }: {
   frames: Frame[]
   layoutZoom: number
   presentationOpen: boolean
+  onFollowLink: (source: Frame, href: string) => void
   stage: React.RefObject<HTMLDivElement | null>
 }) {
   const mounted = useMemo(() => [...frames].sort(byCreation), [frames])
@@ -1542,6 +1575,7 @@ function FrameStack({
             onStopPlayback={stopPlaying}
             compactSectionTitles={compactSectionTitles}
             requestDocument={request}
+            onFollowLink={onFollowLink}
           />
         ),
       )}

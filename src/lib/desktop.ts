@@ -1,5 +1,6 @@
 /* Doop in the desktop shell (desktop/src-tauri). The shell is one webview
-   with an overlay title bar; canvases open Figma-style in a tab strip the
+   with an overlay title bar (on Windows, a frame the page draws:
+   windowFrame.ts); canvases open Figma-style in a tab strip the
    web app draws itself (src/components/DesktopTabs.tsx). Tabs are ordinary
    in-page navigations — this module only keeps the strip's state and the
    shell-specific plumbing. In a plain browser every entry point returns
@@ -21,11 +22,13 @@ import {
 import { isDesktopShell } from './shell'
 import { useStore } from './store'
 import { api } from './api'
+import { initWindowFrame } from './windowFrame'
 import { codexSetupTarget } from './codexConnection'
 import { forgetPendingConnect, isPendingConnect, parseDesktopConnectLink } from './desktopConnect'
 import { safeRelativeTarget } from './safeTarget'
 import { NO_CANVAS, isViewCommand, runViewCommand, syncViewMenu } from './viewMenu'
 import { initAppMenu } from './appMenu'
+import { pressedKey } from './keys'
 import { type Chord, matchesChord } from './actions/chords'
 
 export type CanvasTab = { id: string; name: string; pinned?: boolean; pageId?: string; group?: string }
@@ -450,6 +453,8 @@ export function openExternal(url: string): boolean {
  *  browser instead. Runs once from main.tsx; no-op outside the shell. */
 export function initDesktopShell() {
   if (!isDesktopShell()) return
+  /* Windows: the page's caption buttons take over from the native frame */
+  initWindowFrame().catch(console.error)
   /* Cmd+W: on macOS the shell's menu owns the shortcut (main.rs) and relays
      it as an event — the page never sees the keystroke. Windows has no menu
      bar, so Ctrl+W arrives as a plain keydown. Both close the active tab. */
@@ -489,7 +494,7 @@ export function initDesktopShell() {
     true,
   )
   document.addEventListener('keydown', (e) => {
-    if (e.key.toLowerCase() !== 'w' || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return
+    if (pressedKey(e) !== 'w' || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return
     e.preventDefault()
     closeActiveTab()
   })
