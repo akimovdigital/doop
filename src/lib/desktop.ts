@@ -259,6 +259,33 @@ export function closeOtherTabs(id: string, currentPath: string) {
   if (currentPath !== `/c/${id}`) navigate(canvasTabTarget(keep))
 }
 
+/** A drag reorders a contiguous run of tabs without pinning or regrouping. */
+export function tabMoveRange(tabs: readonly CanvasTab[], index: number) {
+  const tab = tabs[index]
+  if (!tab) return null
+  const sameRun = (other: CanvasTab | undefined) =>
+    other && Boolean(other.pinned) === Boolean(tab.pinned) && other.group === tab.group
+  let first = index
+  let last = index
+  while (sameRun(tabs[first - 1])) first--
+  while (sameRun(tabs[last + 1])) last++
+  return { first, last }
+}
+
+/** Move a tab within its run. Persisted order and ⌘2…⌘9 follow the drop. */
+export function moveTab(id: string, toIndex: number) {
+  const { tabs } = useTabs.getState()
+  const from = tabs.findIndex((t) => t.id === id)
+  const range = tabMoveRange(tabs, from)
+  if (!range || !Number.isFinite(toIndex)) return
+  const to = Math.max(range.first, Math.min(toIndex, range.last))
+  const tab = tabs[from]
+  if (!tab || to === from) return
+  const next = tabs.filter((t) => t.id !== id)
+  next.splice(to, 0, tab)
+  setTabs(next)
+}
+
 /** ⌘1 (Ctrl+1 elsewhere) goes Home and ⌘2…⌘9 to the open tabs in strip
  *  order, as Figma's desktop app binds them. By physical key, so a layout
  *  that types another character on the digit row still switches. */

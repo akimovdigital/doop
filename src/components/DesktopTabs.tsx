@@ -1,8 +1,16 @@
-import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from 'react'
 import { api } from '../lib/api'
 import { posthog } from '../lib/posthog'
 import { navigate } from '../App'
-import { ChevronRightIcon, FrameIcon, HomeIcon, PlusIcon, XIcon } from './ui/icons'
+import { FrameIcon, HomeIcon, PlusIcon, XIcon } from './ui/icons'
 import { Tooltip } from './ui/tooltip'
 import {
   ContextMenu,
@@ -31,6 +39,7 @@ import {
   ensureTab,
   groupCanvasTab,
   moveCanvasTabToWindow,
+  moveTab,
   openCanvasSplit,
   openCanvasTab,
   openExternal,
@@ -38,6 +47,7 @@ import {
   renameCanvasTabGroup,
   setCanvasTabPinned,
   supportsCanvasWindows,
+  tabMoveRange,
   useTabs,
   type CanvasTab,
 } from '../lib/desktop'
@@ -68,6 +78,7 @@ export function DesktopTabs({ path }: { path: string }) {
   const activeId = path.match(/^\/c\/([^/]+)/)?.[1] ?? null
   const readOnlyId = useStore((s) => (s.canvas && !canEditOpenCanvas(s) ? s.canvas.id : null))
   const strip = useRef<HTMLDivElement>(null)
+  const cancelDrag = useRef<(() => void) | null>(null)
   const [renaming, setRenaming] = useState<CanvasTab | null>(null)
   const [groupEdit, setGroupEdit] = useState<GroupEdit | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -93,6 +104,8 @@ export function DesktopTabs({ path }: { path: string }) {
     const timer = window.setTimeout(() => setNotice(null), 3500)
     return () => window.clearTimeout(timer)
   }, [notice])
+
+  useEffect(() => () => cancelDrag.current?.(), [])
 
   if (!isDesktopShell()) return null
 
@@ -121,6 +134,164 @@ export function DesktopTabs({ path }: { path: string }) {
       const step = event.key === 'ArrowRight' ? 1 : -1
       buttons[(current + step + buttons.length) % buttons.length]?.focus()
     }
+  }
+
+  /* Reordering is a pointer gesture, not HTML5 drag-and-drop: the shell's
+     webview drag-drop handler swallows those events on Linux and Windows.
+     The DOM never reorders mid-gesture — siblings slide by transform to
+     open the gap and the drop commits moveTab — so a cancel has nothing
+     to undo. Listeners live on the document because the drag only starts
+     (and captures the pointer) after a 4px move, by which point the
+     pointer may already be off the tab. */
+  function onTabPointerDown(e: ReactPointerEvent<HTMLDivElement>, tab: CanvasTab, index: number) {
+    /* only the primary button drags: middle click stays Close, right click
+       stays the context menu, and a touch keeps scrolling the strip */
+    if (e.button !== 0 || e.pointerType === 'touch') return
+    if (!(e.target instanceof Element) || !e.target.closest('[role="tab"]')) return
+    const stripNode = strip.current
+    const range = tabMoveRange(tabs, index)
+    if (!stripNode || !range || range.first === range.last) return
+    const list = stripNode
+    const firstIndex = range.first
+    const siblings = Array.from(list.querySelectorAll<HTMLElement>(':scope > [data-desktop-tab]')).slice(
+      range.first,
+      range.last + 1,
+    )
+    if (siblings[index - range.first] !== e.currentTarget) return
+    cancelDrag.current?.()
+    const el = e.currentTarget
+    const d = {
+      id: tab.id,
+      from: index - range.first,
+      target: index - range.first,
+      startX: e.clientX,
+      x: e.clientX,
+      startScroll: 0,
+      pointerId: e.pointerId,
+      width: 0,
+      min: 0,
+      max: 0,
+      mids: [] as number[],
+      dragging: false,
+    }
+    /* Drop geometry is worked in content coordinates (clientX + scrollLeft)
+       so a strip scroll mid-drag shifts nothing: the midpoints and the
+       clamp bounds were frozen at drag start and stay valid */
+    function place(clientX: number) {
+      const cx = clientX + list.scrollLeft
+      const dx = Math.min(Math.max(cx - (d.startX + d.startScroll), d.min), d.max)
+      el.style.transform = `translateX(${dx}px)`
+      /* the drop slot counts the sibling midpoints the pointer has passed */
+      d.target = d.mids.filter((m) => cx > m).length
+      for (const [i, child] of siblings.entries()) {
+        if (i === d.from) continue
+        const shift =
+          d.target > d.from && i > d.from && i <= d.target
+            ? -d.width
+            : d.target < d.from && i >= d.target && i < d.from
+              ? d.width
+              : 0
+        child.style.transform = shift ? `translateX(${shift}px)` : ''
+      }
+    }
+    function scrolled() {
+      place(d.x)
+    }
+    function move(ev: PointerEvent) {
+      if (ev.pointerId !== d.pointerId) return
+      d.x = ev.clientX
+      if (!d.dragging) {
+        /* inside the threshold the gesture is still a candidate click */
+        if (Math.abs(ev.clientX - d.startX) < 4) return
+        el.setPointerCapture(ev.pointerId)
+        const rect = el.getBoundingClientRect()
+        const rects = siblings.map((child) => child.getBoundingClientRect())
+        const first = rects[0]
+        const last = rects[rects.length - 1]
+        if (!first || !last) return
+        d.startScroll = list.scrollLeft
+        d.width = rect.width
+        d.min = first.left - rect.left
+        d.max = last.right - rect.right
+        d.mids = rects.filter((_, i) => i !== d.from).map((r) => r.left + r.width / 2 + d.startScroll)
+        d.dragging = true
+        el.style.zIndex = '1'
+        for (const [i, child] of siblings.entries())
+          if (i !== d.from) child.style.transition = 'transform 150ms ease-out'
+        list.addEventListener('scroll', scrolled)
+      }
+      place(d.x)
+    }
+    function finish(commit: boolean) {
+      document.removeEventListener('pointermove', move)
+      document.removeEventListener('pointerup', up)
+      document.removeEventListener('pointercancel', cancel)
+      document.removeEventListener('keydown', key, true)
+      list.removeEventListener('scroll', scrolled)
+      unsub()
+      cancelDrag.current = null
+      for (const child of siblings) {
+        child.style.transition = ''
+        child.style.transform = ''
+        child.style.zIndex = ''
+      }
+      if (!d.dragging) return
+      if (el.hasPointerCapture(d.pointerId)) el.releasePointerCapture(d.pointerId)
+      if (commit) moveTab(d.id, firstIndex + d.target)
+      /* the click that lands after a drop — or after a cancelled drag's
+         release — must not navigate; it can be over a different tab by
+         then. A committed drop's click shares its pointerup's task; a
+         cancelled one arrives with the press's own later release, and if
+         that release produced no click (outside the window) the next press
+         or release retires the eater rather than letting it swallow a
+         real click */
+      const eat = (ev: MouseEvent) => {
+        ev.preventDefault()
+        ev.stopPropagation()
+      }
+      const disarm = () => {
+        /* the pointerup's click companion is dispatched in the same task,
+           ahead of this timer, so the eater still sees it */
+        setTimeout(() => document.removeEventListener('click', eat, true), 0)
+      }
+      const disarmNow = () => document.removeEventListener('click', eat, true)
+      document.addEventListener('click', eat, { capture: true, once: true })
+      document.addEventListener('pointerup', disarm, { capture: true, once: true })
+      document.addEventListener('pointerdown', disarmNow, { capture: true, once: true })
+    }
+    function up(ev: PointerEvent) {
+      if (ev.pointerId === d.pointerId) finish(true)
+    }
+    function cancel(ev: PointerEvent) {
+      if (ev.pointerId === d.pointerId) finish(false)
+    }
+    function key(ev: globalThis.KeyboardEvent) {
+      if (ev.key !== 'Escape') return
+      /* a drag's Esc is ours: keep it from the canvas, where it would also
+         deselect or stop following. An Esc before the threshold is not ours */
+      if (d.dragging) {
+        ev.preventDefault()
+        ev.stopPropagation()
+      }
+      finish(false)
+    }
+    document.addEventListener('pointermove', move)
+    document.addEventListener('pointerup', up)
+    document.addEventListener('pointercancel', cancel)
+    document.addEventListener('keydown', key, true)
+    /* the strip can change under the gesture — ⌘W closes a tab, a deep
+       link opens one — and the frozen geometry would land the drop on the
+       wrong slot; a rename keeps the same ids and must not cancel */
+    const unsub = useTabs.subscribe((s, prev) => {
+      if (
+        s.tabs.length !== prev.tabs.length ||
+        s.tabs.some(
+          (t, i) => t.id !== prev.tabs[i]?.id || t.pinned !== prev.tabs[i]?.pinned || t.group !== prev.tabs[i]?.group,
+        )
+      )
+        finish(false)
+    })
+    cancelDrag.current = () => finish(false)
   }
 
   return (
@@ -172,6 +343,8 @@ export function DesktopTabs({ path }: { path: string }) {
                       'group relative h-full border-r border-line-soft',
                       compact ? 'w-[37px] flex-none' : 'w-max min-w-[128px] max-w-[220px] flex-none',
                     )}
+                    data-desktop-tab=""
+                    onPointerDown={(e) => onTabPointerDown(e, tab, index)}
                     onAuxClick={(e) => e.button === 1 && closeTab(tab.id, path)}
                     onContextMenu={(event) => {
                       if (!event.nativeEvent.isTrusted) return
@@ -442,11 +615,8 @@ function TabContextMenu({
       </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuSub>
-        <ContextMenuSubTrigger>
-          {t('canvas.addToTabGroup')}
-          <ChevronRightIcon size="rail" className="ml-auto" aria-hidden="true" />
-        </ContextMenuSubTrigger>
-        <ContextMenuSubContent className="border border-line">
+        <ContextMenuSubTrigger>{t('canvas.addToTabGroup')}</ContextMenuSubTrigger>
+        <ContextMenuSubContent sideOffset={0} className="z-[850] min-w-[162px] border border-line">
           <ContextMenuItem onSelect={() => handOffFocus(() => onGroupEdit({ tabId: tab.id }))}>
             {t('canvas.newTabGroup')}
           </ContextMenuItem>
