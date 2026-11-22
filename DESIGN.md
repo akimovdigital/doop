@@ -3,6 +3,16 @@
 The shared palette, typography and component primitives come from [the upstream Doop design guide](.context/DESIGN.md).
 This file describes the interface specific to Doop Dev.
 
+## macOS editor windows
+
+Doop Dev starts in Local Dev. The native Window menu shows Local Dev and Doop Cloud, with a checkmark
+for the focused mode. Choosing a mode brings its existing window forward, including when it is minimized.
+The local canvas stays open with its current tab, selection and camera.
+
+Doop Cloud first opens the hosted editor in an independent window with a standard macOS title bar.
+Its label is Doop Cloud. It uses a separate website data store. Web links that request a new window
+open in the system browser, and downloads use the native save panel. See `desktop/src-tauri/src/dev_modes.rs`.
+
 ## Desktop canvas tabs
 
 The 38 px rail keeps the native macOS controls at the left, followed by Home, the group picker, and the canvas tabs. Add Canvas follows the tabs and stays in view when the row scrolls. The rest of the rail is a window drag area.

@@ -58,6 +58,8 @@ mod appimage;
 mod claude;
 mod claude_extension;
 mod codex;
+#[cfg(all(target_os = "macos", not(chromium)))]
+mod dev_modes;
 mod fonts;
 mod server;
 mod updates;
@@ -246,15 +248,16 @@ fn text_edit_items(app: &AppHandle) -> tauri::Result<MenuEntries> {
 /// The Window menu, which AppKit fills with the open windows.
 #[cfg(target_os = "macos")]
 fn window_submenu(app: &AppHandle) -> tauri::Result<Submenu<ShellRuntime>> {
-    let window = Submenu::with_items(
-        app,
-        "Window",
-        true,
-        &[
-            &PredefinedMenuItem::minimize(app, None)?,
-            &PredefinedMenuItem::maximize(app, None)?,
-        ],
-    )?;
+    #[cfg(not(chromium))]
+    let window = Submenu::with_id(app, dev_modes::WINDOW_MENU_ID, "Window", true)?;
+    #[cfg(chromium)]
+    let window = Submenu::new(app, "Window", true)?;
+    #[cfg(not(chromium))]
+    dev_modes::append_modes(app, &window)?;
+    window.append_items(&[
+        &PredefinedMenuItem::minimize(app, None)?,
+        &PredefinedMenuItem::maximize(app, None)?,
+    ])?;
     window.set_as_windows_menu_for_nsapp()?;
     Ok(window)
 }
@@ -356,6 +359,70 @@ fn focused_shell_window(app: &AppHandle) -> Option<WebviewWindow<ShellRuntime>> 
         .find(|window| window.is_focused().unwrap_or(false))
 }
 
+fn with_export_downloads<'a>(
+    app: &AppHandle,
+    builder: WebviewWindowBuilder<'a, ShellRuntime, AppHandle>,
+) -> WebviewWindowBuilder<'a, ShellRuntime, AppHandle> {
+    // macOS never reports the saved path on `Finished`, so remember
+    // the destinations chosen on `Requested`, keyed by URL. The same
+    // URL can be in flight more than once (double-clicking Download),
+    // so each key holds a queue: wry gives every request its own
+    // deduplicated filename and completions arrive in request order.
+    let download_handle = app.clone();
+    let downloads: Mutex<HashMap<String, VecDeque<PathBuf>>> =
+        Mutex::new(HashMap::new());
+    builder.on_download(move |_webview, event| {
+        match event {
+            DownloadEvent::Requested { url, destination } => {
+                let mut picker = rfd::FileDialog::new().set_title("Save export");
+                // wry suggests ~/Downloads/<name>, CEF the bare
+                // name; both panels open in Downloads.
+                let dir = destination
+                    .parent()
+                    .filter(|dir| !dir.as_os_str().is_empty())
+                    .map(PathBuf::from)
+                    .or_else(|| download_handle.path().download_dir().ok());
+                if let Some(dir) = dir {
+                    picker = picker.set_directory(dir);
+                }
+                if let Some(name) = destination.file_name().and_then(|n| n.to_str()) {
+                    picker = picker.set_file_name(name);
+                }
+                if let Some(ext) = destination.extension().and_then(|e| e.to_str()) {
+                    picker = picker.add_filter(ext.to_uppercase(), &[ext]);
+                }
+                // Cancelling the panel cancels the download.
+                let Some(chosen) = picker.save_file() else {
+                    return false;
+                };
+                *destination = chosen;
+                if let Ok(mut map) = downloads.lock() {
+                    map.entry(url.to_string())
+                        .or_default()
+                        .push_back(destination.clone());
+                }
+            }
+            DownloadEvent::Finished { url, path, success } => {
+                let remembered = downloads.lock().ok().and_then(|mut map| {
+                    let queue = map.get_mut(url.as_str())?;
+                    let front = queue.pop_front();
+                    if queue.is_empty() {
+                        map.remove(url.as_str());
+                    }
+                    front
+                });
+                if success {
+                    if let Some(saved) = path.or(remembered) {
+                        let _ = download_handle.opener().reveal_item_in_dir(saved);
+                    }
+                }
+            }
+            _ => {}
+        }
+        true
+    })
+}
+
 fn build_canvas_window(
     app: &AppHandle,
     label: &str,
@@ -388,103 +455,51 @@ fn build_canvas_window(
         cfg!(target_os = "macos"),
         !label_is_main
     );
-    // macOS never reports the saved path on `Finished`, so remember
-    // the destinations chosen on `Requested`, keyed by URL. The same
-    // URL can be in flight more than once (double-clicking Download),
-    // so each key holds a queue: wry gives every request its own
-    // deduplicated filename and completions arrive in request order.
-    let download_handle = app.clone();
-    let downloads: Mutex<HashMap<String, VecDeque<PathBuf>>> =
-        Mutex::new(HashMap::new());
-    let builder =
+    #[cfg(all(target_os = "macos", not(chromium)))]
+    let title = dev_modes::local_title(app, label);
+    #[cfg(not(all(target_os = "macos", not(chromium))))]
+    let title = "doop";
+    let builder = with_export_downloads(
+        app,
         WebviewWindowBuilder::new(app, label, WebviewUrl::External(first_url))
-            .initialization_script(&desktop_marker)
-            .on_download(move |_webview, event| {
-                match event {
-                    DownloadEvent::Requested { url, destination } => {
-                        let mut picker = rfd::FileDialog::new().set_title("Save export");
-                        // wry suggests ~/Downloads/<name>, CEF the bare
-                        // name; both panels open in Downloads.
-                        let dir = destination
-                            .parent()
-                            .filter(|dir| !dir.as_os_str().is_empty())
-                            .map(PathBuf::from)
-                            .or_else(|| download_handle.path().download_dir().ok());
-                        if let Some(dir) = dir {
-                            picker = picker.set_directory(dir);
-                        }
-                        if let Some(name) = destination.file_name().and_then(|n| n.to_str()) {
-                            picker = picker.set_file_name(name);
-                        }
-                        if let Some(ext) = destination.extension().and_then(|e| e.to_str()) {
-                            picker = picker.add_filter(ext.to_uppercase(), &[ext]);
-                        }
-                        // Cancelling the panel cancels the download.
-                        let Some(chosen) = picker.save_file() else {
-                            return false;
-                        };
-                        *destination = chosen;
-                        if let Ok(mut map) = downloads.lock() {
-                            map.entry(url.to_string())
-                                .or_default()
-                                .push_back(destination.clone());
-                        }
-                    }
-                    DownloadEvent::Finished { url, path, success } => {
-                        let remembered = downloads.lock().ok().and_then(|mut map| {
-                            let queue = map.get_mut(url.as_str())?;
-                            let front = queue.pop_front();
-                            if queue.is_empty() {
-                                map.remove(url.as_str());
-                            }
-                            front
-                        });
-                        if success {
-                            if let Some(saved) = path.or(remembered) {
-                                let _ = download_handle.opener().reveal_item_in_dir(saved);
-                            }
-                        }
-                    }
-                    _ => {}
+            .initialization_script(&desktop_marker),
+    )
+    .on_page_load(move |window, payload| {
+        if label_is_main && payload.event() == PageLoadEvent::Started {
+            updates::page_loading(window.app_handle());
+        }
+        // Each full load restores the Windows frame until the new page draws its controls.
+        #[cfg(windows)]
+        if payload.event() == PageLoadEvent::Started {
+            let _ = window.set_decorations(true);
+        }
+        #[cfg(all(chromium, target_os = "macos"))]
+        if migrating {
+            let on_landing = payload.url().path() == webkit_migration::LANDING_PATH;
+            match payload.event() {
+                PageLoadEvent::Finished if on_landing => webkit_migration::landed(window),
+                PageLoadEvent::Started if !on_landing => {
+                    let _ = window.show();
                 }
-                true
-            })
-            .on_page_load(move |window, payload| {
-                if label_is_main && payload.event() == PageLoadEvent::Started {
-                    updates::page_loading(window.app_handle());
-                }
-                // Each full load restores the Windows frame until the new page draws its controls.
-                #[cfg(windows)]
-                if payload.event() == PageLoadEvent::Started {
-                    let _ = window.set_decorations(true);
-                }
-                #[cfg(all(chromium, target_os = "macos"))]
-                if migrating {
-                    let on_landing = payload.url().path() == webkit_migration::LANDING_PATH;
-                    match payload.event() {
-                        PageLoadEvent::Finished if on_landing => webkit_migration::landed(window),
-                        PageLoadEvent::Started if !on_landing => {
-                            let _ = window.show();
-                        }
-                        _ => {}
-                    }
-                }
-            })
-            .title("doop")
-            .visible(!migrating && !show_without_animation)
-            .inner_size(if label_is_main { 1440.0 } else { 1100.0 }, if label_is_main { 900.0 } else { 760.0 })
-            .min_inner_size(900.0, 600.0)
-            .on_navigation(move |url| {
-                let in_app = match (url.scheme(), url.host_str()) {
-                    ("mailto" | "tel", _) => false,
-                    (_, Some(host)) => app_hosts.iter().any(|h| h == host),
-                    (_, None) => true,
-                };
-                if !in_app {
-                    let _ = handle.opener().open_url(url.as_str(), None::<String>);
-                }
-                in_app
-            });
+                _ => {}
+            }
+        }
+    })
+    .title(title)
+    .visible(!migrating && !show_without_animation)
+    .inner_size(if label_is_main { 1440.0 } else { 1100.0 }, if label_is_main { 900.0 } else { 760.0 })
+    .min_inner_size(900.0, 600.0)
+    .on_navigation(move |url| {
+        let in_app = match (url.scheme(), url.host_str()) {
+            ("mailto" | "tel", _) => false,
+            (_, Some(host)) => app_hosts.iter().any(|h| h == host),
+            (_, None) => true,
+        };
+        if !in_app {
+            let _ = handle.opener().open_url(url.as_str(), None::<String>);
+        }
+        in_app
+    });
     #[cfg(target_os = "macos")]
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
@@ -569,8 +584,17 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build());
     #[cfg(target_os = "macos")]
     let builder = builder.on_menu_event(|app, event| {
+        #[cfg(not(chromium))]
+        if dev_modes::handle_menu(app, event.id().as_ref()) {
+            return;
+        }
         if event.id() == CLOSE_TAB {
             if let Some(window) = focused_shell_window(app) {
+                #[cfg(not(chromium))]
+                if window.label() == dev_modes::CLOUD_WINDOW {
+                    let _ = window.close();
+                    return;
+                }
                 let _ = app.emit_to(window.label(), CLOSE_TAB, ());
             }
         } else if event.id() == updates::menu::MENU_ID {
@@ -584,6 +608,15 @@ fn main() {
     });
     builder
         .on_window_event(|window, event| {
+            #[cfg(all(target_os = "macos", not(chromium)))]
+            if dev_modes::enabled(window.app_handle()) {
+                if matches!(event, tauri::WindowEvent::Focused(true)) {
+                    dev_modes::sync_checkmarks(window.app_handle(), window.label());
+                }
+                if window.label() == dev_modes::CLOUD_WINDOW {
+                    return;
+                }
+            }
             #[cfg(target_os = "macos")]
             if matches!(
                 event,
