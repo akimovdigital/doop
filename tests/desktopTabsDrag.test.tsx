@@ -5,7 +5,11 @@ import { createRoot, type Root } from 'react-dom/client'
 
 vi.mock('../src/App', () => ({ navigate: vi.fn() }))
 vi.mock('../src/lib/auth', () => ({ authClient: {} }))
-vi.mock('../src/lib/shell', async (load) => ({ ...(await load<object>()), isDesktopShell: () => true }))
+vi.mock('../src/lib/shell', async (load) => ({
+  ...(await load<object>()),
+  isDesktopShell: () => true,
+  supportsCanvasTabs: () => true,
+}))
 vi.mock('../src/lib/api', () => ({ api: { createCanvas: () => new Promise(() => {}) } }))
 vi.mock('../src/lib/posthog', () => ({ posthog: { capture: vi.fn() } }))
 

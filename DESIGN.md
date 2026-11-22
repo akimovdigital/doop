@@ -5,7 +5,7 @@ This file describes the interface specific to Doop Dev.
 
 ## Desktop canvas tabs
 
-The 38 px rail appears in the signed-in canvas editor. The native macOS controls keep their own space at the left. The Home button starts 18 px from the available left edge, matching the expanded dashboard brand inset of 12 px plus 6 px. Add Canvas follows the tabs and stays in view when the row scrolls. The rest of the rail is a window drag area. The dashboard uses its own navigation and the desktop shell retains its title-bar controls.
+The 38 px rail is a desktop-app control. It appears on Home and in the signed-in canvas editor, but never in the web/browser UI or the prototype player. The native macOS controls keep their own space at the left. The Home button starts 18 px from the available left edge, matching the expanded dashboard brand inset of 12 px plus 6 px. Add Canvas follows the tabs and stays in view when the row scrolls. The rest of the rail is a window drag area. Home content keeps the same 38 px top inset as the editor, and the desktop shell retains its title-bar controls.
 
 | Role                    | Light                  | Dark                      |
 | ----------------------- | ---------------------- | ------------------------- |

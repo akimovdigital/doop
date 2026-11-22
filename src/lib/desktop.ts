@@ -1,8 +1,7 @@
 /* Doop canvas tabs (src/components/DesktopTabs.tsx): Figma-style strip for
-   open canvases. Tabs are ordinary in-page navigations — this module keeps
-   the strip's state. The same strip runs in the desktop shell (overlay
-   title bar / windowFrame.ts) and in a plain browser top window; nested
-   iframes (split view) and shell-only IPC stay gated separately. */
+   open canvases in the desktop shell. Tabs are ordinary in-page navigations
+   and this module keeps the strip's state. Browsers and nested iframes
+   (split view) stay outside this desktop-only state. */
 
 import { create } from 'zustand'
 import { navigate } from '../App'
@@ -188,8 +187,8 @@ export function canvasTabTarget(tab: CanvasTab): string {
   return tab.pageId ? `${path}?page=${encodeURIComponent(tab.pageId)}` : path
 }
 
-/** Open (or switch to) the tab for a canvas. False only in nested frames
- *  (split view), where callers fall back to a bare navigation. */
+/** Open (or switch to) the tab for a canvas. False in browsers and nested
+ *  frames (split view), where callers fall back to a bare navigation. */
 export function openCanvasTab(id: string, name?: string): boolean {
   if (!supportsCanvasTabs()) return false
   ensureTab(id, name)
