@@ -6,11 +6,11 @@
 
 ## Сделано 22 ноября 2026
 
-Снимок выше снят в 11:55 UTC. Дальше, с согласия Никиты, сделано обычными push, без force.
+Снимок выше снят в 11:55 UTC. Дальше, с согласия Никиты, сделано обычными push, без force. То согласие — на эти push. Следующие слияния внутри форка отдельного «да» не требуют: агент ревьюит diff и сливает squash-ом. «Да» Никиты нужно только на PR, комментарии и CLA у автора и на публикацию сборок. Правила целиком — в разделе «Как работаем с Git».
 
 `main` форка перемотан с `b2b4536e` на `8a53f23d2fb71394279c4d1476eb830befb50995`. Перед push `git rev-list --count upstream/main..origin/main` был 0, `upstream/main` был тем же `8a53f23d`. Сейчас `origin/main` совпадает с `upstream/main`: позади 0, впереди 0.
 
-Окно Doop Cloud убрано revert-коммитом `0ad297ca4b5b84724bfce49921762de2e58d464f` («Revert "feat(desktop): open Doop Cloud alongside Local Dev"», revert `059d3a55`). `local/doop-dev` fast-forward с `059d3a55` на `0ad297ca`. Тот же коммит на ветке `cursor/revert-doop-cloud-c391`. Удалены `desktop/src-tauri/src/dev_modes.rs` и абзац про окно в `DESIGN.md`. От `upstream/main` сборка теперь позади на 0 и впереди на 35.
+Окно Doop Cloud убрано revert-коммитом `0ad297ca4b5b84724bfce49921762de2e58d464f` («Revert "feat(desktop): open Doop Cloud alongside Local Dev"», revert `059d3a55`). `local/doop-dev` fast-forward с `059d3a55` на `0ad297ca`. Тот же коммит на ветке `cursor/revert-doop-cloud-c391`. Удалены `desktop/src-tauri/src/dev_modes.rs` и абзац про окно в `DESIGN.md`. Сразу после этого revert от `upstream/main` сборка была позади на 0 и впереди на 35. Перед правилами Git вершина `local/doop-dev` — `4989a4bda79b6bf4efe2d74e35274d7f2839f03e` (merge PR #1): позади 0, впереди 38.
 
 Повторно эти два шага не запускать.
 
@@ -26,7 +26,24 @@
 
 Направление одно: `upstream/main` → `main` форка → `local/doop-dev`. Обратно, из `local/doop-dev` в `main` форка, не вливаем: иначе зеркало перестанет быть зеркалом.
 
-Как часто: в начале работы с форком, не реже раза в день, пока автор коммитит так плотно. С 19 по 22 ноября `main` автора ушёл на 45 коммитов, а `main` форка остался на месте. `local/doop-dev` за это время синхронизировали отдельно.
+Как часто: перед каждой новой задачей и не реже раза в неделю, как в разделе «Как работаем с Git». С 19 по 22 ноября `main` автора ушёл на 45 коммитов, а `main` форка остался на месте. `local/doop-dev` за это время синхронизировали отдельно.
+
+## Как работаем с Git
+
+1. Каждая задача начинается с новой ветки.
+   - Ветка от свежего `origin/local/doop-dev`. Имя: `feat/`, `fix/`, `perf/` или `chore/`.
+   - Если задача — кандидат в PR автору, ветка от свежего `upstream/main`. Имя: `upstream/…`. Без брендинга Doop Dev, без своего канала обновлений и без `127.0.0.1:4437`.
+   - Перед стартом подтянуть `upstream` и `origin`.
+2. Коммит после каждого законченного логического шага, который собирается. Коммиты маленькие, conventional commits. Секреты и ключи в коммиты не попадают.
+3. Push своей ветки после каждого коммита или минимум в конце каждого запуска. В `main`, `local/doop-dev` и чужие ветки напрямую не пушить. Force push запрещён, кроме своей рабочей ветки до открытия PR.
+4. PR в `local/doop-dev`, когда задача готова, а typecheck, lint и vitest проходят. Если vitest уже красный, нельзя добавлять новые падения. Затронутый сценарий проверен, для UI нужен скриншот.
+   - Агент сам ревьюит diff и сливает squash-ом. Слияния внутри форка Никита разрешил без отдельного «да».
+   - После слияния удалить ветку и пересобрать Doop Dev.app на Маке из свежего `local/doop-dev`, локально и без публикации.
+5. Синхронизация с автором перед каждой новой задачей и не реже раза в неделю.
+   - `main` форка перематывается до `upstream/main`, только fast-forward.
+   - Затем PR `sync/upstream-<sha>` из `main` в `local/doop-dev`. Конфликты решать с сохранением наших изменений и изменений автора, прогнать проверки и слить.
+6. PR автору (`kgoedecke/doop`): ветка `upstream/…` готовится и проверяется в форке. Открыть PR, писать комментарии и подписывать CLA у автора только после «да» Никиты. Это и публикация сборок — единственное, что требует его «да».
+7. Отчёт после каждого запуска, по-русски и коротко: что сделано, ветка и PR, SHA, проверки, что осталось.
 
 ## Где что стояло на снимке 11:55 UTC
 
@@ -36,7 +53,7 @@
 
 От `local/doop-dev`: позади 79, впереди 0. Своих коммитов нет: 79 = 45 коммитов автора + 34 коммита сборки.
 
-`local/doop-dev` на снимке был `059d3a55` (2026-11-22 14:18:57 +0300), «feat(desktop): open Doop Cloud alongside Local Dev». Диапазон после прошлого разбора: `ba9753fb` (2026-11-22 14:01:14 +0300) .. `059d3a55`, один коммит. Сейчас вершина сборки — revert `0ad297ca`.
+`local/doop-dev` на снимке был `059d3a55` (2026-11-22 14:18:57 +0300), «feat(desktop): open Doop Cloud alongside Local Dev». Диапазон после прошлого разбора: `ba9753fb` (2026-11-22 14:01:14 +0300) .. `059d3a55`, один коммит. Revert `0ad297ca` после этого был вершиной. Перед правилами Git вершина — `4989a4bda79b6bf4efe2d74e35274d7f2839f03e`.
 
 На снимке от `upstream/main`: позади 0, впереди 34. `8a53f23d` уже был предок. После revert впереди 35, позади 0.
 
@@ -88,7 +105,7 @@
 
 ## Инвентарь `akimovdigital/doop`
 
-На снимке 11:55 UTC `gh api repos/akimovdigital/doop/branches` и `git ls-remote --heads origin` показали две ветки. После fast-forward и revert вершины другие: `main` = `8a53f23d`, `local/doop-dev` = `0ad297ca`. Таблица ниже — снимок, не текущие SHA.
+На снимке 11:55 UTC `gh api repos/akimovdigital/doop/branches` и `git ls-remote --heads origin` показали две ветки. Сразу после fast-forward и revert вершины были `main` = `8a53f23d`, `local/doop-dev` = `0ad297ca`. Перед правилами Git `main` всё ещё `8a53f23d2fb71394279c4d1476eb830befb50995`, а `local/doop-dev` — `4989a4bda79b6bf4efe2d74e35274d7f2839f03e`. Таблица ниже — снимок 11:55, не текущие SHA.
 
 | Ветка            | SHA        | Дата коммита              | От `upstream/main`   | От `local/doop-dev`  | Уникальное                          |
 | ---------------- | ---------- | ------------------------- | -------------------- | -------------------- | ----------------------------------- |
@@ -97,7 +114,7 @@
 
 `git ls-remote --tags origin` пуст. `gh api repos/akimovdigital/doop/tags` пуст. `gh release list` пуст. `actions/artifacts` и `actions/runs` — `total_count` 0.
 
-PR: `gh pr list --repo akimovdigital/doop --state all` пуст; поиск `repo:akimovdigital/doop is:pr` — 0. Поиск `repo:kgoedecke/doop author:akimovdigital is:pr` — 0. Поиск `repo:kgoedecke/doop head:akimovdigital is:pr` — 0. Открытых и закрытых PR форка и наших PR автору нет.
+PR: `gh pr list --repo akimovdigital/doop --state all` пуст; поиск `repo:akimovdigital/doop is:pr` — 0. Поиск `repo:kgoedecke/doop author:akimovdigital is:pr` — 0. Поиск `repo:kgoedecke/doop head:akimovdigital is:pr` — 0. Открытых и закрытых PR форка и наших PR автору на снимке нет. Позже PR #1 с `chore/fork-workflow` влит в `local/doop-dev` как `4989a4bda79b6bf4efe2d74e35274d7f2839f03e`.
 
 У автора `git ls-remote --tags` даёт 41 строку и 35 имён тегов (`v0.1.0`…`v0.15.0`, `desktop-v0.1.0`…`desktop-v0.14.0`, `desktop-updates`, `canva-review-demo`). Они остаются у автора. В форк их не копируем и у автора не удаляем.
 
@@ -105,16 +122,16 @@ PR: `gh pr list --repo akimovdigital/doop --state all` пуст; поиск `rep
 
 ## Оставить, удалить, слить
 
-| Объект                      | Решение                                       | Почему                                                                |
-| --------------------------- | --------------------------------------------- | --------------------------------------------------------------------- |
-| `main` форка                | Слито fast-forward до `8a53f23d`              | Было позади на 45, впереди на 0. Push сделан, сейчас зеркало          |
-| `local/doop-dev`            | Оставить, вершина `0ad297ca`                  | Наша сборка. Принят revert окна поверх `059d3a55`                     |
-| `chore/fork-workflow`       | Влить в `local/doop-dev`, потом ветку удалить | Только этот документ. После мержа ветка не нужна                      |
-| теги форка                  | Удалять нечего                                | Тегов нет                                                             |
-| теги автора (35 имён)       | Оставить у автора                             | Чужие релизы. В форк не зеркалировать                                 |
-| релизы и артефакты форка    | Удалять нечего                                | Списков нет                                                           |
-| PR                          | Удалять и закрывать нечего                    | PR нет ни в форке, ни в `kgoedecke/doop` от `akimovdigital`           |
-| окно Doop Cloud, `059d3a55` | Убрано revert `0ad297ca`                      | Код окна снят с `local/doop-dev`. История коммита `059d3a55` остаётся |
+| Объект                      | Решение                                          | Почему                                                                       |
+| --------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `main` форка                | Слито fast-forward до `8a53f23d`                 | Было позади на 45, впереди на 0. Push сделан, сейчас зеркало                 |
+| `local/doop-dev`            | Оставить. Перед правилами Git вершина `4989a4bd` | Наша сборка. Revert `0ad297ca` принят поверх `059d3a55` и остаётся в истории |
+| `chore/fork-workflow`       | Влито PR #1, ветка удалена                       | Только этот документ. После мержа ветка не нужна                             |
+| теги форка                  | Удалять нечего                                   | Тегов нет                                                                    |
+| теги автора (35 имён)       | Оставить у автора                                | Чужие релизы. В форк не зеркалировать                                        |
+| релизы и артефакты форка    | Удалять нечего                                   | Списков нет                                                                  |
+| PR                          | Удалять и закрывать нечего                       | На снимке 11:55 PR не было. Позже влит PR #1                                 |
+| окно Doop Cloud, `059d3a55` | Убрано revert `0ad297ca`                         | Код окна снят с `local/doop-dev`. История коммита `059d3a55` остаётся        |
 
 На снимке лишних веток, копий и сборок не было. Отставание `main` закрыто fast-forward до `8a53f23d`.
 
@@ -128,7 +145,7 @@ PR: `gh pr list --repo akimovdigital/doop --state all` пуст; поиск `rep
 git remote add upstream https://github.com/kgoedecke/doop.git
 ```
 
-Каждый синк. Сначала зеркало, потом сборка. Если первая проверка не равна 0, `main` форка уже не зеркало: остановиться и разобрать коммиты, fast-forward не делать.
+Каждый синк. Сначала зеркало, потом PR в сборку. Если первая проверка не равна 0, `main` форка уже не зеркало: остановиться и разобрать коммиты, fast-forward не делать. В `local/doop-dev` напрямую не пушить и не мержить.
 
 ```bash
 git fetch upstream
@@ -139,26 +156,29 @@ git rev-list --count origin/main..upstream/main
 
 git push origin upstream/main:refs/heads/main
 
-git checkout local/doop-dev
-git merge upstream/main
+git checkout -b sync/upstream-<sha> origin/main
 ```
 
-На снимке 22.11.2026 первая проверка дала 0, вторая — 45. Fast-forward уже поставил `main` на `8a53f23d`. Пока автор не уйдёт дальше, `git merge upstream/main` в `local/doop-dev` ничего не добавит: `8a53f23d` предок и `059d3a55`, и `0ad297ca`.
+`<sha>` — короткий SHA `upstream/main`, на который встал `main` форка. PR из этой ветки в `local/doop-dev`. Конфликты решать с сохранением наших изменений и изменений автора. Typecheck, lint и vitest, затем squash и удаление ветки.
 
-Ветка для PR автору:
+На снимке 22.11.2026 первая проверка дала 0, вторая — 45. Fast-forward уже поставил `main` на `8a53f23d`. `8a53f23d` предок и `059d3a55`, и `0ad297ca`, и `4989a4bd`. Пока автор не уйдёт дальше `8a53f23d`, PR синка новых коммитов автора не принесёт.
+
+Ветка для PR автору. Готовить и проверять её в форке. Открывать PR в `kgoedecke/doop`, писать комментарии и подписывать CLA только после «да» Никиты.
 
 ```bash
 git fetch upstream
-git checkout -b <тема> upstream/main
+git fetch origin
+git checkout -b upstream/<тема> upstream/main
 ```
 
-Не переносить `doop-dev.tauri.json`, `build-doop-dev.sh`, `DESIGN.md`, `dev_modes.rs`, `local_test_login.rs`, иконки `doop-test-dev` и замену remote URL на `127.0.0.1:4437`.
+Не переносить `doop-dev.tauri.json`, `build-doop-dev.sh`, `DESIGN.md`, `dev_modes.rs`, `local_test_login.rs`, иконки `doop-test-dev` и замену remote URL на `127.0.0.1:4437`. Брендинг Doop Dev и свой канал обновлений тоже не переносить.
 
-Ветка форка:
+Ветка форка. Имя: `feat/`, `fix/`, `perf/` или `chore/`.
 
 ```bash
-git checkout local/doop-dev
-git checkout -b <тема>
+git fetch upstream
+git fetch origin
+git checkout -b <префикс>/<тема> origin/local/doop-dev
 ```
 
 Свой тег сборки, когда он понадобится. Сейчас не ставить: тегов в форке нет, и этот запуск их не создаёт.
@@ -187,10 +207,10 @@ git checkout local/doop-dev
 git revert --no-edit 059d3a55b663d64c3a375f8a417073253b0ff1db
 ```
 
-После принятия этого документа ветку документа удалить так:
+Ветка `chore/fork-workflow` после мержа PR #1 уже удалена. Команду ниже повторно не запускать:
 
 ```bash
 git push origin --delete chore/fork-workflow
 ```
 
-Это после мержа в `local/doop-dev`, не раньше.
+Удаление было после мержа в `local/doop-dev`, не раньше.
