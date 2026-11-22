@@ -19,11 +19,25 @@ it('reuses a gzipped payload for the same room snapshot key', async () => {
     type: 'init',
     canvas: {
       id: 'abc',
+      name: 'Test',
+      createdAt: 1,
       updatedAt: 1,
       role: 'edit',
-      landingPageId: null,
-      team: null,
-      frames: [{ id: 'f1', name: 'Card', html: huge }],
+      frames: [
+        {
+          id: 'f1',
+          canvasId: 'abc',
+          name: 'Card',
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          html: huge,
+          createdAt: 1,
+          updatedAt: 1,
+          updatedBy: 'test',
+        },
+      ],
     },
     presences: [],
     activity: [],
@@ -47,8 +61,15 @@ it('reuses a gzipped payload for the same room snapshot key', async () => {
 it('misses when presences change', async () => {
   const base = {
     type: 'init',
-    canvas: { id: 'c', updatedAt: 2, role: 'edit', landingPageId: null, team: null, frames: [] },
-    presences: [] as unknown[],
+    canvas: {
+      id: 'c',
+      name: 'Test',
+      createdAt: 1,
+      updatedAt: 2,
+      role: 'edit',
+      frames: [],
+    },
+    presences: [],
     activity: [],
     tasks: [],
     feedback: [],
@@ -59,7 +80,21 @@ it('misses when presences change', async () => {
     serverBuild: 'test',
   } as ServerMessage & { type: 'init' }
   const huge = '<section>' + 'a'.repeat(1_100_000) + '</section>'
-  base.canvas.frames = [{ id: 'f', name: 'N', html: huge }]
+  base.canvas.frames = [
+    {
+      id: 'f',
+      canvasId: 'c',
+      name: 'N',
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+      html: huge,
+      createdAt: 1,
+      updatedAt: 2,
+      updatedBy: 'test',
+    },
+  ]
 
   await wireRoomInitPayload(base, true)
   base.presences = [{ clientId: 'x', userId: 'u', name: 'Other', color: '#fff', kind: 'user', activeFrameId: null }]
@@ -101,9 +136,7 @@ it('delivers a gzipped init over the room socket', async () => {
     )
     const [raw] = await message
     const buf = raw instanceof Buffer ? raw : Buffer.from(raw as ArrayBuffer)
-    const init = JSON.parse(
-      buf[0] === 0x1f ? gunzipSync(buf).toString() : buf.toString(),
-    )
+    const init = JSON.parse(buf[0] === 0x1f ? gunzipSync(buf).toString() : buf.toString())
     expect(init).toMatchObject({ type: 'init', canvas: { frames: [{ id: frame.id, html: frame.html }] } })
   } finally {
     ws.close()
