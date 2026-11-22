@@ -5,6 +5,7 @@ export const home = {
   newCanvas: 'New canvas',
   newShort: 'New',
   hidePromptBox: 'Hide Prompt Box',
+  collapsePromptBox: 'Collapse prompt box',
   showPromptBox: 'Show Prompt Box',
   openCanvas: 'Open',
   copyLink: 'Copy link',

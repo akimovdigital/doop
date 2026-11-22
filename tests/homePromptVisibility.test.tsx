@@ -59,10 +59,17 @@ function HeaderExpand() {
   )
 }
 
+it('places the labeled collapse button directly in the hero', async () => {
+  await render()
+  const collapse = container.querySelector('button[aria-label="Collapse prompt box"]')
+  expect(collapse?.parentElement?.matches('[data-slot="home-hero"]')).toBe(true)
+  expect(collapse?.getAttribute('title')).toBe('Collapse prompt box')
+})
+
 it('collapses the prompt box immediately and persists the choice', async () => {
   await render()
   expect(container.querySelector('textarea')).not.toBeNull()
-  await click('[aria-label="Hide Prompt Box"]')
+  await click('[aria-label="Collapse prompt box"]')
   expect(container.querySelector('[data-slot="home-hero"]')).toBeNull()
   expect(localStorage.getItem(PROMPT_BOX_STORAGE_KEY)).toBe('true')
   expect(document.querySelector('[role="dialog"]')).toBeNull()
@@ -88,7 +95,7 @@ it('shows a header expand control that restores the prompt box', async () => {
 
 it('persists collapsing and lets settings restore the prompt box', async () => {
   await render()
-  await click('[aria-label="Hide Prompt Box"]')
+  await click('[aria-label="Collapse prompt box"]')
   expect(container.querySelector('[data-slot="home-hero"]')).toBeNull()
   expect(localStorage.getItem(PROMPT_BOX_STORAGE_KEY)).toBe('true')
 
@@ -111,7 +118,7 @@ it('persists collapsing and lets settings restore the prompt box', async () => {
 
 it('cannot collapse a prompt while it is being submitted', async () => {
   await render(true)
-  await click('[aria-label="Hide Prompt Box"]')
+  await click('[aria-label="Collapse prompt box"]')
   expect(container.querySelector('textarea')).not.toBeNull()
   expect(localStorage.getItem(PROMPT_BOX_STORAGE_KEY)).toBe('false')
 })
