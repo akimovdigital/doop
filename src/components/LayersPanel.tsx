@@ -13,6 +13,7 @@ import type { Frame } from '../../shared/types'
 import type { ComponentDef } from '../../shared/components'
 import { canEditOpenCanvas, pickedSelectors, useStore } from '../lib/store'
 import { layerPlacement } from '../lib/frameBridge'
+import { activeSections } from '../lib/canvasSections'
 import { currentPageCanvas, usePageCanvas } from '../lib/pages'
 import { PagesPanel, sectionHeading } from './PagesPanel'
 import { getIdentity } from '../lib/identity'
@@ -55,6 +56,8 @@ import { cn } from '@/lib/utils'
 import { AgentIcon } from './AgentIcon'
 import { LayerKindIcon } from './LayerKindIcon'
 import { SectionsPanel } from './CanvasSections'
+import { ComponentsPanel } from './ComponentsPanel'
+import { libraryAttention, useLibraryStatus } from '../lib/library'
 import { FrameContextMenu } from './FrameContextMenu'
 import { FrameApprovalBadge } from './FrameApproval'
 import {
@@ -73,6 +76,7 @@ import { FrameworkPanel } from './FrameworkPanel'
 import { Button } from './ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible'
 import { Input } from './ui/input'
+import { Dot } from './ui/dot'
 import { Tooltip } from './ui/tooltip'
 import { Toolbar, ToolbarControl } from './ui/toolbar'
 import { ContextMenu, ContextMenuTrigger } from './ui/context-menu'
@@ -87,6 +91,7 @@ import {
   LayersIcon,
   ComponentIcon,
   PaletteIcon,
+  SectionIcon,
   InstanceIcon,
   LockIcon,
   LockOpenIcon,
@@ -249,12 +254,18 @@ export function LayersPanel({
 }) {
   /* a row's pointerleave never fires if the panel goes away under it */
   useEffect(() => () => useStore.getState().setHoveredLayer(null), [])
-  /* which of the panel's two faces shows: the layer tree, or the design
-     tokens; in the store so the collapsed rail can open straight onto one */
+  /* which face shows: the layer tree, Components, or Framework. In the store
+     so the collapsed rail can open straight onto one */
   const tab = useStore((s) => s.layersTab)
   const setTab = useStore((s) => s.setLayersTab)
   /* view and comment links browse the tree; nothing in it moves or changes */
   const readOnly = useStore((s) => !canEditOpenCanvas(s))
+  /* the Components tab wears a dot while its library waits on someone: changes
+     not yet published, or published updates not yet taken */
+  const libraryStatus = useLibraryStatus(useStore((s) => s.canvas?.id))
+  const attention = libraryAttention(libraryStatus)
+  const libraryWaits = !readOnly && attention.unpublished + attention.updates > 0
+  const pageSections = useStore(activeSections)
   const pageCanvas = usePageCanvas()
   const frames = useMemo(() => pageCanvas?.frames ?? [], [pageCanvas])
   const selectedId = useStore((s) => s.selectedId)
@@ -785,6 +796,18 @@ export function LayersPanel({
             <PanelIconTab value="layers" icon={<LayersIcon />} title={t('panels.layersTitle')}>
               {t('panels.layersTitle')}
             </PanelIconTab>
+            <PanelIconTab
+              value="components"
+              icon={<ComponentIcon />}
+              title={libraryWaits ? t('components.libraryTabWaiting') : t('components.title')}
+              badge={
+                libraryWaits ? (
+                  <Dot size="sm" className="absolute top-0.5 right-0.5 text-brand" data-library-dot />
+                ) : undefined
+              }
+            >
+              {t('components.title')}
+            </PanelIconTab>
             <PanelIconTab value="framework" icon={<PaletteIcon />} title="Framework">
               Framework
             </PanelIconTab>
@@ -806,13 +829,14 @@ export function LayersPanel({
           )}
         </PanelHeader>
       </PanelTabsRoot>
+      {tab === 'components' && <ComponentsPanel />}
       {tab === 'framework' && <FrameworkPanel key={pageCanvas?.id} />}
       {tab === 'layers' && (
         <>
           {/* Figma's order: the pages at the top, the frames of the active page
           under them, the search at the bottom within thumb's reach */}
           {pageCanvas && <PagesPanel key={pageCanvas.id} canvasId={pageCanvas.id} />}
-          {pageCanvas && (
+          {pageCanvas && pageSections.length > 0 && (
             <Collapsible className="mt-1.5 flex max-h-[36%] flex-none flex-col">
               <div className="flex h-6 shrink-0 items-center justify-between pr-2.5 pl-3.5">
                 <CollapsibleTrigger
@@ -855,6 +879,19 @@ export function LayersPanel({
                   <CollapseAllIcon className="size-3.5" />
                 </Button>
               </Tooltip>
+              {!readOnly && pageSections.length === 0 && (
+                <Tooltip label={t('canvas.sectionAdd')} side="bottom">
+                  <Button
+                    variant="bare"
+                    size="icon-sm"
+                    className={sectionBtn}
+                    aria-label={t('canvas.sectionAdd')}
+                    onClick={() => useStore.getState().setTool('section')}
+                  >
+                    <SectionIcon className="size-3.5" />
+                  </Button>
+                </Tooltip>
+              )}
               {!readOnly && (
                 <Tooltip label={t('panels.layersNewFrame')} side="bottom" align="end">
                   <Button
@@ -959,6 +996,16 @@ export function LayersRailToggle({ docked = false }: { docked?: boolean }) {
         }}
       >
         <LayersIcon />
+      </ToolbarControl>
+      <ToolbarControl
+        label={t('components.title')}
+        side="right"
+        onClick={() => {
+          useStore.getState().setLayersTab('components')
+          setLayersOpen(true)
+        }}
+      >
+        <ComponentIcon />
       </ToolbarControl>
       <ToolbarControl
         label="Framework"
