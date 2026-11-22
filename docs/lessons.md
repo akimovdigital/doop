@@ -2,6 +2,18 @@
 
 Формат записи: дата, PR или синк со ссылкой, что сделали, что сработало, что сломалось и причина, урок или правило на будущее. Причину не выдумывать. Повторяющийся урок переносить правилом в `.cursor/rules/git-workflow.mdc`.
 
+## 22.11.2026 — PR #10, Home polish after collapse
+
+PR: [#10](https://github.com/akimovdigital/doop/pull/10), SHA [`d179cb8`](https://github.com/akimovdigital/doop/commit/d179cb86d8a2ef7e707452ddfca478d6c77db240).
+
+**Что сделали.** Hide Prompt Box — иконка minus; Show Prompt Box — кнопка как Import; ПКМ по плитке Home — Open / Copy link / Share / Duplicate / Move / Delete.
+
+**Что сработало.** typecheck, lint, homePromptVisibility + i18n. CI на форке по-прежнему пустой.
+
+**Что сломалось.** Ничего.
+
+**Урок.** Follow-up к UI collapse — отдельный маленький PR; page switching на stage не смешивать с Home.
+
 ## 22.11.2026 — PR #8, collapse Home prompt
 
 PR: [#8](https://github.com/akimovdigital/doop/pull/8), SHA [`4bf048d`](https://github.com/akimovdigital/doop/commit/4bf048d5ccf7c60d7a7ee306086e3a852f52a21c).
