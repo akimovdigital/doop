@@ -31,7 +31,8 @@ tab. Sections has its own disclosure, add control and scrolling area. In the Lay
 a range, and selected layers can be dragged together. The primary row is revealed by scrolling the tree
 inside the panel. See `src/components/LayersPanel.tsx` and `src/components/ui/panel.tsx`.
 
-The stage also shows a floating page strip (`PageStrip`) beside the zoom pill: page chips with
+The stage groups the floating page strip (`PageStrip`) and zoom pill in a row with an 8 px gap on
+desktop. On mobile the page strip stacks 12 px above the zoom pill. The strip shows page chips with
 previous/next when there is more than one page. PageUp/PageDown, the View menu and the empty-canvas
 context menu switch pages the same way. See `src/components/PageStrip.tsx` and `src/components/Stage.tsx`.
 
