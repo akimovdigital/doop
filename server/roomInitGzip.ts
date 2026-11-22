@@ -1,35 +1,43 @@
-import { gzip } from 'node:zlib'
-import { promisify } from 'node:util'
+import { gzipSync } from 'node:zlib'
 import type { ServerMessage } from '../shared/types.ts'
 
-const gzipAsync = promisify(gzip)
-
 const MIN_GZIP_BYTES = 1024 * 1024
-const CACHE_MAX = 32
+const CANVAS_JSON_CACHE_MAX = 16
 
 type InitMessage = Extract<ServerMessage, { type: 'init' }>
 
-const cache = new Map<string, Buffer | string>()
+const canvasJsonCache = new Map<string, string>()
 
 export function resetRoomInitGzipCacheForTests() {
-  cache.clear()
+  canvasJsonCache.clear()
 }
 
 export function roomInitGzipCacheSize() {
-  return cache.size
+  return canvasJsonCache.size
 }
 
-/** Fields that identify the room snapshot aside from the heavy canvas bodies. */
-export function roomInitSnapshotKey(init: InitMessage): string {
-  const { id, updatedAt, role, landingPageId, team } = init.canvas
-  return JSON.stringify({
-    id,
-    updatedAt,
-    role,
-    landingPageId,
-    team,
-    serverBuild: init.serverBuild,
-    selfColor: init.selfColor,
+export function canvasSnapshotCacheKey(canvas: InitMessage['canvas']) {
+  return `${canvas.id}:${canvas.updatedAt}`
+}
+
+function cachedCanvasJson(canvas: InitMessage['canvas']): string {
+  const key = canvasSnapshotCacheKey(canvas)
+  let json = canvasJsonCache.get(key)
+  if (!json) {
+    json = JSON.stringify(canvas)
+    canvasJsonCache.set(key, json)
+    if (canvasJsonCache.size > CANVAS_JSON_CACHE_MAX) {
+      const oldest = canvasJsonCache.keys().next().value
+      if (oldest) canvasJsonCache.delete(oldest)
+    }
+  }
+  return json
+}
+
+/** Stitch init JSON without re-serializing the heavy canvas snapshot. */
+export function stringifyRoomInit(init: InitMessage): string {
+  const canvasJson = cachedCanvasJson(init.canvas)
+  const tail = JSON.stringify({
     presences: init.presences,
     activity: init.activity,
     tasks: init.tasks,
@@ -37,27 +45,16 @@ export function roomInitSnapshotKey(init: InitMessage): string {
     comments: init.comments,
     decisions: init.decisions,
     proposals: init.proposals,
+    selfColor: init.selfColor,
+    serverBuild: init.serverBuild,
   })
+  return `{"type":"init","canvas":${canvasJson},${tail.slice(1)}`
 }
 
-export async function wireRoomInitPayload(
-  init: InitMessage,
-  gzipEncoding: boolean,
-): Promise<Buffer | string> {
-  const json = JSON.stringify(init)
+export function wireRoomInitPayload(init: InitMessage, gzipEncoding: boolean): Buffer | string {
+  const json = stringifyRoomInit(init)
   if (!gzipEncoding || json.length < MIN_GZIP_BYTES) return json
 
-  const key = roomInitSnapshotKey(init)
-  const hit = cache.get(key)
-  if (hit !== undefined) return hit
-
-  const compressed = await gzipAsync(Buffer.from(json), { level: 1 })
-  const payload: Buffer | string =
-    compressed.length < json.length ? compressed : Buffer.from(json)
-  cache.set(key, payload)
-  if (cache.size > CACHE_MAX) {
-    const oldest = cache.keys().next().value
-    if (oldest) cache.delete(oldest)
-  }
-  return payload
+  const compressed = gzipSync(json, { level: 1 })
+  return compressed.length < json.length ? compressed : json
 }

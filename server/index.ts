@@ -3663,8 +3663,7 @@ wss.on('connection', (ws, upgradeReq) => {
         serverBuild: BUILD_ID,
       }
       if (msg.initEncoding === 'gzip') {
-        const payload = await wireRoomInitPayload(init, true)
-        ws.send(payload)
+        ws.send(wireRoomInitPayload(init, true))
       } else {
         send(ws, init)
       }

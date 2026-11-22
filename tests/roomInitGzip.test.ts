@@ -4,68 +4,77 @@ import WebSocket from 'ws'
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest'
 import type { ServerMessage } from '../shared/types.ts'
 import {
+  canvasSnapshotCacheKey,
   resetRoomInitGzipCacheForTests,
   roomInitGzipCacheSize,
-  roomInitSnapshotKey,
+  stringifyRoomInit,
   wireRoomInitPayload,
 } from '../server/roomInitGzip.ts'
 import { Client, startServer, type Server } from './harness.ts'
 
-afterEach(() => resetRoomInitGzipCacheForTests())
+type InitMessage = Extract<ServerMessage, { type: 'init' }>
 
-it('reuses a gzipped payload for the same room snapshot key', async () => {
-  const huge = '<p>x</p>'.repeat(200_000)
-  const init = {
-    type: 'init',
+const huge = '<p>x</p>'.repeat(200_000)
+
+function testInit(selfColor: string, presences: unknown[] = []): InitMessage {
+  return {
+    type: 'init' as const,
     canvas: {
       id: 'abc',
+      name: 'Bench',
+      ownerId: 'u1',
+      createdAt: 1,
       updatedAt: 1,
-      role: 'edit',
-      landingPageId: null,
-      team: null,
-      frames: [{ id: 'f1', name: 'Card', html: huge }],
+      role: 'edit' as const,
+      landingPageId: undefined,
+      team: undefined,
+      frames: [
+        {
+          id: 'f1',
+          canvasId: 'abc',
+          name: 'Card',
+          html: huge,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          updatedAt: 1,
+        },
+      ],
     },
-    presences: [],
+    presences,
     activity: [],
     tasks: [],
     feedback: [],
     comments: [],
     decisions: [],
     proposals: [],
-    selfColor: '#112233',
+    selfColor,
     serverBuild: 'test',
-  } as ServerMessage & { type: 'init' }
+  } as unknown as InitMessage
+}
 
-  const first = await wireRoomInitPayload(init, true)
-  const second = await wireRoomInitPayload({ ...init, selfColor: '#112233' }, true)
+afterEach(() => resetRoomInitGzipCacheForTests())
+
+it('reuses serialized canvas for the same revision', () => {
+  const init = testInit('#112233')
+  stringifyRoomInit(init)
   expect(roomInitGzipCacheSize()).toBe(1)
-  expect(second).toBe(first)
-  const text = gunzipSync(Buffer.isBuffer(first) ? first : Buffer.from(first as string)).toString()
-  expect(JSON.parse(text).canvas.frames[0].html).toBe(huge)
+  const again = stringifyRoomInit({ ...init, selfColor: '#445566', presences: [] })
+  expect(roomInitGzipCacheSize()).toBe(1)
+  expect(again).toContain(huge.slice(0, 20))
+  expect(again).toContain('#445566')
 })
 
-it('misses when presences change', async () => {
-  const base = {
-    type: 'init',
-    canvas: { id: 'c', updatedAt: 2, role: 'edit', landingPageId: null, team: null, frames: [] },
-    presences: [] as unknown[],
-    activity: [],
-    tasks: [],
-    feedback: [],
-    comments: [],
-    decisions: [],
-    proposals: [],
-    selfColor: '#aabbcc',
-    serverBuild: 'test',
-  } as ServerMessage & { type: 'init' }
-  const huge = '<section>' + 'a'.repeat(1_100_000) + '</section>'
-  base.canvas.frames = [{ id: 'f', name: 'N', html: huge }]
-
-  await wireRoomInitPayload(base, true)
-  base.presences = [{ clientId: 'x', userId: 'u', name: 'Other', color: '#fff', kind: 'user', activeFrameId: null }]
-  await wireRoomInitPayload(base, true)
-  expect(roomInitGzipCacheSize()).toBe(2)
-  expect(roomInitSnapshotKey(base)).toContain('Other')
+it('gzips large stitched init payloads', () => {
+  const init = testInit('#aabbcc', [
+    { clientId: 'x', userId: 'u', name: 'Other', color: '#fff', kind: 'user', activeFrameId: null },
+  ])
+  const payload = wireRoomInitPayload(init, true)
+  expect(Buffer.isBuffer(payload)).toBe(true)
+  const text = gunzipSync(payload).toString()
+  expect(JSON.parse(text).canvas.frames[0].html).toBe(huge)
+  expect(canvasSnapshotCacheKey(init.canvas)).toBe('abc:1')
 })
 
 let server: Server
@@ -101,9 +110,7 @@ it('delivers a gzipped init over the room socket', async () => {
     )
     const [raw] = await message
     const buf = raw instanceof Buffer ? raw : Buffer.from(raw as ArrayBuffer)
-    const init = JSON.parse(
-      buf[0] === 0x1f ? gunzipSync(buf).toString() : buf.toString(),
-    )
+    const init = JSON.parse(buf[0] === 0x1f ? gunzipSync(buf).toString() : buf.toString())
     expect(init).toMatchObject({ type: 'init', canvas: { frames: [{ id: frame.id, html: frame.html }] } })
   } finally {
     ws.close()

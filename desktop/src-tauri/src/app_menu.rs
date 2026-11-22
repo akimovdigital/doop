@@ -3,6 +3,9 @@
 //! Edit, View, Object, Text, Arrange and Help, each command with its label in
 //! the page's language and its chord as the key equivalent.
 //!
+//! Doop Dev arranges the native menus in browser order, reusing the page
+//! commands and AppKit responders.
+//!
 //! The page sends the menus through `app_menu_set` (on load, and again when
 //! its language changes) and afterwards only the items whose enabled or
 //! checked state moved, through `app_menu_state`. The shell keeps what is its
@@ -36,6 +39,8 @@ use crate::ShellRuntime;
 
 pub const EVENT: &str = "app-menu";
 const PREFIX: &str = "action:";
+#[cfg(target_os = "macos")]
+const WINDOW_PREFIX: &str = "window-menu:";
 
 /// One menu as the page describes it; a `null` item is a separator.
 #[derive(Deserialize)]
@@ -96,6 +101,36 @@ fn page_item(
     }
 }
 
+#[cfg(target_os = "macos")]
+fn append_page_rows(
+    app: &AppHandle,
+    rows: &mut Vec<Box<dyn IsMenuItem<ShellRuntime>>>,
+    entries: &[Option<ItemSpec>],
+    items: &mut HashMap<String, Item>,
+) -> tauri::Result<()> {
+    for entry in entries {
+        match entry {
+            Some(item) => {
+                let (row, handle) = page_item(app, item)?;
+                rows.push(row);
+                items.insert(item.id.clone(), handle);
+            }
+            None => rows.push(Box::new(PredefinedMenuItem::separator(app)?)),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn with_rows(
+    app: &AppHandle,
+    label: &str,
+    rows: &[Box<dyn IsMenuItem<ShellRuntime>>],
+) -> tauri::Result<Submenu<ShellRuntime>> {
+    let refs: Vec<&dyn IsMenuItem<ShellRuntime>> = rows.iter().map(|row| row.as_ref()).collect();
+    Submenu::with_items(app, label, true, &refs)
+}
+
 /// One of the page's menus, with the shell's own rows where they belong.
 #[cfg(target_os = "macos")]
 fn submenu(
@@ -108,16 +143,7 @@ fn submenu(
         rows.extend(crate::text_edit_items(app)?.0);
         rows.push(Box::new(PredefinedMenuItem::separator(app)?));
     }
-    for entry in &spec.items {
-        match entry {
-            Some(item) => {
-                let (row, handle) = page_item(app, item)?;
-                rows.push(row);
-                items.insert(item.id.clone(), handle);
-            }
-            None => rows.push(Box::new(PredefinedMenuItem::separator(app)?)),
-        }
-    }
+    append_page_rows(app, &mut rows, &spec.items, items)?;
     match spec.id.as_str() {
         "file" => {
             rows.push(Box::new(PredefinedMenuItem::separator(app)?));
@@ -129,8 +155,93 @@ fn submenu(
         }
         _ => {}
     }
-    let refs: Vec<&dyn IsMenuItem<ShellRuntime>> = rows.iter().map(|row| row.as_ref()).collect();
-    Submenu::with_items(app, &spec.label, true, &refs)
+    with_rows(app, &spec.label, &rows)
+}
+
+/// Doop Dev's macOS menu uses the browser's top-level order and puts canvas
+/// controls under the matching menus. Existing editor actions keep their
+/// keyboard equivalents and enabled state through the page's registry.
+#[cfg(target_os = "macos")]
+fn dev_bar(
+    app: &AppHandle,
+    menus: &[MenuSpec],
+) -> tauri::Result<(Menu<ShellRuntime>, HashMap<String, Item>)> {
+    let mut items = HashMap::new();
+    let find = |id: &str| menus.iter().find(|menu| menu.id == id);
+    let command = |id: &str, label: &str, key: Option<&str>| {
+        MenuItem::with_id(app, format!("{WINDOW_PREFIX}{id}"), label, true, key)
+    };
+    let separator = || PredefinedMenuItem::separator(app);
+
+    let mut file_rows = Vec::<Box<dyn IsMenuItem<ShellRuntime>>>::new();
+    if let Some(file) = find("file") {
+        append_page_rows(app, &mut file_rows, &file.items, &mut items)?;
+        file_rows.push(Box::new(separator()?));
+    }
+    file_rows.push(Box::new(command("close-window", "Close Window", Some("Cmd+Shift+W"))?));
+    file_rows.push(Box::new(crate::close_tab_item(app)?));
+    let file = with_rows(app, find("file").map_or("File", |menu| &menu.label), &file_rows)?;
+
+    let mut edit_rows = crate::text_edit_items(app)?.0;
+    if let Some(edit) = find("edit") {
+        edit_rows.push(Box::new(separator()?));
+        append_page_rows(app, &mut edit_rows, &edit.items, &mut items)?;
+        edit_rows.push(Box::new(separator()?));
+        for id in ["object", "text", "arrange"] {
+            if let Some(group) = find(id) {
+                edit_rows.push(Box::new(submenu(app, group, &mut items)?));
+            }
+        }
+    }
+    let edit = with_rows(app, find("edit").map_or("Edit", |menu| &menu.label), &edit_rows)?;
+
+    let view = if let Some(view) = find("view") {
+        let mut rows: Vec<Box<dyn IsMenuItem<ShellRuntime>>> = vec![
+            Box::new(command("reload", "Reload", Some("Cmd+R"))?),
+            Box::new(PredefinedMenuItem::fullscreen(app, None)?),
+            Box::new(separator()?),
+        ];
+        append_page_rows(app, &mut rows, &view.items, &mut items)?;
+        with_rows(app, &view.label, &rows)?
+    } else {
+        let view = crate::view_menu::submenu(app)?;
+        view.prepend(&separator()?)?;
+        view.prepend(&command("reload", "Reload", Some("Cmd+R"))?)?;
+        view
+    };
+
+    // Cmd+[ and Cmd+] are canvas layer-order shortcuts.
+    let history = Submenu::with_items(
+        app,
+        "History",
+        true,
+        &[&command("back", "Back", None)?, &command("forward", "Forward", None)?],
+    )?;
+    let bookmarks = Submenu::with_items(app, "Bookmarks", true, &[
+        &command("toggle-pin", "Pin or Unpin Tab", None)?,
+    ])?;
+    let tab = Submenu::with_items(app, "Tab", true, &[
+        &command("next-tab", "Select Next Tab", None)?,
+        &command("previous-tab", "Select Previous Tab", None)?,
+        &separator()?,
+        &command("close-other-tabs", "Close Other Tabs", None)?,
+        &command("move-tab", "Move Tab to New Window", None)?,
+    ])?;
+    let help = match find("help") {
+        Some(help) => submenu(app, help, &mut items)?,
+        None => Submenu::with_items(app, "Help", true, &[])?,
+    };
+    help.set_as_help_menu_for_nsapp()?;
+    let menu = Menu::with_items(app, &[
+        &crate::app_submenu(app)?, &file, &edit, &view, &history, &bookmarks, &tab,
+        &crate::window_submenu(app)?, &help,
+    ])?;
+    Ok((menu, items))
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn dev_startup_menu(app: &AppHandle) -> tauri::Result<Menu<ShellRuntime>> {
+    dev_bar(app, &[]).map(|(menu, _)| menu)
 }
 
 /// The whole bar: the app menu, the page's menus, and Window before Help.
@@ -139,6 +250,9 @@ fn build(
     app: &AppHandle,
     menus: &[MenuSpec],
 ) -> tauri::Result<(Menu<ShellRuntime>, HashMap<String, Item>)> {
+    if app.config().identifier == crate::DOOP_DEV_ID {
+        return dev_bar(app, menus);
+    }
     let mut items = HashMap::new();
     let mut bar = vec![crate::app_submenu(app)?];
     let mut window = Some(crate::window_submenu(app)?);
@@ -195,8 +309,16 @@ pub fn app_menu_state(app: AppHandle, items: Vec<ItemState>) {
 /// Relays one of the page's items to it; any other menu id is ignored.
 pub fn relay(app: &AppHandle, id: &str) {
     #[cfg(target_os = "macos")]
-    if let (Some(id), Some(window)) = (id.strip_prefix(PREFIX), crate::focused_shell_window(app)) {
-        let _ = app.emit_to(window.label(), EVENT, Picked { id, key: fired_by_key() });
+    if let Some(window) = crate::focused_shell_window(app) {
+        if let Some(id) = id.strip_prefix(PREFIX) {
+            let _ = app.emit_to(window.label(), EVENT, Picked { id, key: fired_by_key() });
+        } else if let Some(command) = id.strip_prefix(WINDOW_PREFIX) {
+            if command == "close-window" {
+                let _ = window.close();
+            } else {
+                let _ = app.emit_to(window.label(), "window-menu", command);
+            }
+        }
     }
     #[cfg(not(target_os = "macos"))]
     let _ = (app, id);

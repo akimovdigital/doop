@@ -160,6 +160,8 @@ fn place_traffic_lights(ns_window_ptr: *mut std::ffi::c_void) {
 #[cfg(target_os = "macos")]
 const CLOSE_TAB: &str = "close-tab";
 
+const DOOP_DEV_ID: &str = "digital.akimov.doop-test";
+
 /// Tauri's default macOS menu minus "Close Window" (Cmd+W), which is replaced
 /// by "Close Tab" in the File menu. Everything else stays: the app menu
 /// (with Check for Updates added below About), Edit (the predefined items
@@ -169,6 +171,9 @@ const CLOSE_TAB: &str = "close-tab";
 /// older than that keeps it.
 #[cfg(target_os = "macos")]
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<ShellRuntime>> {
+    if app.config().identifier == DOOP_DEV_ID {
+        return app_menu::dev_startup_menu(app);
+    }
     let file = Submenu::with_items(app, "File", true, &[&close_tab_item(app)?])?;
     let edit = Submenu::with_items(app, "Edit", true, &text_edit_items(app)?.each())?;
     let view = view_menu::submenu(app)?;
@@ -201,7 +206,13 @@ fn app_submenu(app: &AppHandle) -> tauri::Result<Submenu<ShellRuntime>> {
     let hide = PredefinedMenuItem::hide(app, None)?;
     let hide_others = PredefinedMenuItem::hide_others(app, None)?;
     let quit = PredefinedMenuItem::quit(app, None)?;
+    let doop_dev = app.config().identifier == DOOP_DEV_ID;
+    let settings = MenuItem::with_id(app, "window-menu:settings", "Settings…", true, None::<&str>)?;
+    let show_all = PredefinedMenuItem::show_all(app, None)?;
     let mut app_items: Vec<&dyn IsMenuItem<ShellRuntime>> = vec![&about];
+    if doop_dev {
+        app_items.push(&settings);
+    }
     if let Some(item) = &check_updates {
         app_items.push(item);
     }
@@ -216,9 +227,11 @@ fn app_submenu(app: &AppHandle) -> tauri::Result<Submenu<ShellRuntime>> {
         &separator,
         &hide,
         &hide_others,
-        &separator,
-        &quit,
     ]);
+    if doop_dev {
+        app_items.push(&show_all);
+    }
+    app_items.extend([&separator as &dyn IsMenuItem<ShellRuntime>, &quit]);
     Submenu::with_items(app, pkg.name.clone(), true, &app_items)
 }
 
@@ -255,6 +268,10 @@ fn window_submenu(app: &AppHandle) -> tauri::Result<Submenu<ShellRuntime>> {
             &PredefinedMenuItem::maximize(app, None)?,
         ],
     )?;
+    if app.config().identifier == DOOP_DEV_ID {
+        window.append(&PredefinedMenuItem::separator(app)?)?;
+        window.append(&PredefinedMenuItem::bring_all_to_front(app, None)?)?;
+    }
     window.set_as_windows_menu_for_nsapp()?;
     Ok(window)
 }
@@ -365,7 +382,7 @@ fn build_canvas_window(
 ) -> tauri::Result<WebviewWindow<ShellRuntime>> {
     let label_is_main = label == "main";
     let show_without_animation = cfg!(target_os = "macos")
-        && app.config().identifier == "digital.akimov.doop-test"
+        && app.config().identifier == DOOP_DEV_ID
         && !migrating;
     let handle = app.clone();
     // Hosts that stay inside the shell; any other http(s) target opens
