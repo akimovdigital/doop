@@ -46,33 +46,10 @@ const render = (hidden = false) =>
     ),
   )
 
-it('shows every page on the stage strip and switches on click', async () => {
+it('does not render a page strip', async () => {
   await render()
-  const strip = host.querySelector('[data-slot="page-strip"]')!
-  expect(strip.getAttribute('aria-label')).toBe('Pages')
-  expect(host.querySelector('[data-page-strip-id="p1"]')?.getAttribute('aria-current')).toBe('page')
-  expect(host.querySelector('[data-page-strip-id="p2"]')?.getAttribute('aria-current')).toBeNull()
-
-  await act(async () => {
-    host.querySelector<HTMLButtonElement>('[data-page-strip-id="p2"]')!.click()
-  })
-  expect(useStore.getState().activePageId).toBe('p2')
-  expect(host.querySelector('[data-page-strip-id="p2"]')?.getAttribute('aria-current')).toBe('page')
-})
-
-it('steps with previous and next when there are several pages', async () => {
-  await render()
-  await act(async () => {
-    host.querySelector<HTMLButtonElement>('button[aria-label="Next page"]')!.click()
-  })
-  expect(useStore.getState().activePageId).toBe('p2')
-  await act(async () => {
-    host.querySelector<HTMLButtonElement>('button[aria-label="Previous page"]')!.click()
-  })
-  expect(useStore.getState().activePageId).toBe('p1')
-})
-
-it('hides with the rest of the chrome', async () => {
+  expect(host.querySelector('[data-slot="page-strip"]')).toBeNull()
+  expect(host.textContent).not.toContain('Home')
   await render(true)
   expect(host.querySelector('[data-slot="page-strip"]')).toBeNull()
 })
