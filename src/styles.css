@@ -532,6 +532,40 @@ body[data-panel-resizing] * {
   }
 }
 
+/* OpenCode's tab busy mark: 5×5 cells, 2px with a 1px gap (14px, the rail
+   icon). Each cell peaks when the diagonal sweep reaches it. */
+[data-tab-agent-grid] {
+  display: grid;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  grid-template-columns: repeat(5, 2px);
+  grid-template-rows: repeat(5, 2px);
+  gap: 1px;
+}
+[data-tab-agent-grid] > i {
+  display: block;
+  border-radius: 0.5px;
+  background: currentColor;
+  opacity: 0.22;
+  animation: tab-agent-grid 1.15s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-tab-agent-grid] > i {
+    animation: none;
+    opacity: 0.72;
+  }
+}
+@keyframes tab-agent-grid {
+  0%,
+  100% {
+    opacity: 0.18;
+  }
+  42% {
+    opacity: 1;
+  }
+}
+
 @keyframes ghost-pulse {
   0%,
   100% {

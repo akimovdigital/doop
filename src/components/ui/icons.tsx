@@ -102,6 +102,7 @@ import {
   Pencil,
   PencilRuler,
   PenTool,
+  Terminal,
   Play,
   Plus,
   Puzzle,
@@ -300,6 +301,8 @@ export const PanelsFloatingIcon = icon(PictureInPicture2)
 export const PanelsDockedIcon = icon(PanelsLeftRight)
 export const LayersIcon = icon(Layers)
 export const FrameIcon = icon(Frame)
+/** The canvas tab mark: a prompt, readable at the 14px rail size. */
+export const CodeTabIcon = icon(Terminal)
 /** a page of the canvas, in the Layers panel's Pages list */
 export const PageIcon = icon(File)
 /** a PDF document, the Export modal's PDF destination */
