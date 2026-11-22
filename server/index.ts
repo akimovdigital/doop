@@ -53,7 +53,7 @@ import { geminiCloudWorkerFor } from './geminiCloudRuns.ts'
 import http from 'node:http'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { gzipSync } from 'node:zlib'
+import { wireRoomInitPayload } from './roomInitGzip.ts'
 import path from 'node:path'
 import express from 'express'
 import { eq, inArray } from 'drizzle-orm'
@@ -3663,11 +3663,8 @@ wss.on('connection', (ws, upgradeReq) => {
         serverBuild: BUILD_ID,
       }
       if (msg.initEncoding === 'gzip') {
-        const json = JSON.stringify(init)
-        // Keep the room snapshot and the broadcasts after it in wire order.
-        // Small snapshots already arrive quickly as ordinary text.
-        const compressed = json.length >= 1024 * 1024 ? gzipSync(json, { level: 1 }) : null
-        ws.send(compressed && compressed.length < json.length ? compressed : json)
+        const payload = await wireRoomInitPayload(init, true)
+        ws.send(payload)
       } else {
         send(ws, init)
       }
