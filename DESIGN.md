@@ -24,6 +24,17 @@ The tabs stay in one scrolling row, with pinned canvases first. The selected tab
 
 The tab menu uses the shared surface and border tokens with a 12 px radius. It includes inline renaming, pinning, window actions and closing. Dragging reorders tabs within the pinned or unpinned portion of the row. Split view shows two labelled editors side by side. See `src/components/DesktopTabs.tsx`, `src/lib/desktop.ts` and `src/App.tsx`.
 
+## Home canvas menus
+
+On Home, right-click and the tile's overflow button open the same action groups in grid and list view.
+Both use Doop's Radix menu primitives, `--surface` for the menu, `--line-soft` for separators and the danger
+tone for Move to trash. The overflow menu is 220 px wide where space permits. The pointer-anchored menu
+shrinks on narrow screens to fit beside the pointer. Both menus scroll vertically when space is limited.
+
+Add to sidebar uses checked rows for Pinned and the desktop-only Tab bar. Pinned canvases appear between
+the library scopes and Workspaces in the rail. Show in folder scrolls the corresponding tile into view
+with a temporary `--brand` outline. Rename replaces the canvas title with an inline input.
+
 ## Layers and sections
 
 The left rail has Layers and Framework tabs. Pages, Sections and Layers appear in that order in the Layers

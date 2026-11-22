@@ -139,6 +139,7 @@ export const canvas: Catalog['canvas'] = {
   unpinTab: 'Desafixar aba',
   tabHome: 'Início',
   tabActions: 'Ações de {name}',
+  noFrameHistory: 'Este canvas não tem frames com histórico de versões.',
   renameFile: 'Renomear canvas',
   tabRenameFailed: 'Não foi possível renomear o canvas.',
   tabCopyFailed: 'Não foi possível copiar o link do canvas.',

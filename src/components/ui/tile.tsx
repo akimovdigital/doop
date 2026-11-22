@@ -24,9 +24,11 @@ const tileVariants = cva(
   },
 )
 
-function Tile({ className, tone, ...props }: React.ComponentProps<'div'> & VariantProps<typeof tileVariants>) {
-  return <div data-slot="tile" className={cn(tileVariants({ tone, className }))} {...props} />
-}
+const Tile = React.forwardRef<HTMLDivElement, React.ComponentProps<'div'> & VariantProps<typeof tileVariants>>(
+  function Tile({ className, tone, ...props }, ref) {
+    return <div ref={ref} data-slot="tile" className={cn(tileVariants({ tone, className }))} {...props} />
+  },
+)
 
 /* the cover's proportions, as literal classes so Tailwind sees them */
 const TILE_ASPECTS = {

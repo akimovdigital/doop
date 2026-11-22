@@ -61,10 +61,8 @@ export const home: Catalog['home'] = {
   frames: { one: '{count} frame', other: '{count} frames' },
 
   /* delete */
-  deleteTitle: 'Excluir “{name}”?',
   deleteFallbackName: 'canvas',
   deleteDescription: 'Isso exclui permanentemente o canvas e tudo o que há nele. Não dá para desfazer.',
-  deleteConfirm: 'Excluir canvas',
 
   /* tile meta */
   claimTitle: 'Este canvas é anterior às contas e fica visível para todos. Reivindique-o para torná-lo seu.',
@@ -75,12 +73,24 @@ export const home: Catalog['home'] = {
   inWorkspace: 'No workspace {workspace}',
 
   /* canvas actions */
+  showInFolder: 'Mostrar na pasta',
+  createBranch: 'Criar nova ramificação',
+  branchFailed: 'Não foi possível criar a ramificação',
+  addToSidebar: 'Adicionar à barra lateral',
+  pinned: 'Fixados',
+  tabBar: 'Barra de abas',
+  showVersionHistory: 'Mostrar histórico de versões',
+  rename: 'Renomear',
+  renameCanvasAria: 'Nome do canvas',
+  renameFailed: 'Não foi possível renomear o canvas',
+  moveFile: 'Mover arquivo…',
+  moveToTrash: 'Mover para a lixeira',
+  removeFromRecent: 'Remover dos recentes',
+  trashTitle: 'Mover “{name}” para a lixeira?',
   actionsFor: 'Ações de {name}',
   share: 'Compartilhar',
   duplicating: 'Duplicando…',
   duplicate: 'Duplicar',
-  move: 'Mover…',
-  moveToWorkspace: 'Mover para um workspace…',
 
   /* hero */
   greeting: 'Me diga o que desenhar',

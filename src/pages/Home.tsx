@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Canvas, CanvasMeta, WorkspaceSummary } from '../../shared/types'
 import { colorFor } from '../../shared/types'
 import { api, errorMessage, paywalledWorkspace } from '../lib/api'
@@ -9,7 +9,14 @@ import { timeAgo } from '../lib/time'
 import { useStore } from '../lib/store'
 import { isResidentLimit } from '../components/TeamAllowance'
 import { canvasNameFromPrompt, draftsCardTitle, type DraftCount } from '../lib/homePrompt'
-import { setPromptBoxHidden, usePromptBoxHidden } from '../lib/homePreferences'
+import {
+  removeFromRecent,
+  setPromptBoxHidden,
+  togglePinnedCanvas,
+  usePinnedCanvases,
+  usePromptBoxHidden,
+  useRemovedRecents,
+} from '../lib/homePreferences'
 import { currentRunnerPick } from '../lib/runnerPick'
 import { AgentTile } from '../components/AgentIcon'
 import { AppRail, railLayout } from '../components/AppRail'
@@ -24,11 +31,22 @@ import { Modal } from '../components/ui/modal'
 import { ShareModal } from '../components/ShareModal'
 import { CreateWorkspaceModal, MoveCanvasModal, UpgradeModal } from '../components/WorkspaceModals'
 import { posthog } from '../lib/posthog'
-import { closeTab, openCanvasTab, pruneTabs } from '../lib/desktop'
+import {
+  closeTab,
+  ensureTab,
+  openCanvasTab,
+  pruneTabs,
+  renameCanvasTab,
+  setCanvasTabPinned,
+  useTabs,
+} from '../lib/desktop'
+import { supportsCanvasTabs } from '../lib/shell'
+import { cn } from '../lib/utils'
 import { shortcutKey } from '../lib/keys'
 import { AvatarStack } from '../components/ui/avatar'
 import { EmptyState } from '../components/ui/empty-state'
 import { Button } from '../components/ui/button'
+import { Input } from '../components/ui/input'
 import { IconButton } from '../components/ui/icon-button'
 import { MenuButton } from '../components/ui/menu-button'
 import { Pressable } from '../components/ui/pressable'
@@ -39,23 +57,32 @@ import { Callout } from '../components/ui/callout'
 import { SegmentedIconItem, SegmentedIcons } from '../components/ui/segmented'
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu'
 import {
   ContextMenu,
+  ContextMenuCheckboxItem,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from '../components/ui/context-menu'
 import {
   BuildingIcon,
   CopyIcon,
+  FolderIcon,
   GridIcon,
   LinkIcon,
   ListIcon,
@@ -102,6 +129,9 @@ export function Home() {
   const [shareCanvas, setShareCanvas] = useState<Canvas | null>(null)
   const [deleteCanvas, setDeleteCanvas] = useState<CanvasMeta | null>(null)
   const [moveCanvas, setMoveCanvas] = useState<CanvasMeta | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [folderReveal, setFolderReveal] = useState<{ id: string; scope: Scope } | null>(null)
+  const [highlightedId, setHighlightedId] = useState<string | null>(null)
   const [creatingWorkspace, setCreatingWorkspace] = useState(
     () => new URLSearchParams(location.search).get('workspace') === 'new',
   )
@@ -118,6 +148,10 @@ export function Home() {
   const { data: session } = authClient.useSession()
   const t = useT()
   const promptBoxHidden = usePromptBoxHidden()
+  const pinnedIds = usePinnedCanvases()
+  const removedRecents = useRemovedRecents()
+  const tabs = useTabs((s) => s.tabs)
+  const desktop = supportsCanvasTabs()
   const ownerId = session?.user.id
 
   /* pings can start overlapping reloads; a response older than one already
@@ -212,18 +246,7 @@ export function Home() {
            composer's draft so a retry is one click; a toast here would vanish
            with the navigation. An exhausted allowance raises the wall there,
            any other failure shows as the composer's error. */
-        const store = useStore.getState()
-        store.setComposerDraft(canvas.id, draftsCardTitle(text, drafts))
-        if (isResidentLimit(error)) store.setLimitWall(true)
-        else {
-          console.error(error)
-          store.setComposerSend({
-            canvasId: canvas.id,
-            status: 'error',
-            message: errorMessage(error, t('home.briefNotQueued')),
-            at: Date.now(),
-          })
-        }
+        keepFailedPrompt(canvas.id, draftsCardTitle(text, drafts), error, t('home.briefNotQueued'))
       }
       open(canvas.id, canvas.name)
     } catch (error) {
@@ -267,17 +290,26 @@ export function Home() {
     return !!ws && ws.role !== 'member'
   }
 
-  async function duplicate(canvas: CanvasMeta) {
+  async function duplicate(canvas: CanvasMeta, branch = false) {
     if (duplicatingId) return
     setDuplicatingId(canvas.id)
     try {
+      const names = branch ? new Set((await api.listCanvases()).map((c) => c.name)) : undefined
       const copy = await api.duplicateCanvas(canvas.id)
+      let name = copy.name
+      if (names) {
+        const base = `${canvas.name} (branch)`
+        name = base
+        for (let n = 2; names.has(name); n++) name = `${base} ${n}`
+        await api.renameCanvas(copy.id, name)
+      }
       posthog.capture('canvas_duplicated')
       reload()
-      open(copy.id, copy.name)
+      open(copy.id, name)
     } catch (error) {
       console.error(error)
-      showToast(t('home.duplicateFailed'))
+      if (branch) reload()
+      showToast(t(branch ? 'home.branchFailed' : 'home.duplicateFailed'))
     } finally {
       setDuplicatingId(null)
     }
@@ -303,6 +335,73 @@ export function Home() {
     if (!openCanvasTab(id, title)) navigate(`/c/${id}`)
   }
 
+  function changeScope(next: Scope) {
+    setFolderReveal(null)
+    setHighlightedId(null)
+    setScope(next)
+  }
+
+  function showInFolder(canvas: CanvasMeta) {
+    const destination = canvas.workspaceId ? (`ws:${canvas.workspaceId}` as const) : 'mine'
+    setScope(destination)
+    setFolderReveal({ id: canvas.id, scope: destination })
+    setHighlightedId(canvas.id)
+  }
+
+  useEffect(() => {
+    if (!folderReveal) return
+    document.getElementById(`home-canvas-${folderReveal.id}`)?.scrollIntoView({ block: 'center', inline: 'nearest' })
+    const timer = window.setTimeout(() => setHighlightedId(null), 1600)
+    return () => window.clearTimeout(timer)
+  }, [folderReveal])
+
+  async function rename(canvas: CanvasMeta, name: string) {
+    setRenamingId(null)
+    if (!name || name === canvas.name) return
+    try {
+      await renameCanvasTab(canvas.id, name)
+      setCanvases((list) => list?.map((c) => (c.id === canvas.id ? { ...c, name } : c)) ?? null)
+      reload()
+    } catch (error) {
+      showToast(errorMessage(error, t('home.renameFailed')))
+    }
+  }
+
+  function canvasMenu(canvas: CanvasMeta): CanvasMenuHandlers {
+    const manage = canManage(canvas)
+    const tabPinned = tabs.some((tab) => tab.id === canvas.id && tab.pinned)
+    return {
+      canvas,
+      duplicating: duplicatingId !== null,
+      onShowInFolder: () => showInFolder(canvas),
+      onOpen: () => open(canvas.id, canvas.name),
+      onBranch: manage ? () => void duplicate(canvas, true) : undefined,
+      pinned: pinnedIds.has(canvas.id),
+      onPin: () => togglePinnedCanvas(canvas.id),
+      tabPinned,
+      onTabPin: desktop
+        ? () => {
+            ensureTab(canvas.id, canvas.name)
+            setCanvasTabPinned(canvas.id, !tabPinned)
+          }
+        : undefined,
+      onCopyLink: () =>
+        void copyCanvasLink(canvas, (ok) => {
+          if (ok) showToast(t('home.linkCopied'))
+        }),
+      onShare: () => void share(canvas),
+      onDuplicate: () => void duplicate(canvas),
+      onHistory: () => {
+        ensureTab(canvas.id, canvas.name)
+        navigate(`/c/${canvas.id}?history=1`)
+      },
+      onRename: manage ? () => setRenamingId(canvas.id) : undefined,
+      onMove: manage ? () => setMoveCanvas(canvas) : undefined,
+      onDelete: manage ? () => setDeleteCanvas(canvas) : undefined,
+      onRemoveRecent: removedRecents.has(canvas.id) ? undefined : () => removeFromRecent(canvas.id),
+    }
+  }
+
   const first = session?.user.name?.split(' ')[0]
   const scopedWorkspace = workspaceOf(scope)
   const currentWorkspace = scopedWorkspace ? workspaces.find((w) => w.id === scopedWorkspace) : undefined
@@ -312,7 +411,10 @@ export function Home() {
     if (currentWorkspaceId) prefetchWorkspace(currentWorkspaceId)
   }, [currentWorkspaceId])
   /* a workspace that vanished (deleted, or left) drops the view back to all */
-  const scopeGone = !!scopedWorkspace && workspacesLoaded && !currentWorkspace
+  const revealedWorkspaceCanvas =
+    folderReveal?.scope === scope &&
+    canvases?.some((c) => c.id === folderReveal.id && c.workspaceId === scopedWorkspace)
+  const scopeGone = !!scopedWorkspace && workspacesLoaded && !currentWorkspace && !revealedWorkspaceCanvas
   const [seenScopeGone, setSeenScopeGone] = useState(false)
   if (scopeGone !== seenScopeGone) {
     setSeenScopeGone(scopeGone)
@@ -321,13 +423,16 @@ export function Home() {
 
   const visible = useMemo(() => {
     const ws = workspaceOf(scope)
-    const list = (canvases ?? []).filter((c) =>
-      ws ? c.workspaceId === ws : scope === 'mine' ? !c.shared : scope === 'shared' ? !!c.shared : true,
-    )
+    const list = (canvases ?? []).filter((c) => {
+      if (ws) return c.workspaceId === ws
+      if (scope === 'mine') return !c.shared || (folderReveal?.scope === scope && folderReveal.id === c.id)
+      if (scope === 'shared') return !!c.shared
+      return !removedRecents.has(c.id)
+    })
     if (sort === 'name') return [...list].sort((a, b) => a.name.localeCompare(b.name))
     if (sort === 'created') return [...list].sort((a, b) => b.createdAt - a.createdAt)
     return list
-  }, [canvases, scope, sort])
+  }, [canvases, folderReveal, removedRecents, scope, sort])
 
   const empty = canvases !== null && canvases.length === 0
   const listTitle = currentWorkspace
@@ -344,7 +449,7 @@ export function Home() {
         active={scope}
         canvases={canvases}
         workspaces={workspacesLoaded ? workspaces : null}
-        onScope={setScope}
+        onScope={changeScope}
         onCreateWorkspace={() => setCreatingWorkspace(true)}
       />
       <DashMain className="[background:var(--paper)]">
@@ -458,53 +563,42 @@ export function Home() {
             ) : view === 'grid' ? (
               <div className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-3.5 xs:grid-cols-[repeat(auto-fill,minmax(230px,1fr))] md:gap-[18px]">
                 {canvases === null && [0, 1, 2, 3].map((i) => <Skeleton key={i} index={i} shape="tile" aspect="5/3" />)}
-                {visible.map((c) => (
-                  <Tile key={c.id}>
-                    <ContextMenu>
-                      <ContextMenuTrigger asChild>
-                        <Pressable onClick={() => open(c.id, c.name)}>
-                          <TileCover aspect="5/3">
-                            <FramePreview frameId={c.previewFrameId} />
-                            <AgentStack canvas={c} />
-                          </TileCover>
-                          <TileBody className="flex items-center gap-2.5">
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate text-body font-medium">{c.name}</div>
-                              <Meta
-                                canvas={c}
-                                onClaim={reload}
-                                workspace={scopedWorkspace ? undefined : workspaceName(c.workspaceId)}
-                              />
-                            </div>
-                            <PeopleStack canvas={c} />
-                          </TileBody>
-                        </Pressable>
+                {visible.map((c) => {
+                  const menu = canvasMenu(c)
+                  const editing = renamingId === c.id
+                  return (
+                    <ContextMenu key={c.id}>
+                      <ContextMenuTrigger asChild disabled={editing}>
+                        <Tile id={`home-canvas-${c.id}`} className={cn(highlightedId === c.id && folderHighlight)}>
+                          <CanvasTilePressable editing={editing} onOpen={menu.onOpen}>
+                            <TileCover aspect="5/3">
+                              <FramePreview frameId={c.previewFrameId} />
+                              <AgentStack canvas={c} />
+                            </TileCover>
+                            <TileBody className="flex items-center gap-2.5">
+                              <div className="min-w-0 flex-1">
+                                <CanvasTileTitle
+                                  canvas={c}
+                                  editing={editing}
+                                  onSave={(name) => void rename(c, name)}
+                                  onCancel={() => setRenamingId(null)}
+                                />
+                                <Meta
+                                  canvas={c}
+                                  onClaim={reload}
+                                  workspace={scopedWorkspace ? undefined : workspaceName(c.workspaceId)}
+                                />
+                              </div>
+                              <PeopleStack canvas={c} />
+                            </TileBody>
+                          </CanvasTilePressable>
+                          <CanvasActions menu={menu} editing={editing} />
+                        </Tile>
                       </ContextMenuTrigger>
-                      <CanvasContextMenu
-                        canvas={c}
-                        duplicating={duplicatingId === c.id}
-                        onOpen={() => open(c.id, c.name)}
-                        onCopyLink={() =>
-                          void copyCanvasLink(c, (ok) => {
-                            if (ok) showToast(t('home.linkCopied'))
-                          })
-                        }
-                        onShare={() => share(c)}
-                        onDuplicate={() => duplicate(c)}
-                        onMove={workspaces.length && canManage(c) ? () => setMoveCanvas(c) : undefined}
-                        onDelete={canManage(c) ? () => setDeleteCanvas(c) : undefined}
-                      />
+                      <CanvasContextMenu menu={menu} editing={editing} />
                     </ContextMenu>
-                    <CanvasActions
-                      canvas={c}
-                      duplicating={duplicatingId === c.id}
-                      onShare={() => share(c)}
-                      onDuplicate={() => duplicate(c)}
-                      onMove={workspaces.length && canManage(c) ? () => setMoveCanvas(c) : undefined}
-                      onDelete={canManage(c) ? () => setDeleteCanvas(c) : undefined}
-                    />
-                  </Tile>
-                ))}
+                  )
+                })}
                 {canvases !== null && (
                   <Pressable
                     className="grid min-h-[132px] place-items-center content-center gap-2.5 rounded-panel border border-dashed border-line p-6 text-body text-ink-faint transition-colors hover:border-ink-faint hover:text-ink xs:min-h-full"
@@ -520,60 +614,55 @@ export function Home() {
               </div>
             ) : (
               <div className="mt-4 overflow-hidden rounded-panel border border-line bg-surface shadow-card">
-                {visible.map((c) => (
-                  <ContextMenu key={c.id}>
-                    <div className="group flex w-full items-center border-b border-line-soft transition-colors last:border-b-0 hover:bg-paper">
-                      <ContextMenuTrigger asChild>
-                        <Pressable
-                          className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2.5 md:gap-[13px] md:px-3.5 md:py-[9px]"
-                          onClick={() => open(c.id, c.name)}
+                {visible.map((c) => {
+                  const menu = canvasMenu(c)
+                  const editing = renamingId === c.id
+                  return (
+                    <ContextMenu key={c.id}>
+                      <ContextMenuTrigger asChild disabled={editing}>
+                        <div
+                          id={`home-canvas-${c.id}`}
+                          className={cn(
+                            'group relative flex w-full items-center border-b border-line-soft transition-colors last:border-b-0 hover:bg-paper',
+                            highlightedId === c.id && folderHighlight,
+                          )}
                         >
-                          <FrameThumb frameId={c.previewFrameId} />
-                          <span className="min-w-0 flex-1 truncate text-body font-medium">{c.name}</span>
-                          <span className="hidden w-[82px] flex-none text-caption text-ink-faint sm:block">
-                            {t('home.frames', { count: c.frameCount })}
-                          </span>
-                          <span className="hidden w-[72px] flex-none xs:flex">
-                            <PeopleStack canvas={c} />
-                          </span>
-                          <span className="hidden w-[62px] flex-none gap-[3px] xs:flex">
-                            {(c.agents ?? []).slice(0, 3).map((a) => (
-                              <AgentTile key={a.name} name={a.name} size={14} />
-                            ))}
-                          </span>
-                          <span className="w-auto flex-none text-right text-caption text-ink-faint md:w-[66px]">
-                            {timeAgo(c.updatedAt)}
-                          </span>
-                        </Pressable>
+                          <CanvasTilePressable
+                            editing={editing}
+                            className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2.5 md:gap-[13px] md:px-3.5 md:py-[9px]"
+                            onOpen={menu.onOpen}
+                          >
+                            <FrameThumb frameId={c.previewFrameId} />
+                            <CanvasTileTitle
+                              canvas={c}
+                              editing={editing}
+                              onSave={(name) => void rename(c, name)}
+                              onCancel={() => setRenamingId(null)}
+                            />
+                            <span className="hidden w-[82px] flex-none text-caption text-ink-faint sm:block">
+                              {t('home.frames', { count: c.frameCount })}
+                            </span>
+                            <span className="hidden w-[72px] flex-none xs:flex">
+                              <PeopleStack canvas={c} />
+                            </span>
+                            <span className="hidden w-[62px] flex-none gap-[3px] xs:flex">
+                              {(c.agents ?? []).slice(0, 3).map((a) => (
+                                <AgentTile key={a.name} name={a.name} size={14} />
+                              ))}
+                            </span>
+                            <span className="w-auto flex-none text-right text-caption text-ink-faint md:w-[66px]">
+                              {timeAgo(c.updatedAt)}
+                            </span>
+                          </CanvasTilePressable>
+                          <div className="mr-3 flex-none md:mr-3.5">
+                            <CanvasActions menu={menu} compact editing={editing} />
+                          </div>
+                        </div>
                       </ContextMenuTrigger>
-                      <div className="mr-3 flex-none md:mr-3.5">
-                        <CanvasActions
-                          canvas={c}
-                          compact
-                          duplicating={duplicatingId === c.id}
-                          onShare={() => share(c)}
-                          onDuplicate={() => duplicate(c)}
-                          onMove={workspaces.length && canManage(c) ? () => setMoveCanvas(c) : undefined}
-                          onDelete={canManage(c) ? () => setDeleteCanvas(c) : undefined}
-                        />
-                      </div>
-                    </div>
-                    <CanvasContextMenu
-                      canvas={c}
-                      duplicating={duplicatingId === c.id}
-                      onOpen={() => open(c.id, c.name)}
-                      onCopyLink={() =>
-                        void copyCanvasLink(c, (ok) => {
-                          if (ok) showToast(t('home.linkCopied'))
-                        })
-                      }
-                      onShare={() => share(c)}
-                      onDuplicate={() => duplicate(c)}
-                      onMove={workspaces.length && canManage(c) ? () => setMoveCanvas(c) : undefined}
-                      onDelete={canManage(c) ? () => setDeleteCanvas(c) : undefined}
-                    />
-                  </ContextMenu>
-                ))}
+                      <CanvasContextMenu menu={menu} editing={editing} />
+                    </ContextMenu>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -649,9 +738,9 @@ export function Home() {
       <ConfirmDialog
         open={!!deleteCanvas}
         onOpenChange={(open) => !open && setDeleteCanvas(null)}
-        title={t('home.deleteTitle', { name: deleteCanvas?.name ?? t('home.deleteFallbackName') })}
+        title={t('home.trashTitle', { name: deleteCanvas?.name ?? t('home.deleteFallbackName') })}
         description={t('home.deleteDescription')}
-        confirmLabel={t('home.deleteConfirm')}
+        confirmLabel={t('home.moveToTrash')}
         destructive
         onConfirm={() => {
           if (deleteCanvas) remove(deleteCanvas.id, reload)
@@ -663,6 +752,17 @@ export function Home() {
       <StarCard />
     </DashLayout>
   )
+}
+
+function keepFailedPrompt(canvasId: string, draft: string, error: unknown, fallback: string) {
+  const store = useStore.getState()
+  store.setComposerDraft(canvasId, draft)
+  if (isResidentLimit(error)) {
+    store.setLimitWall(true)
+    return
+  }
+  console.error(error)
+  store.setComposerSend({ canvasId, status: 'error', message: errorMessage(error, fallback), at: Date.now() })
 }
 
 function remove(id: string, done: () => void) {
@@ -749,72 +849,215 @@ async function copyCanvasLink(canvas: CanvasMeta, done: (ok: boolean) => void) {
   }
 }
 
+const folderHighlight =
+  'after:pointer-events-none after:absolute after:inset-0 after:ring-2 after:ring-inset after:ring-brand'
+
+function CanvasTilePressable({
+  editing,
+  onOpen,
+  className,
+  children,
+}: {
+  editing: boolean
+  onOpen: () => void
+  className?: string
+  children: ReactNode
+}) {
+  return editing ? (
+    <div className={className}>{children}</div>
+  ) : (
+    <Pressable className={className} onClick={onOpen}>
+      {children}
+    </Pressable>
+  )
+}
+
+function CanvasTileTitle({
+  canvas,
+  editing,
+  onSave,
+  onCancel,
+}: {
+  canvas: CanvasMeta
+  editing: boolean
+  onSave: (name: string) => void
+  onCancel: () => void
+}) {
+  return editing ? (
+    <CanvasNameInput name={canvas.name} onSave={onSave} onCancel={onCancel} />
+  ) : (
+    <span className="block min-w-0 flex-1 truncate text-body font-medium">{canvas.name}</span>
+  )
+}
+
+function CanvasNameInput({
+  name,
+  onSave,
+  onCancel,
+}: {
+  name: string
+  onSave: (name: string) => void
+  onCancel: () => void
+}) {
+  const t = useT()
+  const inputRef = useRef<HTMLInputElement>(null)
+  const finished = useRef(false)
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [])
+
+  function finish(save: boolean, value: string) {
+    if (finished.current) return
+    finished.current = true
+    if (save) onSave(value.trim())
+    else onCancel()
+  }
+
+  return (
+    <Input
+      ref={inputRef}
+      defaultValue={name}
+      aria-label={t('home.renameCanvasAria')}
+      className="h-7 min-w-0 flex-1 py-0 text-body"
+      onBlur={(event) => finish(true, event.currentTarget.value)}
+      onKeyDown={(event) => {
+        if (event.nativeEvent.isComposing || (event.key !== 'Enter' && event.key !== 'Escape')) return
+        event.preventDefault()
+        event.stopPropagation()
+        finish(event.key === 'Enter', event.currentTarget.value)
+      }}
+    />
+  )
+}
+
 type CanvasMenuHandlers = {
   canvas: CanvasMeta
   duplicating: boolean
+  pinned: boolean
+  tabPinned: boolean
+  onShowInFolder: () => void
+  onOpen: () => void
+  onBranch?: () => void
+  onPin: () => void
+  onTabPin?: () => void
+  onCopyLink: () => void
   onShare: () => void
   onDuplicate: () => void
+  onHistory: () => void
+  onRename?: () => void
   onMove?: () => void
   onDelete?: () => void
+  onRemoveRecent?: () => void
 }
 
-/** Right-click menu on a Home tile — Open / Copy link plus the same actions as ⋯ */
-function CanvasContextMenu({
-  canvas,
-  duplicating,
-  onOpen,
-  onCopyLink,
-  onShare,
-  onDuplicate,
-  onMove,
-  onDelete,
-}: CanvasMenuHandlers & { onOpen: () => void; onCopyLink: () => void }) {
+const contextItems = {
+  Item: ContextMenuItem,
+  Checkbox: ContextMenuCheckboxItem,
+  Separator: ContextMenuSeparator,
+  Sub: ContextMenuSub,
+  SubTrigger: ContextMenuSubTrigger,
+  SubContent: ContextMenuSubContent,
+}
+
+const dropdownItems = {
+  Item: DropdownMenuItem,
+  Checkbox: DropdownMenuCheckboxItem,
+  Separator: DropdownMenuSeparator,
+  Sub: DropdownMenuSub,
+  SubTrigger: DropdownMenuSubTrigger,
+  SubContent: DropdownMenuSubContent,
+}
+
+/** The library's context and overflow menus share their groups and permission states. */
+function CanvasMenuItems({ menu, context }: { menu: CanvasMenuHandlers; context?: boolean }) {
   const t = useT()
+  const { Item, Checkbox, Separator, Sub, SubTrigger, SubContent } = context ? contextItems : dropdownItems
   return (
-    <ContextMenuContent>
-      <ContextMenuItem onSelect={onOpen}>{t('home.openCanvas')}</ContextMenuItem>
-      <ContextMenuSeparator />
-      <ContextMenuItem onSelect={onCopyLink}>
+    <>
+      <Item onSelect={menu.onShowInFolder}>
+        <FolderIcon className="size-4" /> {t('home.showInFolder')}
+      </Item>
+      <Item onSelect={menu.onOpen}>{t('home.openCanvas')}</Item>
+      <Separator />
+      <Item disabled={!menu.onBranch || menu.duplicating} onSelect={menu.onBranch}>
+        {t('home.createBranch')}
+      </Item>
+      <Separator />
+      <Sub>
+        <SubTrigger>{t('home.addToSidebar')}</SubTrigger>
+        <SubContent className="w-28 min-w-0 sm:w-[190px]">
+          <Checkbox checked={menu.pinned} onCheckedChange={menu.onPin}>
+            {t('home.pinned')}
+          </Checkbox>
+          {menu.onTabPin && (
+            <Checkbox checked={menu.tabPinned} onCheckedChange={menu.onTabPin}>
+              {t('home.tabBar')}
+            </Checkbox>
+          )}
+        </SubContent>
+      </Sub>
+      <Separator />
+      <Item onSelect={menu.onCopyLink}>
         <LinkIcon className="size-4" /> {t('home.copyLink')}
-      </ContextMenuItem>
-      <ContextMenuItem onSelect={onShare}>
+      </Item>
+      <Item onSelect={menu.onShare}>
         <ShareIcon className="size-4" /> {t('home.share')}
-      </ContextMenuItem>
-      <ContextMenuItem disabled={duplicating} onSelect={onDuplicate}>
-        <CopyIcon className="size-4" /> {duplicating ? t('home.duplicating') : t('home.duplicate')}
-      </ContextMenuItem>
-      {onMove && (
-        <ContextMenuItem onSelect={onMove}>
-          <BuildingIcon className="size-4" /> {canvas.workspaceId ? t('home.move') : t('home.moveToWorkspace')}
-        </ContextMenuItem>
+      </Item>
+      <Item disabled={menu.duplicating} onSelect={menu.onDuplicate}>
+        <CopyIcon className="size-4" /> {t('home.duplicate')}
+      </Item>
+      <Separator />
+      <Item onSelect={menu.onHistory}>{t('home.showVersionHistory')}</Item>
+      <Item disabled={!menu.onRename} onSelect={menu.onRename}>
+        {t('home.rename')}
+      </Item>
+      <Item disabled={!menu.onMove} onSelect={menu.onMove}>
+        <BuildingIcon className="size-4" /> {t('home.moveFile')}
+      </Item>
+      {menu.onDelete && (
+        <Item tone="danger" onSelect={menu.onDelete}>
+          <TrashIcon className="size-4" /> {t('home.moveToTrash')}
+        </Item>
       )}
-      {onDelete && (
-        <>
-          <ContextMenuSeparator />
-          <ContextMenuItem tone="danger" onSelect={onDelete}>
-            <TrashIcon className="size-4" /> {t('common.delete')}
-          </ContextMenuItem>
-        </>
-      )}
+      <Item disabled={!menu.onRemoveRecent} onSelect={menu.onRemoveRecent}>
+        {t('home.removeFromRecent')}
+      </Item>
+    </>
+  )
+}
+
+function CanvasContextMenu({ menu, editing }: { menu: CanvasMenuHandlers; editing: boolean }) {
+  return (
+    <ContextMenuContent
+      className="max-h-(--radix-context-menu-content-available-height) w-[min(220px,calc(50vw-12px))] min-w-0 overflow-y-auto"
+      onCloseAutoFocus={(event) => {
+        if (editing) event.preventDefault()
+      }}
+    >
+      <CanvasMenuItems menu={menu} context />
     </ContextMenuContent>
   )
 }
 
 function CanvasActions({
-  canvas,
+  menu,
   compact = false,
-  duplicating,
-  onShare,
-  onDuplicate,
-  onMove,
-  onDelete,
-}: CanvasMenuHandlers & { compact?: boolean }) {
+  editing,
+}: {
+  menu: CanvasMenuHandlers
+  compact?: boolean
+  editing: boolean
+}) {
   const t = useT()
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <IconButton
-          aria-label={t('home.actionsFor', { name: canvas.name })}
+          aria-label={t('home.actionsFor', { name: menu.canvas.name })}
           variant={compact ? 'quiet' : 'frosted'}
           shape={compact ? 'round' : 'square'}
           className={
@@ -827,26 +1070,13 @@ function CanvasActions({
           <MoreHorizontalIcon className="size-4" />
         </IconButton>
       </DropdownMenuTrigger>
-      <DropdownMenuContent width="md">
-        <DropdownMenuItem onSelect={onShare}>
-          <ShareIcon className="size-4" /> {t('home.share')}
-        </DropdownMenuItem>
-        <DropdownMenuItem disabled={duplicating} onSelect={onDuplicate}>
-          <CopyIcon className="size-4" /> {duplicating ? t('home.duplicating') : t('home.duplicate')}
-        </DropdownMenuItem>
-        {onMove && (
-          <DropdownMenuItem onSelect={onMove}>
-            <BuildingIcon className="size-4" /> {canvas.workspaceId ? t('home.move') : t('home.moveToWorkspace')}
-          </DropdownMenuItem>
-        )}
-        {onDelete && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem tone="danger" onSelect={onDelete}>
-              <TrashIcon className="size-4" /> {t('common.delete')}
-            </DropdownMenuItem>
-          </>
-        )}
+      <DropdownMenuContent
+        width="md"
+        onCloseAutoFocus={(event) => {
+          if (editing) event.preventDefault()
+        }}
+      >
+        <CanvasMenuItems menu={menu} />
       </DropdownMenuContent>
     </DropdownMenu>
   )
