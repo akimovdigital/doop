@@ -4,11 +4,11 @@
 
 ## 22.11.2026 — PR #12, web canvas tabs
 
-PR: [#12](https://github.com/akimovdigital/doop/pull/12).
+PR: [#12](https://github.com/akimovdigital/doop/pull/12), SHA [`7a2678b`](https://github.com/akimovdigital/doop/commit/7a2678b7889fa34e577339342a27b01cc833b14c).
 
 **Что сделали.** Вкладки холстов из `DesktopTabs` включены в веб: `supportsCanvasTabs()` для top-level окна, без traffic lights / WindowControls. Скрин: `/cursor/stores/self/media/web-canvas-tabs.png`.
 
-**Что сработало.** Переиспользование strip и `localStorage` `doop-open-tabs:<userId>`. typecheck, lint, vitest 3966 без новых падений. Параллельный Home collapse уже в `local/doop-dev` — rebase без конфликтов по нашим файлам.
+**Что сработало.** Переиспользование strip и `localStorage` `doop-open-tabs:<userId>`. typecheck, lint, vitest 3966 без новых падений. Параллельный Home collapse уже в `local/doop-dev` — rebase без конфликтов по нашим файлам. CI на форке пустой (`statusCheckRollup: []`), слили после локальных проверок.
 
 **Что сломалось.** Ничего. Раньше веб не показывал вкладки, потому что strip и state были за `isDesktopShell()` (`__DOOP_DESKTOP__`), а не из‑за CSS hide.
 
