@@ -34,7 +34,7 @@ import { setTabsUser, useTabs } from './lib/desktop'
 import { WindowControls } from './components/WindowControls'
 import { useWindowFrame } from './lib/windowFrame'
 import { cn } from './lib/utils'
-import { isDesktopShell } from './lib/shell'
+import { supportsCanvasTabs } from './lib/shell'
 import { SIGNUP_PARAM, parseSignupMethod } from '../shared/firstCanvas'
 import { useT } from './lib/i18n'
 
@@ -251,9 +251,10 @@ export function App() {
           itself by the same variable instead of hardcoding the banner height */}
       <div className="h-dvh overflow-auto pt-14 [--app-inset:56px] sm:pt-10 sm:[--app-inset:40px]">{page}</div>
     </>
-  ) : isDesktopShell() ? (
-    /* the desktop shell's tab strip uses the same --app-inset contract as
-       the banner: fixed screens (the canvas workspace) offset themselves */
+  ) : supportsCanvasTabs() ? (
+    /* the tab strip uses the same --app-inset contract as the banner:
+       fixed screens (the canvas workspace) offset themselves. Nested
+       frames (split view) skip the strip and keep a bare page. */
     <>
       <DesktopTabs path={path} />
       <div

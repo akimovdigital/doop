@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { desktopPlatform, hasInsetTrafficLights, isDesktopShell, shellVersion } from '../src/lib/shell'
+import {
+  desktopPlatform,
+  hasInsetTrafficLights,
+  isDesktopShell,
+  shellVersion,
+  supportsCanvasTabs,
+} from '../src/lib/shell'
 
 type Markers = {
   __DOOP_DESKTOP__?: unknown
@@ -26,6 +32,10 @@ describe('outside the shell', () => {
     expect(shellVersion()).toBeNull()
     expect(desktopPlatform()).toBeNull()
     expect(hasInsetTrafficLights()).toBe(false)
+  })
+
+  it('still offers the canvas tab strip in a top-level browser window', () => {
+    expect(supportsCanvasTabs()).toBe(true)
   })
 
   it('ignores a platform marker without a version marker', () => {

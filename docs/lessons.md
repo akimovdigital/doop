@@ -2,6 +2,18 @@
 
 Формат записи: дата, PR или синк со ссылкой, что сделали, что сработало, что сломалось и причина, урок или правило на будущее. Причину не выдумывать. Повторяющийся урок переносить правилом в `.cursor/rules/git-workflow.mdc`.
 
+## 22.11.2026 — PR #12, web canvas tabs
+
+PR: [#12](https://github.com/akimovdigital/doop/pull/12).
+
+**Что сделали.** Вкладки холстов из `DesktopTabs` включены в веб: `supportsCanvasTabs()` для top-level окна, без traffic lights / WindowControls. Скрин: `/cursor/stores/self/media/web-canvas-tabs.png`.
+
+**Что сработало.** Переиспользование strip и `localStorage` `doop-open-tabs:<userId>`. typecheck, lint, vitest 3966 без новых падений. Параллельный Home collapse уже в `local/doop-dev` — rebase без конфликтов по нашим файлам.
+
+**Что сломалось.** Ничего. Раньше веб не показывал вкладки, потому что strip и state были за `isDesktopShell()` (`__DOOP_DESKTOP__`), а не из‑за CSS hide.
+
+**Урок.** Canvas tabs — не desktop-only фича: gate через top-level browsing context (`supportsCanvasTabs`), shell chrome оставлять за `isDesktopShell()`.
+
 ## 22.11.2026 — PR #10, Home polish after collapse
 
 PR: [#10](https://github.com/akimovdigital/doop/pull/10), SHA [`d179cb8`](https://github.com/akimovdigital/doop/commit/d179cb86d8a2ef7e707452ddfca478d6c77db240).
