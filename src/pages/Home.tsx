@@ -46,9 +46,17 @@ import {
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu'
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '../components/ui/context-menu'
+import {
   BuildingIcon,
   CopyIcon,
   GridIcon,
+  LinkIcon,
   ListIcon,
   MoreHorizontalIcon,
   PlusIcon,
@@ -342,13 +350,9 @@ export function Home() {
         <DashHeader variant="bare">
           <span className="flex-1" />
           {promptBoxHidden && (
-            <IconButton
-              aria-label={t('home.showPromptBox')}
-              className="text-ink-soft"
-              onClick={() => setPromptBoxHidden(false)}
-            >
-              <SparkIcon width={15} height={15} />
-            </IconButton>
+            <Button variant="default" size="bar" onClick={() => setPromptBoxHidden(false)}>
+              <SparkIcon width={15} height={15} className="text-ink-soft" /> {t('home.showPromptBox')}
+            </Button>
           )}
           <Button variant="default" size="bar" disabled={starting} onClick={() => setImporting(true)}>
             <UploadIcon width={15} height={15} className="text-ink-soft" /> {t('home.import')}
@@ -455,23 +459,41 @@ export function Home() {
                 {canvases === null && [0, 1, 2, 3].map((i) => <Skeleton key={i} index={i} shape="tile" aspect="5/3" />)}
                 {visible.map((c) => (
                   <Tile key={c.id}>
-                    <Pressable onClick={() => open(c.id, c.name)}>
-                      <TileCover aspect="5/3">
-                        <FramePreview frameId={c.previewFrameId} />
-                        <AgentStack canvas={c} />
-                      </TileCover>
-                      <TileBody className="flex items-center gap-2.5">
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-body font-medium">{c.name}</div>
-                          <Meta
-                            canvas={c}
-                            onClaim={reload}
-                            workspace={scopedWorkspace ? undefined : workspaceName(c.workspaceId)}
-                          />
-                        </div>
-                        <PeopleStack canvas={c} />
-                      </TileBody>
-                    </Pressable>
+                    <ContextMenu>
+                      <ContextMenuTrigger asChild>
+                        <Pressable onClick={() => open(c.id, c.name)}>
+                          <TileCover aspect="5/3">
+                            <FramePreview frameId={c.previewFrameId} />
+                            <AgentStack canvas={c} />
+                          </TileCover>
+                          <TileBody className="flex items-center gap-2.5">
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-body font-medium">{c.name}</div>
+                              <Meta
+                                canvas={c}
+                                onClaim={reload}
+                                workspace={scopedWorkspace ? undefined : workspaceName(c.workspaceId)}
+                              />
+                            </div>
+                            <PeopleStack canvas={c} />
+                          </TileBody>
+                        </Pressable>
+                      </ContextMenuTrigger>
+                      <CanvasContextMenu
+                        canvas={c}
+                        duplicating={duplicatingId === c.id}
+                        onOpen={() => open(c.id, c.name)}
+                        onCopyLink={() =>
+                          void copyCanvasLink(c, (ok) => {
+                            if (ok) showToast(t('home.linkCopied'))
+                          })
+                        }
+                        onShare={() => share(c)}
+                        onDuplicate={() => duplicate(c)}
+                        onMove={workspaces.length && canManage(c) ? () => setMoveCanvas(c) : undefined}
+                        onDelete={canManage(c) ? () => setDeleteCanvas(c) : undefined}
+                      />
+                    </ContextMenu>
                     <CanvasActions
                       canvas={c}
                       duplicating={duplicatingId === c.id}
@@ -498,43 +520,58 @@ export function Home() {
             ) : (
               <div className="mt-4 overflow-hidden rounded-panel border border-line bg-surface shadow-card">
                 {visible.map((c) => (
-                  <div
-                    key={c.id}
-                    className="group flex w-full items-center border-b border-line-soft transition-colors last:border-b-0 hover:bg-paper"
-                  >
-                    <Pressable
-                      className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2.5 md:gap-[13px] md:px-3.5 md:py-[9px]"
-                      onClick={() => open(c.id, c.name)}
-                    >
-                      <FrameThumb frameId={c.previewFrameId} />
-                      <span className="min-w-0 flex-1 truncate text-body font-medium">{c.name}</span>
-                      <span className="hidden w-[82px] flex-none text-caption text-ink-faint sm:block">
-                        {t('home.frames', { count: c.frameCount })}
-                      </span>
-                      <span className="hidden w-[72px] flex-none xs:flex">
-                        <PeopleStack canvas={c} />
-                      </span>
-                      <span className="hidden w-[62px] flex-none gap-[3px] xs:flex">
-                        {(c.agents ?? []).slice(0, 3).map((a) => (
-                          <AgentTile key={a.name} name={a.name} size={14} />
-                        ))}
-                      </span>
-                      <span className="w-auto flex-none text-right text-caption text-ink-faint md:w-[66px]">
-                        {timeAgo(c.updatedAt)}
-                      </span>
-                    </Pressable>
-                    <div className="mr-3 flex-none md:mr-3.5">
-                      <CanvasActions
-                        canvas={c}
-                        compact
-                        duplicating={duplicatingId === c.id}
-                        onShare={() => share(c)}
-                        onDuplicate={() => duplicate(c)}
-                        onMove={workspaces.length && canManage(c) ? () => setMoveCanvas(c) : undefined}
-                        onDelete={canManage(c) ? () => setDeleteCanvas(c) : undefined}
-                      />
+                  <ContextMenu key={c.id}>
+                    <div className="group flex w-full items-center border-b border-line-soft transition-colors last:border-b-0 hover:bg-paper">
+                      <ContextMenuTrigger asChild>
+                        <Pressable
+                          className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2.5 md:gap-[13px] md:px-3.5 md:py-[9px]"
+                          onClick={() => open(c.id, c.name)}
+                        >
+                          <FrameThumb frameId={c.previewFrameId} />
+                          <span className="min-w-0 flex-1 truncate text-body font-medium">{c.name}</span>
+                          <span className="hidden w-[82px] flex-none text-caption text-ink-faint sm:block">
+                            {t('home.frames', { count: c.frameCount })}
+                          </span>
+                          <span className="hidden w-[72px] flex-none xs:flex">
+                            <PeopleStack canvas={c} />
+                          </span>
+                          <span className="hidden w-[62px] flex-none gap-[3px] xs:flex">
+                            {(c.agents ?? []).slice(0, 3).map((a) => (
+                              <AgentTile key={a.name} name={a.name} size={14} />
+                            ))}
+                          </span>
+                          <span className="w-auto flex-none text-right text-caption text-ink-faint md:w-[66px]">
+                            {timeAgo(c.updatedAt)}
+                          </span>
+                        </Pressable>
+                      </ContextMenuTrigger>
+                      <div className="mr-3 flex-none md:mr-3.5">
+                        <CanvasActions
+                          canvas={c}
+                          compact
+                          duplicating={duplicatingId === c.id}
+                          onShare={() => share(c)}
+                          onDuplicate={() => duplicate(c)}
+                          onMove={workspaces.length && canManage(c) ? () => setMoveCanvas(c) : undefined}
+                          onDelete={canManage(c) ? () => setDeleteCanvas(c) : undefined}
+                        />
+                      </div>
                     </div>
-                  </div>
+                    <CanvasContextMenu
+                      canvas={c}
+                      duplicating={duplicatingId === c.id}
+                      onOpen={() => open(c.id, c.name)}
+                      onCopyLink={() =>
+                        void copyCanvasLink(c, (ok) => {
+                          if (ok) showToast(t('home.linkCopied'))
+                        })
+                      }
+                      onShare={() => share(c)}
+                      onDuplicate={() => duplicate(c)}
+                      onMove={workspaces.length && canManage(c) ? () => setMoveCanvas(c) : undefined}
+                      onDelete={canManage(c) ? () => setDeleteCanvas(c) : undefined}
+                    />
+                  </ContextMenu>
                 ))}
               </div>
             )}
@@ -702,6 +739,66 @@ function Meta({ canvas: c, onClaim, workspace }: { canvas: CanvasMeta; onClaim: 
   )
 }
 
+async function copyCanvasLink(canvas: CanvasMeta, done: (ok: boolean) => void) {
+  try {
+    await navigator.clipboard.writeText(new URL(`/c/${canvas.id}`, location.origin).href)
+    done(true)
+  } catch {
+    done(false)
+  }
+}
+
+type CanvasMenuHandlers = {
+  canvas: CanvasMeta
+  duplicating: boolean
+  onShare: () => void
+  onDuplicate: () => void
+  onMove?: () => void
+  onDelete?: () => void
+}
+
+/** Right-click menu on a Home tile — Open / Copy link plus the same actions as ⋯ */
+function CanvasContextMenu({
+  canvas,
+  duplicating,
+  onOpen,
+  onCopyLink,
+  onShare,
+  onDuplicate,
+  onMove,
+  onDelete,
+}: CanvasMenuHandlers & { onOpen: () => void; onCopyLink: () => void }) {
+  const t = useT()
+  return (
+    <ContextMenuContent>
+      <ContextMenuItem onSelect={onOpen}>{t('home.openCanvas')}</ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem onSelect={onCopyLink}>
+        <LinkIcon className="size-4" /> {t('home.copyLink')}
+      </ContextMenuItem>
+      <ContextMenuItem onSelect={onShare}>
+        <ShareIcon className="size-4" /> {t('home.share')}
+      </ContextMenuItem>
+      <ContextMenuItem disabled={duplicating} onSelect={onDuplicate}>
+        <CopyIcon className="size-4" /> {duplicating ? t('home.duplicating') : t('home.duplicate')}
+      </ContextMenuItem>
+      {onMove && (
+        <ContextMenuItem onSelect={onMove}>
+          <BuildingIcon className="size-4" /> {canvas.workspaceId ? t('home.move') : t('home.moveToWorkspace')}
+        </ContextMenuItem>
+      )}
+      {onDelete && (
+        <>
+          <ContextMenuSeparator />
+          <ContextMenuItem tone="danger" onSelect={onDelete}>
+            <TrashIcon className="size-4" /> {t('common.delete')}
+          </ContextMenuItem>
+        </>
+      )}
+    </ContextMenuContent>
+  )
+}
+
 function CanvasActions({
   canvas,
   compact = false,
@@ -710,15 +807,7 @@ function CanvasActions({
   onDuplicate,
   onMove,
   onDelete,
-}: {
-  canvas: CanvasMeta
-  compact?: boolean
-  duplicating: boolean
-  onShare: () => void
-  onDuplicate: () => void
-  onMove?: () => void
-  onDelete?: () => void
-}) {
+}: CanvasMenuHandlers & { compact?: boolean }) {
   const t = useT()
   return (
     <DropdownMenu>
