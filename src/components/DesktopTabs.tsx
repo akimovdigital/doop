@@ -347,10 +347,8 @@ export function DesktopTabs({ path }: { path: string }) {
                       onDoubleClick={() => tab.id !== readOnlyId && menuOpenToEditor()}
                       className={cn(
                         'relative flex h-[30px] w-full min-w-0 items-center gap-1.5 rounded-[6px] text-[12.5px] text-ink-soft hover:bg-sub hover:text-ink focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
-                        'aria-selected:bg-surface aria-selected:text-ink aria-selected:after:absolute aria-selected:after:bottom-[2px] aria-selected:after:left-1/2 aria-selected:after:w-8 aria-selected:after:-translate-x-1/2 aria-selected:after:rounded-full aria-selected:after:border-b-2 aria-selected:after:border-brand aria-selected:hover:bg-surface',
-                        compact
-                          ? 'h-full justify-center aria-selected:after:bottom-[5px] aria-selected:after:w-4'
-                          : 'pl-2 pr-7',
+                        'aria-selected:bg-surface aria-selected:text-ink aria-selected:hover:bg-surface',
+                        compact ? 'h-[30px] justify-center' : 'pl-2 pr-7',
                       )}
                     >
                       <FrameIcon size="rail" className={cn('shrink-0', selected && 'text-brand')} />
