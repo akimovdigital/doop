@@ -31,10 +31,11 @@ tab. Sections has its own disclosure, add control and scrolling area. In the Lay
 a range, and selected layers can be dragged together. The primary row is revealed by scrolling the tree
 inside the panel. See `src/components/LayersPanel.tsx` and `src/components/ui/panel.tsx`.
 
-The stage groups the floating page strip (`PageStrip`) and zoom pill in a row with an 8 px gap on
-desktop. On mobile the page strip stacks 12 px above the zoom pill. The strip shows page chips with
-previous/next when there is more than one page. PageUp/PageDown, the View menu and the empty-canvas
-context menu switch pages the same way. See `src/components/PageStrip.tsx` and `src/components/Stage.tsx`.
+The canvas tool strip is a 36px pill: `h-9`, `rounded-[10px]`, horizontal padding 4px, the same
+height and radius as the title and Import/Export pills (`data-slot="bar-pill"`). It does not use the
+generic toolbar's 5px padding or 12px radius. The floating page chip is not on the stage. PageUp/PageDown,
+the View menu, Layers and the empty-canvas context menu still switch pages. See `src/components/Stage.tsx`
+and `src/components/TopBar.tsx`.
 
 | Default section paint | Light     | Dark      |
 | --------------------- | --------- | --------- |

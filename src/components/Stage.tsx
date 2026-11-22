@@ -49,7 +49,6 @@ import {
 } from './ui/context-menu'
 import { Toolbar, ToolbarButton, ToolbarDivider, ToolbarHighlight } from './ui/toolbar'
 import { ActionMenuItem } from './ActionMenuItem'
-import { PageStrip } from './PageStrip'
 import { ZoomControls } from './ZoomControls'
 import { Tooltip } from './ui/tooltip'
 import {
@@ -1488,11 +1487,14 @@ export function Stage({
           )}
           <Toolbar
             aria-label={t('stage.canvasTools')}
-            className={
+            className={cn(
+              /* same 36px pill as the title and Import/Export bar, not the
+                 38px toolbar that came from 5px padding and a 12px radius */
+              'h-9 rounded-[10px] px-1 py-0',
               /* the Section tool is one more phone button; a 1px gap keeps the
                  whole strip inside a 390px screen, where 2px gaps spill 1.5px */
-              'max-sm:gap-px'
-            }
+              'max-sm:gap-px',
+            )}
           >
             {/* one fill slides between tools; the buttons themselves stay
                 transparent so the pill is the only thing that moves */}
@@ -1520,22 +1522,19 @@ export function Stage({
           </Toolbar>
         </div>
 
-        {/* Keep the page strip clear of the zoom pill at its rendered width.
-            On phones the pair floats above the tools and their drawing hint. */}
+        {/* Zoom sits alone at the corner. The page chip is not part of this chrome. */}
         <div
           className={cn(
-            'pointer-events-none absolute z-[35] flex [&>*]:pointer-events-auto',
+            'pointer-events-none absolute z-[35] flex justify-end [&>*]:pointer-events-auto',
             isMobile
               ? cn(
-                  'inset-x-3 bottom-[calc(64px+env(safe-area-inset-bottom))] flex-col items-center gap-3',
+                  'inset-x-3 bottom-[calc(64px+env(safe-area-inset-bottom))]',
                   isDrawingTool(tool) && 'bottom-[calc(124px+env(safe-area-inset-bottom))]',
                 )
-              : 'right-[var(--chrome-right,12px)] bottom-3.5 left-[var(--chrome-left,12px)] justify-end gap-2 transition-[right] duration-150 ease-[ease]',
-            /* Keep the zoom label mounted when the interface is hidden. */
+              : 'right-[var(--chrome-right,12px)] bottom-3.5 transition-[right] duration-150 ease-[ease]',
             uiHidden && 'hidden',
           )}
         >
-          <PageStrip hidden={uiHidden} />
           <ZoomControls
             labelRef={zoomLabelRef}
             onZoomIn={() => ref.current && zoomCentered(ref.current, useStore.getState().viewport.zoom * 1.25)}
