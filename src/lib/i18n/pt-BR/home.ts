@@ -7,6 +7,8 @@ export const home: Catalog['home'] = {
   newShort: 'Novo',
   hidePromptBox: 'Ocultar a caixa de prompt',
   showPromptBox: 'Mostrar a caixa de prompt',
+  openCanvas: 'Abrir',
+  copyLink: 'Copiar link',
 
   /* failures and toasts */
   createCanvasFailed: 'Não foi possível criar o canvas',

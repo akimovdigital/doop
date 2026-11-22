@@ -6,6 +6,8 @@ export const home = {
   newShort: 'New',
   hidePromptBox: 'Hide Prompt Box',
   showPromptBox: 'Show Prompt Box',
+  openCanvas: 'Open',
+  copyLink: 'Copy link',
 
   /* failures and toasts */
   createCanvasFailed: 'Couldn’t create the canvas',

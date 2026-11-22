@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { HomeHero } from '../src/components/HomeHero'
 import { GeneralSettings } from '../src/components/GeneralSettings'
-import { IconButton } from '../src/components/ui/icon-button'
+import { Button } from '../src/components/ui/button'
 import { SparkIcon } from '../src/components/ui/icons'
 import { PROMPT_BOX_STORAGE_KEY, setPromptBoxHidden, usePromptBoxHidden } from '../src/lib/homePreferences'
 
@@ -53,9 +53,9 @@ function HeaderExpand() {
   const hidden = usePromptBoxHidden()
   if (!hidden) return null
   return (
-    <IconButton aria-label="Show Prompt Box" onClick={() => setPromptBoxHidden(false)}>
-      <SparkIcon width={15} height={15} />
-    </IconButton>
+    <Button variant="default" size="bar" aria-label="Show Prompt Box" onClick={() => setPromptBoxHidden(false)}>
+      <SparkIcon width={15} height={15} /> Show Prompt Box
+    </Button>
   )
 }
 

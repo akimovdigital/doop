@@ -42,7 +42,6 @@ import {
   PlusIcon,
   UploadIcon,
   WebIcon,
-  XIcon,
 } from './ui/icons'
 import { useT, type PlainMessageKey } from '../lib/i18n'
 
@@ -201,7 +200,8 @@ export function HomeHero({
         disabled={busy}
         onClick={() => setPromptBoxHidden(true)}
       >
-        <XIcon className="size-4" />
+        {/* minus reads as collapse, not dismiss — the header restores it */}
+        <MinusIcon className="size-4" />
       </IconButton>
       {/* the wave: 2 copies of 28 bars, blurred, fading in from the top. It is
           sized to the section, not to pixels, so it ends faded inside the hero
