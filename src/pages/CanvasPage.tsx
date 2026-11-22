@@ -141,9 +141,10 @@ import { usePanelLayout } from '../lib/panelLayout'
 /* The floating chrome's geometry, in px from the canvas area's edges. The
    panels sit 14px in from the edge; on the right the resizable Agents panel
    always hugs the edge, the Inspector (244) opens to its left, and the icon
-   islands (40) sit left of whatever is open. On the left the tool rail follows the Layers
-   panel, or its collapsed 40px island. --chrome-left/--chrome-right
-   mark where the open canvas begins and ends, for the zoom pill and toasts.
+   islands (40) sit left of whatever is open. On the left the Layers panel
+   (or its collapsed 40px island) sets the open edge — the tool strip is a
+   centred top bar, not a left column. --chrome-left/--chrome-right mark
+   where the open canvas begins and ends, for the zoom pill and toasts.
    With rulers on, the chrome layer starts RULER_PX further in on the top
    and left; --chrome-top and --rail-left include that, these offsets do not.
    Docked (Settings → Appearance → Canvas panels), the same pieces are
@@ -201,15 +202,16 @@ function chromeLayout({
   docked: boolean
 }) {
   if (docked) {
+    /* toolRail tracks the Layers column only; tools float centred on top */
     const toolRail = layersOpen ? layersWidth : RAIL_W
     const properties = agentsOpen ? agentsWidth : 0
     const island = propertiesShown ? properties + INSPECTOR_W : properties
-    return { toolRail, properties, island, left: toolRail + RAIL_W, right: island + RAIL_W }
+    return { toolRail, properties, island, left: toolRail, right: island + RAIL_W }
   }
   const toolRail = layersOpen ? EDGE + layersWidth + 12 : EDGE + RAIL_W + 10
   const properties = agentsOpen ? EDGE + agentsWidth + 8 : EDGE
   const island = propertiesShown ? properties + INSPECTOR_W + 10 : agentsOpen ? EDGE + agentsWidth + 10 : EDGE
-  return { toolRail, properties, island, left: toolRail + RAIL_W + 16, right: island + RAIL_W + 10 }
+  return { toolRail, properties, island, left: toolRail + 16, right: island + RAIL_W + 10 }
 }
 
 const STARTER_HTML = `<!doctype html>
@@ -1050,7 +1052,7 @@ export function CanvasPage({
       )}
       <div className="absolute inset-0 overflow-hidden" style={chromeVars}>
         {find && !presenting && !uiHidden && <FindBar mode={find} step={findStep} onClose={() => setFind(null)} />}
-        <Stage onAddFrame={addFrame} insets={stageInsets} bounds={stageBounds} docked={docked} />
+        <Stage onAddFrame={addFrame} insets={stageInsets} bounds={stageBounds} />
         <div
           className={cn(
             'pointer-events-none absolute inset-x-0 bottom-0 top-[50px] max-md:top-14 max-xs:top-[100px]',

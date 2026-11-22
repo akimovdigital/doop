@@ -23,13 +23,21 @@ describe.skipIf(!findBrowserPath())('zoom to selection with the panels open', ()
     await showCanvasPage(page, [WIDE])
   })
 
-  /** the open stage: right of the tool rail (which follows the Layers
-   *  panel), left of the islands (which follow the Inspector and Agents) */
+  /** the open stage: right of the Layers panel (or its collapsed rail), left
+   *  of the islands (which follow the Inspector and Agents). Tools sit in a
+   *  centred top strip, so they no longer mark the left edge. */
   async function openArea() {
-    return page.evaluate(() => ({
-      left: document.querySelector('[aria-label="Canvas tools"]')!.getBoundingClientRect().right,
-      right: document.querySelector('[aria-label="Account"]')!.getBoundingClientRect().left,
-    }))
+    return page.evaluate(() => {
+      const layersPanel = [...document.querySelectorAll('[data-slot="panel"]')].find(
+        (el) => el.getBoundingClientRect().left < window.innerWidth / 2,
+      )
+      const layersRail = document.querySelector('[aria-label="Layers panel"]')
+      const leftEl = layersPanel ?? layersRail
+      return {
+        left: leftEl!.getBoundingClientRect().right,
+        right: document.querySelector('[aria-label="Account"]')!.getBoundingClientRect().left,
+      }
+    })
   }
 
   /** select the frame with the Inspector and Agents open, press ⇧2 and

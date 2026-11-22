@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { AGENTS_MIN, LAYERS_MIN, fitPanelWidths } from '../src/lib/panelWidths'
 
-/* the chrome left at 1000px with the Inspector open: tool rail, islands, gaps */
+/* the chrome left at 1000px with the Inspector open: layers edge, islands, gaps */
 const reserved = 82 + 326
 
 describe('fitPanelWidths', () => {
