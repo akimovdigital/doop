@@ -9,6 +9,7 @@ import { timeAgo } from '../lib/time'
 import { useStore } from '../lib/store'
 import { isResidentLimit } from '../components/TeamAllowance'
 import { canvasNameFromPrompt, draftsCardTitle, type DraftCount } from '../lib/homePrompt'
+import { setPromptBoxHidden, usePromptBoxHidden } from '../lib/homePreferences'
 import { currentRunnerPick } from '../lib/runnerPick'
 import { AgentTile } from '../components/AgentIcon'
 import { AppRail, railLayout } from '../components/AppRail'
@@ -52,6 +53,7 @@ import {
   MoreHorizontalIcon,
   PlusIcon,
   ShareIcon,
+  SparkIcon,
   TrashIcon,
   UploadIcon,
 } from '../components/ui/icons'
@@ -106,6 +108,7 @@ export function Home() {
   const [composerFocusAt, setComposerFocusAt] = useState(0)
   const { data: session } = authClient.useSession()
   const t = useT()
+  const promptBoxHidden = usePromptBoxHidden()
   const ownerId = session?.user.id
 
   /* pings can start overlapping reloads; a response older than one already
@@ -338,6 +341,15 @@ export function Home() {
       <DashMain className="[background:var(--paper)]">
         <DashHeader variant="bare">
           <span className="flex-1" />
+          {promptBoxHidden && (
+            <IconButton
+              aria-label={t('home.showPromptBox')}
+              className="text-ink-soft"
+              onClick={() => setPromptBoxHidden(false)}
+            >
+              <SparkIcon width={15} height={15} />
+            </IconButton>
+          )}
           <Button variant="default" size="bar" disabled={starting} onClick={() => setImporting(true)}>
             <UploadIcon width={15} height={15} className="text-ink-soft" /> {t('home.import')}
           </Button>
