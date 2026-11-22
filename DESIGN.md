@@ -18,7 +18,7 @@ The 38 px rail appears in the signed-in canvas editor. The native macOS controls
 | Separators              | `--line` #dcdcdc       | rgba(255, 255, 255, 0.13) |
 | Keyboard focus          | `--ring` #9c9b99       | #7a7976                   |
 
-Labels use Inter with the app's fallback stack. Ordinary tabs use 12.5 px text on a 30 px button with a 6 px radius. Their slots shrink from 188 px to 84 px. The text truncates first and the full name remains available by tooltip and to assistive technology. Pinned canvases use 32 px slots with a centred icon. A blue underline identifies the active tab, including pinned tabs. The close button is visible on active, hovered or keyboard-focused ordinary tabs.
+Labels use Inter with the app's fallback stack. Ordinary tabs use 12.5 px text on a 30 px button with a 6 px radius. Their slots shrink from 188 px to 84 px. The text truncates first and the full name remains available by tooltip and to assistive technology. Pinned canvases use a 32 px slot and the same 30 px pill as an ordinary tab. The active tab is the surface fill, with no blue underline. The close button is visible on active, hovered or keyboard-focused ordinary tabs.
 
 The tabs stay in one scrolling row, with pinned canvases first. The selected tab scrolls into view. Arrow keys move focus, and Enter or Space opens the focused canvas. Saved tabs retain their canvas, page and pin state. Tabs from previous groups appear in the same row.
 
