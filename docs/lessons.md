@@ -2,6 +2,18 @@
 
 Формат записи: дата, PR или синк со ссылкой, что сделали, что сработало, что сломалось и причина, урок или правило на будущее. Причину не выдумывать. Повторяющийся урок переносить правилом в `.cursor/rules/git-workflow.mdc`.
 
+## 22.11.2026 — PR #16, center canvas toolbar
+
+PR: [#16](https://github.com/akimovdigital/doop/pull/16), SHA [`6bce48e`](https://github.com/akimovdigital/doop/commit/6bce48e617a8a74c053825afe756565c2f264471).
+
+**Что сделали.** Canvas tools — горизонтальная полоса по центру сверху под chrome (Excalidraw). На телефоне низ без изменений. `chromeLayout.left` без колонки tool rail; FollowFrame ниже полосы. Скрин: `/cursor/stores/self/media/toolbar-centered.png`.
+
+**Что сработало.** typecheck, lint, vitest 3964. Rebase на web tabs / page strip без конфликтов. ManagePullRequest принял `feat/…` с `skip_branch_prefix_check` (имя ветки задал Никита).
+
+**Что сломалось.** Два `drawingMoveBrowser` кликали в (610,70)/(630,60) — туда же сел новый тулбар. Сдвинули viewport `y:120` и экранные координаты.
+
+**Урок.** Центрированный top toolbar перекрывает старые hard-coded клики у y≈60–70 по центру; browser-тесты с screen coords после сдвига chrome перепроверять.
+
 ## 22.11.2026 — PR #14, page strip on stage
 
 PR: [#14](https://github.com/akimovdigital/doop/pull/14), SHA [`511a1cc`](https://github.com/akimovdigital/doop/commit/511a1cce4adfcd96b094971c55ed293dbe07630d).
