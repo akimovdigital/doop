@@ -85,9 +85,9 @@ function ToolbarDot({ className }: { className: string }) {
 /** The fill behind the pressed button, as one element that slides and
  *  resizes to the next press instead of each button lighting up on its own.
  *  It measures `[aria-pressed="true"]` in its toolbar whenever `activeKey`
- *  changes and whenever the toolbar re-lays out (the rail flips from a row on
- *  phones to a column on desktop). The first measurement is applied without
- *  a transition, so the pill never slides in from the corner on mount. */
+ *  changes and whenever the toolbar re-lays out (orientation or size). The
+ *  first measurement is applied without a transition, so the pill never
+ *  slides in from the corner on mount. */
 function ToolbarHighlight({ activeKey, className }: { activeKey: string; className?: string }) {
   const ref = React.useRef<HTMLSpanElement>(null)
   const [ready, setReady] = React.useState(false)

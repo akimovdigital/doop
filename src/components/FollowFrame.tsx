@@ -7,9 +7,8 @@ import { useT } from '../lib/i18n'
 /** Figma-style "you are following X": a border in the leader's colour around
  *  the stage and a pill naming them (a followed agent while it is idle too). Any pan or zoom of our own lets go, so
  *  the pill's × is for people who want to stop without moving. The pill hangs
- *  below the top bar (--chrome-top, set by the page), where the presence
- *  avatars would otherwise cover it; the 7px plus the 3px border lines it up
- *  with the tool rail. */
+ *  below the centred top tool strip (--chrome-top + toolbar height), so it
+ *  does not cover the tools or the presence avatars in the bar. */
 export function FollowFrame() {
   const t = useT()
   const leader = useStore(followedLeader)
@@ -26,7 +25,7 @@ export function FollowFrame() {
       style={{ borderColor: leader.color }}
     >
       <div
-        className="pointer-events-auto absolute left-1/2 top-[calc(var(--chrome-top,0px)+7px)] flex -translate-x-1/2 items-center gap-2 rounded-full py-1.5 pr-2 pl-3.5 text-[12.5px] font-medium text-white shadow-pop"
+        className="pointer-events-auto absolute left-1/2 top-[calc(var(--chrome-top,0px)+56px)] flex -translate-x-1/2 items-center gap-2 rounded-full py-1.5 pr-2 pl-3.5 text-[12.5px] font-medium text-white shadow-pop"
         style={{ background: leader.color }}
       >
         <span>

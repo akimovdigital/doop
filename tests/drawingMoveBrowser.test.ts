@@ -479,14 +479,15 @@ describe.skipIf(!findBrowserPath())('drawing on the canvas', { timeout: 30_000 }
       rotation: 90,
     }
     await seedFrames([source])
-    await page.evaluate(() => window.drawingHarness.viewport({ x: 40, y: 20, zoom: 1 }))
+    /* y:120 clears the centred top tool strip so the drag hits the layer */
+    await page.evaluate(() => window.drawingHarness.viewport({ x: 40, y: 120, zoom: 1 }))
     await page.evaluate(() => window.drawingHarness.pick({ frameId: 'layers', selector: '#rect' }))
     /* the frame turns a quarter about its centre (420, 300): the layer's
-       centre (90, 80) in it shows at (590, 40) on the canvas, screen (630, 60) */
+       centre (90, 80) in it shows at (590, 40) on the canvas, screen (630, 160) */
     await visibleDrawing('Layers', '#rect')
     await page.keyboard.down('Alt')
     await page.keyboard.down('Shift')
-    await drag([630, 60], [1080, 60])
+    await drag([630, 160], [1080, 160])
     await page.keyboard.up('Shift')
     await page.keyboard.up('Alt')
     await expect.poll(() => saved.length).toBe(2)
@@ -572,13 +573,14 @@ describe.skipIf(!findBrowserPath())('drawing on the canvas', { timeout: 30_000 }
   it("drags a layer inside a turned frame along the document's own axes, picking the layer under the pointer", async () => {
     const source = { ...layerFrame(rectangle), rotation: 90 }
     await seedFrames([source])
-    await page.evaluate(() => window.drawingHarness.viewport({ x: 40, y: 20, zoom: 1 }))
+    /* y:120 clears the centred top tool strip so the drag hits the layer */
+    await page.evaluate(() => window.drawingHarness.viewport({ x: 40, y: 120, zoom: 1 }))
     const iframe = (await (await page.waitForSelector('iframe[title="Layers"]'))!.contentFrame())!
     await iframe.waitForSelector('#rect')
     /* the 700×500 frame at (70,50) turned a quarter has its centre at (420,300)
        in the world; the layer's design centre (100,100) lands at (570,50),
-       which the viewport's offset puts at (610,70) on screen */
-    await drag([610, 70], [610, 130])
+       which the viewport's offset puts at (610,170) on screen */
+    await drag([610, 170], [610, 230])
     await expect.poll(() => patchRequests).toBe(1)
     /* 60px down the screen is 60px along the turned document's x: the layer
        itself moved, not the frame, and only along that axis */

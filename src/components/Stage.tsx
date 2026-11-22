@@ -239,7 +239,6 @@ export function Stage({
   onAddFrame,
   insets = NO_INSETS,
   bounds,
-  docked = false,
 }: {
   onAddFrame: () => void
   /** px the top bar, floating panels and islands cover at each of the
@@ -249,8 +248,6 @@ export function Stage({
   /** where the stage sits inside the page when it is not the whole of it:
    *  docked panels leave it the gap between their columns */
   bounds?: StageInsets
-  /** the panels are docked, so the tool rail is a full-height column too */
-  docked?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
   /* read by the fit callbacks, which outlive a render */
@@ -1448,21 +1445,20 @@ export function Stage({
         </ContextMenuTrigger>
         <FollowFrame />
 
-        {/* the tool rail: a vertical island beside the Layers panel on desktop
-            (the page sets --rail-left and --chrome-top), a centred strip at
-            the bottom on phones */}
+        {/* the tool strip: centred under the top chrome on desktop (Excalidraw-
+            style), a centred strip at the bottom on phones. --chrome-top is
+            set by the page so the bar clears the agents / title chrome. */}
         <div
           className={cn(
             'absolute bottom-[calc(8px+env(safe-area-inset-bottom))] left-1/2 z-[35] -translate-x-1/2 sm:bottom-4',
-            'md:top-[calc(var(--chrome-top,0px)+10px)] md:bottom-auto md:left-[var(--rail-left,14px)] md:translate-x-0 md:transition-[left] md:duration-150',
-            docked && 'md:top-[var(--chrome-top,0px)] md:bottom-0',
+            'md:top-[calc(var(--chrome-top,0px)+10px)] md:bottom-auto',
             uiHidden && 'hidden',
           )}
         >
           {isDrawingTool(tool) && (
             <div
               data-drawing-hint
-              className="absolute bottom-full left-1/2 mb-2 flex w-max max-w-[min(340px,90vw)] -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-[10px] bg-surface px-3 py-2 text-center text-[12px] text-ink-soft shadow-pop md:top-0 md:bottom-auto md:left-full md:mb-0 md:ml-2.5 md:translate-x-0 md:justify-start md:text-left"
+              className="absolute bottom-full left-1/2 mb-2 flex w-max max-w-[min(340px,90vw)] -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-[10px] bg-surface px-3 py-2 text-center text-[12px] text-ink-soft shadow-pop md:top-full md:bottom-auto md:mt-2 md:mb-0"
             >
               <span>
                 {tool === 'path'
@@ -1492,12 +1488,11 @@ export function Stage({
           )}
           <Toolbar
             aria-label={t('stage.canvasTools')}
-            className={cn(
+            className={
               /* the Section tool is one more phone button; a 1px gap keeps the
                  whole strip inside a 390px screen, where 2px gaps spill 1.5px */
-              'max-sm:gap-px md:w-10 md:flex-col',
-              docked && 'md:h-full md:rounded-none md:border-r md:border-line-soft md:shadow-none',
-            )}
+              'max-sm:gap-px'
+            }
           >
             {/* one fill slides between tools; the buttons themselves stay
                 transparent so the pill is the only thing that moves */}
@@ -1507,7 +1502,7 @@ export function Stage({
                 <Tooltip
                   key={entry.id}
                   label={t('stage.toolTooltip', { label: t(entry.label), key: entry.key })}
-                  side="right"
+                  side={isMobile ? 'top' : 'bottom'}
                 >
                   <ToolbarButton
                     aria-label={t(entry.label)}
@@ -1520,8 +1515,8 @@ export function Stage({
                 </Tooltip>
               ),
             )}
-            <ToolbarDivider className="md:mx-0 md:my-1 md:h-px md:w-[18px]" />
-            <ModeSwitch canComment={toolAllowed('comment', role)} />
+            <ToolbarDivider />
+            <ModeSwitch canComment={toolAllowed('comment', role)} tipSide={isMobile ? 'top' : 'bottom'} />
           </Toolbar>
         </div>
 
@@ -1590,7 +1585,13 @@ const MODES: { id: Mode; label: PlainMessageKey; icon: React.ReactNode }[] = [
  *  group it is one tab stop, and the arrow keys move and pick. The phone
  *  strip has no room for all three at touch size, so it keeps Comment only
  *  (any tool leaves it; Prototype mode moves to the canvas actions sheet). */
-function ModeSwitch({ canComment }: { canComment: boolean }) {
+function ModeSwitch({
+  canComment,
+  tipSide = 'bottom',
+}: {
+  canComment: boolean
+  tipSide?: 'top' | 'bottom' | 'left' | 'right'
+}) {
   const t = useT()
   const mode = useStore((s): Mode => (s.tool === 'comment' ? 'comment' : s.prototypeMode ? 'prototype' : 'edit'))
   const pick = (next: Mode) => {
@@ -1616,11 +1617,11 @@ function ModeSwitch({ canComment }: { canComment: boolean }) {
     <div
       role="radiogroup"
       aria-label={t('stage.canvasMode')}
-      className="flex items-center gap-0.5 md:flex-col"
+      className="flex items-center gap-0.5"
       onKeyDown={onKeyDown}
     >
       {modes.map((m) => (
-        <Tooltip key={m.id} label={t(m.label)} side="right">
+        <Tooltip key={m.id} label={t(m.label)} side={tipSide}>
           <ToolbarButton
             role="radio"
             aria-label={t(m.label)}

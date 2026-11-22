@@ -183,13 +183,11 @@ export function Onboarding({ canvasId }: { canvasId: string }) {
   }
 
   return (
-    /* bottom left of the canvas, beside the Layers panel in the tool rail's
-       column (--rail-left): the rail stops near the top, so the card can hug
-       the panel. A window too short to stack them (the rail ends ~308px down,
-       the card is up to ~250px tall) moves the card past the rail
-       (--chrome-left) so it can't cover the tools. Clear of the zoom control
-       on the right. Docked panels make the rail a full-height column, so the
-       card always sits past it */
+    /* bottom left of the canvas, beside the Layers panel (--rail-left is the
+       panel's right edge). A short window moves the card past the open canvas
+       edge (--chrome-left) so it stays clear of the layers column. Clear of
+       the zoom control on the right. Docked panels make Layers a full-height
+       column, so the card always sits past it */
     <div
       className={cn(
         'pointer-events-auto absolute bottom-3.5 z-40 flex w-[340px] flex-col gap-3 rounded-panel bg-surface px-5 pt-4 pb-5 shadow-pop transition-[left] duration-150 max-md:right-4 max-md:bottom-4 max-md:left-auto',
