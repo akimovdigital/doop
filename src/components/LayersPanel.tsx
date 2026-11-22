@@ -72,7 +72,7 @@ import {
   type PanelResize,
   type PanelSurface,
 } from './ui/panel'
-import { FrameworkPanel } from './FrameworkPanel'
+import { TokensSection } from './TokensPanel'
 import { Button } from './ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible'
 import { Input } from './ui/input'
@@ -90,7 +90,7 @@ import {
   FrameIcon,
   LayersIcon,
   ComponentIcon,
-  PaletteIcon,
+  BracesIcon,
   SectionIcon,
   InstanceIcon,
   LockIcon,
@@ -254,7 +254,7 @@ export function LayersPanel({
 }) {
   /* a row's pointerleave never fires if the panel goes away under it */
   useEffect(() => () => useStore.getState().setHoveredLayer(null), [])
-  /* which face shows: the layer tree, Components, or Framework. In the store
+  /* which face shows: the layer tree, Components, or Tokens. In the store
      so the collapsed rail can open straight onto one */
   const tab = useStore((s) => s.layersTab)
   const setTab = useStore((s) => s.setLayersTab)
@@ -808,8 +808,8 @@ export function LayersPanel({
             >
               {t('components.title')}
             </PanelIconTab>
-            <PanelIconTab value="framework" icon={<PaletteIcon />} title="Framework">
-              Framework
+            <PanelIconTab value="tokens" icon={<BracesIcon />} title={t('panels.layersTabTokens')}>
+              {t('panels.layersTabTokens')}
             </PanelIconTab>
           </PanelTabs>
           {surface === 'inline' ? (
@@ -830,7 +830,11 @@ export function LayersPanel({
         </PanelHeader>
       </PanelTabsRoot>
       {tab === 'components' && <ComponentsPanel />}
-      {tab === 'framework' && <FrameworkPanel key={pageCanvas?.id} />}
+      {tab === 'tokens' && (
+        <PanelBody className="flex flex-col pb-2">
+          <TokensSection />
+        </PanelBody>
+      )}
       {tab === 'layers' && (
         <>
           {/* Figma's order: the pages at the top, the frames of the active page
@@ -1008,14 +1012,14 @@ export function LayersRailToggle({ docked = false }: { docked?: boolean }) {
         <ComponentIcon />
       </ToolbarControl>
       <ToolbarControl
-        label="Framework"
+        label={t('panels.layersTabTokens')}
         side="right"
         onClick={() => {
-          useStore.getState().setLayersTab('framework')
+          useStore.getState().setLayersTab('tokens')
           setLayersOpen(true)
         }}
       >
-        <PaletteIcon />
+        <BracesIcon />
       </ToolbarControl>
     </Toolbar>
   )
