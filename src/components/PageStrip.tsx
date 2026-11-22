@@ -1,9 +1,7 @@
 import { useLayoutEffect, useRef } from 'react'
 import { canvasPages } from '../../shared/pages'
 import { stepPage } from '../lib/actions/edits'
-import { useIsMobile } from '../hooks/use-mobile'
 import { useT } from '../lib/i18n'
-import { isDrawingTool } from '../lib/tools'
 import { useStore } from '../lib/store'
 import { cn } from '../lib/utils'
 import { ChevronLeftIcon, ChevronRightIcon, PageIcon } from './ui/icons'
@@ -14,10 +12,8 @@ import { Toolbar, ToolbarButton } from './ui/toolbar'
  *  it does not replace them. */
 export function PageStrip({ hidden }: { hidden: boolean }) {
   const t = useT()
-  const isMobile = useIsMobile()
   const canvas = useStore((s) => s.canvas)
   const activePageId = useStore((s) => s.activePageId)
-  const drawing = useStore((s) => isDrawingTool(s.tool))
   const listRef = useRef<HTMLDivElement>(null)
 
   const pages = canvas ? canvasPages(canvas) : []
@@ -35,17 +31,7 @@ export function PageStrip({ hidden }: { hidden: boolean }) {
     <Toolbar
       data-slot="page-strip"
       aria-label={t('stage.pagesStrip')}
-      className={cn(
-        /* beside the zoom pill on desktop — bottom-left is the Getting started
-           card; on phones sit above the tool strip, clear of the zoom pill */
-        'absolute z-[35] h-9 max-w-[min(28rem,calc(100%-1.5rem))] gap-0.5 overflow-hidden px-1 py-0',
-        isMobile
-          ? cn(
-              'bottom-[calc(112px+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2',
-              drawing && 'bottom-[calc(172px+env(safe-area-inset-bottom))]',
-            )
-          : 'bottom-3.5 right-[calc(var(--chrome-right,12px)+5.75rem)]',
-      )}
+      className="h-9 min-w-0 max-w-[min(28rem,100%)] gap-0.5 overflow-hidden px-1 py-0"
     >
       {pages.length > 1 && (
         <ToolbarButton

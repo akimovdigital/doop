@@ -1520,17 +1520,31 @@ export function Stage({
           </Toolbar>
         </div>
 
-        <PageStrip hidden={uiHidden} />
-
-        <ZoomControls
-          labelRef={zoomLabelRef}
-          hidden={uiHidden}
-          onZoomIn={() => ref.current && zoomCentered(ref.current, useStore.getState().viewport.zoom * 1.25)}
-          onZoomOut={() => ref.current && zoomCentered(ref.current, useStore.getState().viewport.zoom / 1.25)}
-          onZoomTo={(zoom) => ref.current && zoomCentered(ref.current, zoom)}
-          onFit={fit}
-          onFitSelection={fitSelection}
-        />
+        {/* Keep the page strip clear of the zoom pill at its rendered width.
+            On phones the pair floats above the tools and their drawing hint. */}
+        <div
+          className={cn(
+            'pointer-events-none absolute z-[35] flex [&>*]:pointer-events-auto',
+            isMobile
+              ? cn(
+                  'inset-x-3 bottom-[calc(64px+env(safe-area-inset-bottom))] flex-col items-center gap-3',
+                  isDrawingTool(tool) && 'bottom-[calc(124px+env(safe-area-inset-bottom))]',
+                )
+              : 'right-[var(--chrome-right,12px)] bottom-3.5 left-[var(--chrome-left,12px)] justify-end gap-2 transition-[right] duration-150 ease-[ease]',
+            /* Keep the zoom label mounted when the interface is hidden. */
+            uiHidden && 'hidden',
+          )}
+        >
+          <PageStrip hidden={uiHidden} />
+          <ZoomControls
+            labelRef={zoomLabelRef}
+            onZoomIn={() => ref.current && zoomCentered(ref.current, useStore.getState().viewport.zoom * 1.25)}
+            onZoomOut={() => ref.current && zoomCentered(ref.current, useStore.getState().viewport.zoom / 1.25)}
+            onZoomTo={(zoom) => ref.current && zoomCentered(ref.current, zoom)}
+            onFit={fit}
+            onFitSelection={fitSelection}
+          />
+        </div>
 
         {canvas && (
           <ContextMenuContent>

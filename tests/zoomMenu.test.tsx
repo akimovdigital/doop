@@ -22,7 +22,6 @@ beforeEach(async () => {
     root.render(
       <ZoomControls
         labelRef={createRef<HTMLSpanElement>()}
-        hidden={false}
         onZoomIn={vi.fn()}
         onZoomOut={vi.fn()}
         onZoomTo={onZoomTo}

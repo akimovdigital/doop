@@ -1,6 +1,5 @@
 import { useState, type RefObject } from 'react'
 import { useStore } from '../lib/store'
-import { isDrawingTool } from '../lib/tools'
 import { useIsMobile } from '../hooks/use-mobile'
 import { ALT_KEY, MOD_KEY } from '../lib/keys'
 import { parseZoomPercent } from '../lib/viewOptions'
@@ -25,7 +24,6 @@ import { useT } from '../lib/i18n'
    from its viewport subscription, so pan/zoom never re-renders this. */
 export function ZoomControls({
   labelRef,
-  hidden,
   onZoomIn,
   onZoomOut,
   onZoomTo,
@@ -33,8 +31,6 @@ export function ZoomControls({
   onFitSelection,
 }: {
   labelRef: RefObject<HTMLSpanElement>
-  /** ⌘. has hidden the chrome: display:none, so the label ref stays mounted */
-  hidden: boolean
   onZoomIn: () => void
   onZoomOut: () => void
   onZoomTo: (zoom: number) => void
@@ -44,7 +40,6 @@ export function ZoomControls({
   const t = useT()
   const isMobile = useIsMobile()
   const hasSelection = useStore((s) => s.selectedIds.length > 0)
-  const drawing = useStore((s) => isDrawingTool(s.tool))
   const rulers = useStore((s) => s.rulers)
   const toggleRulers = useStore((s) => s.toggleRulers)
   const viewOptions = useStore((s) => s.viewOptions)
@@ -67,17 +62,7 @@ export function ZoomControls({
   const stepBtn = 'min-h-0'
 
   return (
-    <Toolbar
-      className={cn(
-        'absolute bottom-[calc(64px+env(safe-area-inset-bottom))] z-[35] h-9 gap-0.5 px-1 py-0 transition-[right] duration-150 ease-[ease] md:bottom-3.5',
-        /* on phones the tool strip runs along the bottom, with its drawing hint above it */
-        drawing && 'max-md:bottom-[calc(124px+env(safe-area-inset-bottom))]',
-        /* beside the account island and whatever panels are open — the page
-           sets --chrome-right as they come and go */
-        isMobile ? 'left-1/2 -translate-x-1/2' : 'right-[var(--chrome-right,12px)]',
-        hidden && 'hidden',
-      )}
-    >
+    <Toolbar className="h-9 shrink-0 gap-0.5 px-1 py-0">
       <ToolbarButton aria-label={t('canvas.zoomOut')} className={stepBtn} onClick={onZoomOut}>
         <MinusIcon />
       </ToolbarButton>
