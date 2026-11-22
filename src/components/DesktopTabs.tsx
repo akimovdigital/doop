@@ -9,7 +9,7 @@ import {
 import { api } from '../lib/api'
 import { posthog } from '../lib/posthog'
 import { navigate } from '../App'
-import { FrameIcon, HomeIcon, PlusIcon, XIcon } from './ui/icons'
+import { CodeTabIcon, HomeIcon, PlusIcon, XIcon } from './ui/icons'
 import { Tooltip } from './ui/tooltip'
 import {
   ContextMenu,
@@ -53,6 +53,31 @@ import { useT } from '../lib/i18n'
 const stripButton =
   'mx-0.5 grid size-[30px] flex-none place-items-center self-center rounded-[6px] text-ink-soft hover:bg-sub hover:text-ink focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring'
 const tabMenu = 'z-[850] min-w-[220px] rounded-[12px] border border-line bg-surface'
+
+/** OpenCode's busy mark: a 5×5 pixel grid. Brightness sweeps on the diagonal,
+ *  top-left toward bottom-right, one step per row+column. */
+function TabAgentGrid() {
+  return (
+    <span data-tab-agent-grid aria-hidden>
+      {Array.from({ length: 25 }, (_, i) => (
+        <i key={i} style={{ animationDelay: `${(Math.floor(i / 5) + (i % 5)) * 90}ms` }} />
+      ))}
+    </span>
+  )
+}
+
+/** Idle: the prompt glyph. Busy: the OpenCode grid, and only for the open
+ *  canvas — tasks and presence in the store belong to that canvas. */
+function TabCodeMark({ canvasId, selected }: { canvasId: string; selected: boolean }) {
+  const working = useStore(
+    (s) =>
+      s.canvas?.id === canvasId &&
+      (s.tasks.some((task) => task.agentName && !task.endedAt && !task.failedAt) ||
+        Object.values(s.presences).some((peer) => peer.kind === 'agent' && !!peer.status)),
+  )
+  if (working) return <TabAgentGrid />
+  return <CodeTabIcon size="rail" className={cn('shrink-0', selected && 'text-brand')} />
+}
 
 function openTabMenu(tab: HTMLElement) {
   const { left, bottom } = tab.getBoundingClientRect()
@@ -351,7 +376,7 @@ export function DesktopTabs({ path }: { path: string }) {
                         compact ? 'h-[30px] justify-center' : 'pl-2 pr-7',
                       )}
                     >
-                      <FrameIcon size="rail" className={cn('shrink-0', selected && 'text-brand')} />
+                      <TabCodeMark canvasId={tab.id} selected={selected} />
                       {!compact && <span className="min-w-0 truncate">{tab.name}</span>}
                     </button>
                   </Tooltip>
