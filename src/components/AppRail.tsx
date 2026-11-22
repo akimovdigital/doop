@@ -6,6 +6,7 @@ import { navigate } from '../lib/navigate'
 import { useRailDrawer } from '../lib/railDrawer'
 import { timeAgo } from '../lib/time'
 import { openCanvasTab } from '../lib/desktop'
+import { usePinnedCanvases } from '../lib/homePreferences'
 import { shortcutKey } from '../lib/keys'
 import { useT } from '../lib/i18n'
 import { cn } from '@/lib/utils'
@@ -32,6 +33,7 @@ import {
   LockIcon,
   PanelCollapseIcon,
   PanelExpandIcon,
+  PinIcon,
   SearchIcon,
   TextIcon,
   BotIcon,
@@ -138,6 +140,8 @@ export function AppRail({
       .catch(console.error)
   }, [needsOwn])
   const list = useMemo(() => canvases ?? own?.canvases ?? [], [canvases, own])
+  const pinnedIds = usePinnedCanvases()
+  const pinned = (canvases ?? []).filter((c) => pinnedIds.has(c.id))
   const spaces = useMemo(() => workspaces ?? own?.workspaces ?? [], [workspaces, own])
   /* only real lists are kept: a page still loading passes null, never an empty stand-in */
   useEffect(() => {
@@ -255,6 +259,7 @@ export function AppRail({
   }
 
   function openCanvas(c: CanvasMeta) {
+    setDrawer(false)
     if (!openCanvasTab(c.id, c.name)) navigate(`/c/${c.id}`)
   }
 
@@ -316,6 +321,16 @@ export function AppRail({
         <UsersIcon size="rail" />
       </IconButton>
       <Rule />
+      {pinned.length > 0 && (
+        <>
+          {pinned.map((c) => (
+            <IconButton key={c.id} aria-label={c.name} title={c.name} onClick={() => openCanvas(c)}>
+              <PinIcon size="rail" />
+            </IconButton>
+          ))}
+          <Rule />
+        </>
+      )}
       {spaces.map((w) => (
         <div key={w.id} className="contents">
           <IconButton
@@ -436,6 +451,19 @@ export function AppRail({
           {t('rail.sharedWithMe')}
         </DashNavItem>
       </nav>
+
+      {pinned.length > 0 && (
+        <>
+          <DashSectionLabel density="rail">{t('home.pinned')}</DashSectionLabel>
+          <nav aria-label={t('home.pinned')} className="flex flex-col gap-0.5">
+            {pinned.map((c) => (
+              <DashNavItem key={c.id} density="rail" icon={<PinIcon size="rail" />} onClick={() => openCanvas(c)}>
+                {c.name}
+              </DashNavItem>
+            ))}
+          </nav>
+        </>
+      )}
 
       <DashSectionLabel density="rail">{t('rail.workspaces')}</DashSectionLabel>
       <nav className="flex flex-col gap-0.5">

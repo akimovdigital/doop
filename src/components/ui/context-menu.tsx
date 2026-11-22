@@ -3,7 +3,7 @@ import * as ContextMenuPrimitive from '@radix-ui/react-context-menu'
 
 import { cn } from '@/lib/utils'
 import { menuItemVariants } from './menu'
-import { ChevronRightIcon } from './icons'
+import { CheckIcon, ChevronRightIcon } from './icons'
 import type { VariantProps } from 'class-variance-authority'
 
 /* Right-click menus on Radix: it owns the pointer anchor, the collision
@@ -53,6 +53,29 @@ function ContextMenuItem({
       )}
       {...props}
     />
+  )
+}
+
+function ContextMenuCheckboxItem({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof ContextMenuPrimitive.CheckboxItem>) {
+  return (
+    <ContextMenuPrimitive.CheckboxItem
+      data-slot="context-menu-checkbox-item"
+      className={cn(
+        menuItemVariants(),
+        'relative cursor-pointer pl-7 outline-none data-[highlighted]:bg-sub data-[disabled]:pointer-events-none data-[disabled]:text-ink-faint',
+        className,
+      )}
+      {...props}
+    >
+      <ContextMenuPrimitive.ItemIndicator className="absolute left-2 flex text-ink">
+        <CheckIcon width={14} height={14} aria-hidden />
+      </ContextMenuPrimitive.ItemIndicator>
+      {children}
+    </ContextMenuPrimitive.CheckboxItem>
   )
 }
 
@@ -110,6 +133,7 @@ export {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuCheckboxItem,
   ContextMenuSub,
   ContextMenuSubTrigger,
   ContextMenuSubContent,

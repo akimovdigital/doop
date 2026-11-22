@@ -140,6 +140,7 @@ export const canvas = {
   unpinTab: 'Unpin tab',
   tabHome: 'Home',
   tabActions: 'Actions for {name}',
+  noFrameHistory: 'This canvas has no frames with version history.',
   renameFile: 'Rename canvas',
   tabRenameFailed: 'Could not rename the canvas.',
   tabCopyFailed: 'Could not copy the canvas link.',
