@@ -2,6 +2,18 @@
 
 Формат записи: дата, PR или синк со ссылкой, что сделали, что сработало, что сломалось и причина, урок или правило на будущее. Причину не выдумывать. Повторяющийся урок переносить правилом в `.cursor/rules/git-workflow.mdc`.
 
+## 22.11.2026 — PR #8, collapse Home prompt
+
+PR: [#8](https://github.com/akimovdigital/doop/pull/8), SHA [`4bf048d`](https://github.com/akimovdigital/doop/commit/4bf048d5ccf7c60d7a7ee306086e3a852f52a21c).
+
+**Что сделали.** «Hide Prompt Box» сворачивает ИИ-модуль на Home; в header слева от Import — «Show Prompt Box». Состояние в `localStorage` (`doop.home.prompt-box-hidden`). Settings → General по-прежнему восстанавливает.
+
+**Что сработало.** typecheck, lint, `homePromptVisibility` + i18n. Скриншоты: `/cursor/stores/self/media/home-prompt-expanded.png`, `home-prompt-collapsed.png`. GitHub Actions на форке не стартуют (как у PR #7) — слито по локальным проверкам.
+
+**Что сломалось.** ManagePullRequest отказал ветке без префикса `cursor/…-59f2`; переименовали и открыли PR.
+
+**Урок.** Ветка для PR через ManagePullRequest: `cursor/<name>-59f2`. На форке CI пустой — не ждать checks бесконечно, опираться на локальный typecheck/lint/vitest.
+
 ## 22.11.2026 — синк `main`
 
 Синк: fast-forward `main` форка [`b2b4536e`](https://github.com/akimovdigital/doop/commit/b2b4536e066118829344bd1ae8264fa370093ea4) → [`8a53f23d`](https://github.com/akimovdigital/doop/commit/8a53f23d2fb71394279c4d1476eb830befb50995).
