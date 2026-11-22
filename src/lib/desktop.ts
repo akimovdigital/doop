@@ -1,10 +1,8 @@
-/* Doop in the desktop shell (desktop/src-tauri). The shell is one webview
-   with an overlay title bar (on Windows, a frame the page draws:
-   windowFrame.ts); canvases open Figma-style in a tab strip the
-   web app draws itself (src/components/DesktopTabs.tsx). Tabs are ordinary
-   in-page navigations — this module only keeps the strip's state and the
-   shell-specific plumbing. In a plain browser every entry point returns
-   false / no-ops and the app behaves exactly as before. */
+/* Doop canvas tabs (src/components/DesktopTabs.tsx): Figma-style strip for
+   open canvases. Tabs are ordinary in-page navigations — this module keeps
+   the strip's state. The same strip runs in the desktop shell (overlay
+   title bar / windowFrame.ts) and in a plain browser top window; nested
+   iframes (split view) and shell-only IPC stay gated separately. */
 
 import { create } from 'zustand'
 import { navigate } from '../App'
@@ -19,7 +17,7 @@ import {
   parseDesktopAuthDeepLink,
   rememberPendingSignIn,
 } from './desktopAuth'
-import { isDesktopShell } from './shell'
+import { isDesktopShell, supportsCanvasTabs } from './shell'
 import { useStore } from './store'
 import { api } from './api'
 import { initWindowFrame } from './windowFrame'
@@ -166,7 +164,7 @@ function setTabs(tabs: CanvasTab[], groups: TabGroups = useTabs.getState()) {
  *  sign-out). Restores that account's tabs, keeping any opened before the
  *  session resolved — a deep link's tab must survive the swap. */
 export function setTabsUser(id: string | null) {
-  if (!isDesktopShell() || id === userId) return
+  if (!supportsCanvasTabs() || id === userId) return
   const pending = userId === null ? useTabs.getState().tabs : []
   userId = id
   if (!id) {
@@ -183,7 +181,7 @@ export function setTabsUser(id: string | null) {
  *  every canvas visit, so deep links and back/forward grow tabs too and
  *  renames flow into the strip. */
 export function ensureTab(id: string, name?: string) {
-  if (!isDesktopShell()) return
+  if (!supportsCanvasTabs()) return
   const { tabs } = useTabs.getState()
   const tab = tabs.find((t) => t.id === id)
   if (!tab) setTabs([...tabs, { id, name: name || 'Untitled canvas' }])
@@ -268,7 +266,7 @@ export function copyCanvasTabLink(tab: CanvasTab) {
 
 /** The current canvas page survives a visit to Home or another canvas. */
 export function rememberTabPage(id: string, pageId?: string) {
-  if (!isDesktopShell()) return
+  if (!supportsCanvasTabs()) return
   const { tabs } = useTabs.getState()
   const tab = tabs.find((item) => item.id === id)
   if (!tab || tab.pageId === pageId) return
@@ -280,10 +278,10 @@ export function canvasTabTarget(tab: CanvasTab): string {
   return tab.pageId ? `${path}?page=${encodeURIComponent(tab.pageId)}` : path
 }
 
-/** Open (or switch to) the tab for a canvas. False in plain browsers so
- *  callers fall back to a bare navigation. */
+/** Open (or switch to) the tab for a canvas. False only in nested frames
+ *  (split view), where callers fall back to a bare navigation. */
 export function openCanvasTab(id: string, name?: string): boolean {
-  if (!isDesktopShell()) return false
+  if (!supportsCanvasTabs()) return false
   ensureTab(id, name)
   const tab = useTabs.getState().tabs.find((item) => item.id === id)
   if (tab && location.pathname !== `/c/${id}`) navigate(canvasTabTarget(tab))

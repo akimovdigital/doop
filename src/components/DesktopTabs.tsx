@@ -64,7 +64,7 @@ import {
   type CanvasTab,
 } from '../lib/desktop'
 import { chordHint } from '../lib/actions/chords'
-import { hasInsetTrafficLights, isDesktopShell } from '../lib/shell'
+import { hasInsetTrafficLights, isDesktopShell, supportsCanvasTabs } from '../lib/shell'
 import { useWindowFrame } from '../lib/windowFrame'
 import { WindowControls } from './WindowControls'
 import { canEditOpenCanvas, useStore } from '../lib/store'
@@ -149,7 +149,8 @@ export function DesktopTabs({ path }: { path: string }) {
 
   useEffect(() => () => cancelDrag.current?.(), [])
 
-  if (!isDesktopShell()) return null
+  if (!supportsCanvasTabs()) return null
+  const desktop = isDesktopShell()
 
   async function newCanvas() {
     const canvas = await api.createCanvas('Untitled canvas')
@@ -349,10 +350,10 @@ export function DesktopTabs({ path }: { path: string }) {
 
   return (
     <div
-      data-tauri-drag-region
+      {...(desktop ? { 'data-tauri-drag-region': true } : {})}
       className="fixed inset-x-0 top-0 z-[800] flex h-[38px] border-b border-line bg-paper-deep"
     >
-      {hasInsetTrafficLights() && <div data-tauri-drag-region className="w-[76px] flex-none" />}
+      {desktop && hasInsetTrafficLights() && <div data-tauri-drag-region className="w-[76px] flex-none" />}
       <Tooltip label={withShortcut(t('canvas.tabHome'), 0)} side="bottom" className="z-[825]">
         <button
           type="button"
@@ -552,7 +553,7 @@ export function DesktopTabs({ path }: { path: string }) {
           }}
         />
       )}
-      <WindowControls className="-mr-2 ml-auto" />
+      {desktop && <WindowControls className="-mr-2 ml-auto" />}
     </div>
   )
 }
