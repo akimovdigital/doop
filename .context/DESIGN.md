@@ -91,25 +91,6 @@ White system (Doop UI v2, canvas guideline `doop-ui-system`): neutral greys, no 
   `text-paper`, never `text-white`, so it flips with the theme. `text-white` is for brand and
   accent fills and for dark overlays, which stay dark in both themes.
 
-### Canvas sections and desktop tabs
-
-- Section backgrounds are solid by default. Light uses fill `#ebedf2` and stroke `#c3c9d3`. Dark uses fill `#30343c` and stroke `#535b69`. The theme defaults use 100% fill, a 1 px inside stroke and 8 px corner rounding. The panel exposes distinct paint controls, including each paint's opacity and the stroke's placement. A clear hex field removes that paint.
-- A region sits behind its frames and behind smaller contained sections. The name chip stays in screen space above the region and uses the canvas label size. Selection uses the accent outline and four screen-size handles. At 5% zoom or less, a selected section keeps its name visible over quiet frame previews. A frame keeps its own hit target over a section's background. The Section inspector uses the 244 px property-panel surface and existing Doop fields, with a sheet on mobile.
-- The inspector edits the name, position, dimensions, aspect ratio and corner radius. Position edits move contained objects. Resize and fit update the bounds. The frame context menu can wrap a selection in a new section. The section menu can link to the section or remove its boundary. `CanvasSections.tsx`, `SectionInspector.tsx`, and `shared/sections.ts` own the presentation and rules.
-- The desktop tab strip is 38 CSS px tall with a 76 px inset for macOS window controls. Rectangular
-  tabs fill the strip and share dividers on the paper-deep surface. A selected tab uses the surface
-  colour, brand icon and a centered 36 × 2 px rounded brand underline. The pinned slot is 37 px wide
-  and uses a shorter 16 px underline. The original canvas name remains available as a tooltip.
-- The tab context menu uses Doop's surface and border tokens, 12 px corners and the existing menu
-  focus and collision behavior. It groups canvas commands, window actions and tab closing. Rename
-  edits the tab label inline. Named groups keep related tabs together and persist per account. The
-  split view places two labelled canvas editors side by side. See `DesktopTabs.tsx` and `App.tsx`.
-
-- Sections uses the same heading typography, disclosure and add affordance as the Layers list, immediately above its heading below Pages. The section list opens and closes independently and scrolls within the available rail height.
-- On the Doop Dev canvas, HTML artboards use still images with the full frame aspect ratio. Dense canvases use the same policy in the web editor. One frame can play inline through the Play/Stop control in its selected title. The toolbar's Present action opens the full prototype player. Unloaded canvas snapshots use the neutral panel background. Standalone drawing marks retain their normal rendering.
-
-- Canvas dots keep their theme or page-contrast colour and fade as their screen-space spacing drops from 10 px to 4 px. At overview zoom the page colour is visible by itself. While the canvas chrome is hidden, a surface button at the bottom right restores it. Escape restores it from the keyboard.
-
 ## Component catalogue (Storybook)
 
 - `bun run storybook` serves the catalogue on :6006; `bun run build-storybook` writes
@@ -232,10 +213,3 @@ density="rail"` (the group caption with its chevron) and `DashNavItem density="r
 
 - `--breakpoint-xs`: `30rem`, `--breakpoint-md`: `56.25rem` - custom additions on top of
   Tailwind's defaults.
-
-## Canvas framework
-
-- The left rail contains Layers and Framework. Sections remain a collapsible part of Layers. Framework uses the existing panel tabs, file input, button and menu primitives. Overview shows palette swatches and sampled typography, spacing and radius values. Tokens opens the existing theme selector and the editable token groups.
-- Overview uses the canvas shell's surface tokens from `src/styles.css`. Light uses `--surface` #ffffff, `--sub` #f7f7f7, `--line-soft` #ececec, `--ink` #111111 and `--ink-soft` #5f5e5b. Dark uses #1c1c1c, #242424, rgba(255, 255, 255, 0.08), #f2f2f2 and #a9a8a5 in the same roles. Source names use the label size, variable names use the micro size in code type and values use tabular numerals.
-- Import previews new tokens from CSS, JSON, HTML, YAML, structured DESIGN.md and the selected frame. Confirmation adds new names. Existing names are kept. CSS, JSON, DESIGN.md and an HTML/CSS ZIP use the canvas's saved tokens. The ZIP supports importing a token stylesheet alongside a minimal page in Instatic. `src/components/FrameworkPanel.tsx` owns this UI, and `src/lib/frameworkFiles.ts` parses sources without running frame scripts.
-- HTML frames show their original content, including scripts, animations and media, at every zoom. Busy pages start visible frame documents in batches and keep opened documents mounted as the camera moves. While the first document loads, its surface uses `--sub` (#f7f7f7 light, #242424 dark). Once ready, transparent HTML sits on white artboard paper. The canvas toolbar opens the separate interactive prototype player. `frameAdmission.ts`, `Stage.tsx` and `FrameView.tsx` manage rendering and the camera.
