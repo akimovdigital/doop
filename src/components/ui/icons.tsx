@@ -146,6 +146,7 @@ import {
   ZoomIn,
   Rocket,
   Mail,
+  Star,
 } from 'lucide-react'
 
 type SvgProps = Omit<SVGProps<SVGSVGElement>, 'ref'>
@@ -194,6 +195,7 @@ export const BulletListIcon = icon(List)
 export const OrderedListIcon = icon(ListOrdered)
 
 export const XIcon = icon(X)
+export const StarIcon = icon(Star)
 export const ArrowDownIcon = icon(ArrowDown)
 export const HorizontalPaddingIcon = icon(AlignHorizontalSpaceAround)
 export const VerticalPaddingIcon = icon(AlignVerticalSpaceAround)

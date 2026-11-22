@@ -154,15 +154,19 @@ function PanelHeader({ className, ...props }: React.ComponentProps<'header'>) {
   )
 }
 
-function PanelBody({ className, ...props }: React.ComponentProps<'div'>) {
+const PanelBody = React.forwardRef<HTMLDivElement, React.ComponentPropsWithoutRef<'div'>>(function PanelBody(
+  { className, ...props },
+  ref,
+) {
   return (
     <div
+      ref={ref}
       data-slot="panel-body"
       className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain', className)}
       {...props}
     />
   )
-}
+})
 
 /** The tab strip some panel headers carry instead of a title. Goes inside a
  *  <PanelTabsRoot> together with the PanelTabPanels it switches. */
