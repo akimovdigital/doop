@@ -11,6 +11,10 @@ export const PAGES_BASE_MIN_PX = 62
 export const PAGES_MOVE_PICKER_PX = 40
 /** Room for the rail header, Layers heading, one row and the search footer. */
 export const LAYERS_MIN_PX = 144
+/** The sections disclosure between Pages and Layers: its top margin and heading.
+ *  Only reserved once the page actually has a section, so an empty page keeps
+ *  the same split as a panel with no sections list. */
+export const SECTIONS_LIST_PX = 30
 /** how far one arrow press moves the split */
 export const PAGES_KEY_STEP_PX = 10
 
@@ -22,13 +26,13 @@ export function pagesMinPx(withMovePicker: boolean): number {
 }
 
 /** the most the Pages section gets: the room the Layers tree leaves, never below `minPx` */
-export function pagesMaxPx(railPx: number, minPx: number): number {
-  return Math.max(minPx, railPx - LAYERS_MIN_PX)
+export function pagesMaxPx(railPx: number, minPx: number, layersMinPx = LAYERS_MIN_PX): number {
+  return Math.max(minPx, railPx - layersMinPx)
 }
 
 /** a Pages height, held between `minPx` and the room the Layers tree keeps */
-export function clampPagesPx(px: number, railPx: number, minPx: number): number {
-  return Math.min(pagesMaxPx(railPx, minPx), Math.max(minPx, px))
+export function clampPagesPx(px: number, railPx: number, minPx: number, layersMinPx = LAYERS_MIN_PX): number {
+  return Math.min(pagesMaxPx(railPx, minPx, layersMinPx), Math.max(minPx, px))
 }
 
 /** a Pages height as a percentage of the rail */
@@ -37,22 +41,28 @@ export function pagesPctOf(px: number, railPx: number): number {
 }
 
 /** The same height bounds as `clampPagesPx`, applied during layout. */
-export function pagesHeightCss(pct: number, minPx: number): string {
-  return `clamp(${minPx}px, ${pct}%, calc(100% - ${LAYERS_MIN_PX}px))`
+export function pagesHeightCss(pct: number, minPx: number, layersMinPx = LAYERS_MIN_PX): string {
+  return `clamp(${minPx}px, ${pct}%, calc(100% - ${layersMinPx}px))`
 }
 
 /** the Pages height an arrow key, Home or End asks for; undefined for any other key.
  *  Home and End clamp infinity, so they stop at the same limits as a drag. */
-export function pagesPxAfterKey(key: string, pagesPx: number, railPx: number, minPx: number): number | undefined {
+export function pagesPxAfterKey(
+  key: string,
+  pagesPx: number,
+  railPx: number,
+  minPx: number,
+  layersMinPx = LAYERS_MIN_PX,
+): number | undefined {
   switch (key) {
     case 'ArrowUp':
-      return clampPagesPx(pagesPx - PAGES_KEY_STEP_PX, railPx, minPx)
+      return clampPagesPx(pagesPx - PAGES_KEY_STEP_PX, railPx, minPx, layersMinPx)
     case 'ArrowDown':
-      return clampPagesPx(pagesPx + PAGES_KEY_STEP_PX, railPx, minPx)
+      return clampPagesPx(pagesPx + PAGES_KEY_STEP_PX, railPx, minPx, layersMinPx)
     case 'Home':
-      return clampPagesPx(-Infinity, railPx, minPx)
+      return clampPagesPx(-Infinity, railPx, minPx, layersMinPx)
     case 'End':
-      return clampPagesPx(Infinity, railPx, minPx)
+      return clampPagesPx(Infinity, railPx, minPx, layersMinPx)
     default:
       return undefined
   }

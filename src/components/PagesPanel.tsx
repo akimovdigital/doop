@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import { nanoid } from 'nanoid'
 import { canvasPages } from '../../shared/pages'
 import type { CanvasPageInfo } from '../../shared/types'
+import { activeSections } from '../lib/canvasSections'
 import { canEditOpenCanvas, useStore } from '../lib/store'
 import { savePages, duplicatePage, moveFramesToPage } from '../lib/pageEdits'
 import { copyPageLink } from '../lib/pageUrl'
@@ -11,11 +12,13 @@ import { PageIcon, PlusIcon } from './ui/icons'
 import { cn } from '../lib/utils'
 import {
   clampPagesPx,
+  LAYERS_MIN_PX,
   pagesHeightCss,
   pagesMaxPx,
   pagesMinPx,
   pagesPctOf,
   pagesPxAfterKey,
+  SECTIONS_LIST_PX,
   usePagesPct,
 } from '../lib/pagesSplit'
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem } from './ui/context-menu'
@@ -35,6 +38,7 @@ export function PagesPanel({ canvasId }: { canvasId: string }) {
   const selectedIds = useStore((s) => s.selectedIds)
   /* view and comment links switch pages; they add, rename and move none */
   const readOnly = useStore((s) => !canEditOpenCanvas(s))
+  const sectionCount = useStore(activeSections).length
   const [busy, setBusy] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -54,6 +58,7 @@ export function PagesPanel({ canvasId }: { canvasId: string }) {
   /* the picker is there to move the selection somewhere else, so it needs a second page */
   const showMovePicker = !readOnly && selectedIds.length > 0 && pages.length > 1
   const minPx = pagesMinPx(showMovePicker)
+  const layersMinPx = LAYERS_MIN_PX + (sectionCount > 0 ? SECTIONS_LIST_PX : 0)
 
   async function moveSelection(pageId: string) {
     if (!canvas || busy || !movableIds.length) return
@@ -328,7 +333,9 @@ export function PagesPanel({ canvasId }: { canvasId: string }) {
       data-slot="pages-panel"
       className="relative flex flex-none flex-col border-b border-line-soft"
       style={
-        pagesPct === null ? { maxHeight: pagesHeightCss(100, minPx) } : { height: pagesHeightCss(pagesPct, minPx) }
+        pagesPct === null
+          ? { maxHeight: pagesHeightCss(100, minPx, layersMinPx) }
+          : { height: pagesHeightCss(pagesPct, minPx, layersMinPx) }
       }
     >
       <div className={cn('mt-1.5 flex h-6 flex-none items-center justify-between pr-2.5 pl-3.5', sectionHeading)}>
@@ -360,7 +367,7 @@ export function PagesPanel({ canvasId }: { canvasId: string }) {
           </Select>
         </div>
       )}
-      <PagesSplitHandle minPx={minPx} onChange={setPagesPct} />
+      <PagesSplitHandle minPx={minPx} layersMinPx={layersMinPx} onChange={setPagesPct} />
     </div>
   )
 }
@@ -369,7 +376,15 @@ export function PagesPanel({ canvasId }: { canvasId: string }) {
  *  section and its rail again, so it starts from what is on screen. The separator's value and range are those
  *  measures too: the section also changes height when its content or the window does, not only on a drag. The
  *  browser releases the pointer's capture when the drag ends, which resets the drag. */
-function PagesSplitHandle({ minPx, onChange }: { minPx: number; onChange: (pct: number) => void }) {
+function PagesSplitHandle({
+  minPx,
+  layersMinPx,
+  onChange,
+}: {
+  minPx: number
+  layersMinPx: number
+  onChange: (pct: number) => void
+}) {
   const t = useT()
   const handle = useRef<HTMLDivElement>(null)
   const drag = useRef<{ y: number; pagesPx: number; railPx: number } | null>(null)
@@ -394,7 +409,7 @@ function PagesSplitHandle({ minPx, onChange }: { minPx: number; onChange: (pct: 
       aria-orientation="horizontal"
       aria-label={t('panels.pagesResize')}
       aria-valuemin={minPx}
-      aria-valuemax={pagesMaxPx(sizes.railPx, minPx)}
+      aria-valuemax={pagesMaxPx(sizes.railPx, minPx, layersMinPx)}
       aria-valuenow={Math.round(sizes.pagesPx)}
       data-slot="pages-split"
       className="absolute inset-x-2 top-full h-1.5 cursor-row-resize touch-none rounded-full focus-visible:bg-ink/20 focus-visible:outline-none"
@@ -409,7 +424,7 @@ function PagesSplitHandle({ minPx, onChange }: { minPx: number; onChange: (pct: 
         const start = drag.current
         if (!start) return
         e.stopPropagation()
-        const px = clampPagesPx(start.pagesPx + e.clientY - start.y, start.railPx, minPx)
+        const px = clampPagesPx(start.pagesPx + e.clientY - start.y, start.railPx, minPx, layersMinPx)
         onChange(pagesPctOf(px, start.railPx))
       }}
       onLostPointerCapture={() => {
@@ -417,7 +432,7 @@ function PagesSplitHandle({ minPx, onChange }: { minPx: number; onChange: (pct: 
       }}
       onKeyDown={(e) => {
         const { pagesPx, railPx } = measurePages(e.currentTarget)
-        const px = pagesPxAfterKey(e.key, pagesPx, railPx, minPx)
+        const px = pagesPxAfterKey(e.key, pagesPx, railPx, minPx, layersMinPx)
         if (px === undefined) return
         e.preventDefault()
         e.stopPropagation()

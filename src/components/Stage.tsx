@@ -1483,7 +1483,9 @@ export function Stage({
           <Toolbar
             aria-label={t('stage.canvasTools')}
             className={cn(
-              'md:w-10 md:flex-col',
+              /* the Section tool is one more phone button; a 1px gap keeps the
+                 whole strip inside a 390px screen, where 2px gaps spill 1.5px */
+              'max-sm:gap-px md:w-10 md:flex-col',
               docked && 'md:h-full md:rounded-none md:border-r md:border-line-soft md:shadow-none',
             )}
           >
