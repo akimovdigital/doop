@@ -2,6 +2,18 @@
 
 Формат записи: дата, PR или синк со ссылкой, что сделали, что сработало, что сломалось и причина, урок или правило на будущее. Причину не выдумывать. Повторяющийся урок переносить правилом в `.cursor/rules/git-workflow.mdc`.
 
+## 22.11.2026 — PR #17, Layers header как у автора
+
+PR: [#17](https://github.com/akimovdigital/doop/pull/17).
+
+**Что сделали.** В panel-header снова Layers · Components · Tokens (`{}`), как upstream `8a53f23`. Убраны Framework (палитра) из вкладок и collapsed rail. Components из PR #5 сохранены. Browser-тест Framework UI снят; `frameworkFiles` unit-тесты остались.
+
+**Что сработало.** typecheck, lint, layersRange/tokensPanel/frameworkFiles. Скрин: `/cursor/stores/self/media/layers-like-author.png`.
+
+**Что сломалось.** Ничего.
+
+**Урок.** Если Никита присылает скрин оригинального Doop и говорит «верни это» — header сравнивать с upstream/автором, а не держать fork Framework в табах «потому что так задумано в Doop Dev».
+
 ## 22.11.2026 — PR #16, center canvas toolbar
 
 PR: [#16](https://github.com/akimovdigital/doop/pull/16), SHA [`6bce48e`](https://github.com/akimovdigital/doop/commit/6bce48e617a8a74c053825afe756565c2f264471).
