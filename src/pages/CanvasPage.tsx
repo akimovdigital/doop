@@ -60,6 +60,8 @@ import { ShareModal } from '../components/ShareModal'
 import { ExportModal } from '../components/ExportModal'
 import { AppIcon } from '../components/ui/brand-mark'
 import { pageFrames } from '../../shared/pages'
+import { defaultPageId } from '../lib/pageLink'
+import { flowStartFrame } from '../../shared/prototype'
 import type { Frame } from '../../shared/types'
 import { ImportStepFooter, ImportStepHeader, SourcePicker } from '../components/ImportSources'
 import { importSources } from '../components/importSourceList'
@@ -362,6 +364,22 @@ export function CanvasPage({
   useEffect(() => {
     if (canvas?.id === canvasId) ensureTab(canvas.id, canvas.name)
   }, [canvas, canvasId])
+
+  /* Wait for the current canvas's room data before consuming a Home history link. */
+  useEffect(() => {
+    if (canvas?.id !== canvasId) return
+    if (new URLSearchParams(location.search).get('history') !== '1') return
+    const showHistory = requestAnimationFrame(() => {
+      const url = new URL(location.href)
+      if (url.searchParams.get('history') !== '1') return
+      url.searchParams.delete('history')
+      history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`)
+      const frame = flowStartFrame(canvas, defaultPageId(canvas)) ?? canvas.frames[0]
+      if (frame) setHistoryFrame(frame)
+      else useStore.getState().pushNotice(t('canvas.noFrameHistory'))
+    })
+    return () => cancelAnimationFrame(showHistory)
+  }, [canvas, canvasId, t])
 
   /* the open page rides in the URL (?page=), so a reload or a shared link lands on it */
   useEffect(() => followPageInUrl(canvasId), [canvasId])

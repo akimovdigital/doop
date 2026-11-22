@@ -53,7 +53,7 @@ export async function prepareCanvasPage(page: Page): Promise<void> {
     const body =
       path === '/api/auth/get-session'
         ? { user: { id: 'u', name: 'Tester', email: 'tester@test.dev' }, session: { id: 's', userId: 'u' } }
-        : path === '/api/canvases/c/fonts'
+        : path === '/api/canvases/c/fonts' || /^\/api\/frames\/[^/]+\/versions$/.test(path)
           ? []
           : {}
     void request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })

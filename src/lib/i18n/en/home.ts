@@ -60,10 +60,8 @@ export const home = {
   frames: { one: '{count} frame', other: '{count} frames' },
 
   /* delete */
-  deleteTitle: 'Delete “{name}”?',
   deleteFallbackName: 'canvas',
   deleteDescription: 'This permanently deletes the canvas and everything in it. This can’t be undone.',
-  deleteConfirm: 'Delete canvas',
 
   /* tile meta */
   claimTitle: 'This canvas predates accounts and is visible to everyone. Claim it to make it yours.',
@@ -74,12 +72,24 @@ export const home = {
   inWorkspace: 'In the {workspace} workspace',
 
   /* canvas actions */
+  showInFolder: 'Show in folder',
+  createBranch: 'Create new branch',
+  branchFailed: 'Couldn’t create the branch',
+  addToSidebar: 'Add to sidebar',
+  pinned: 'Pinned',
+  tabBar: 'Tab bar',
+  showVersionHistory: 'Show version history',
+  rename: 'Rename',
+  renameCanvasAria: 'Canvas name',
+  renameFailed: 'Couldn’t rename the canvas',
+  moveFile: 'Move file…',
+  moveToTrash: 'Move to trash',
+  removeFromRecent: 'Remove from recent',
+  trashTitle: 'Move “{name}” to trash?',
   actionsFor: 'Actions for {name}',
   share: 'Share',
   duplicating: 'Duplicating…',
   duplicate: 'Duplicate',
-  move: 'Move…',
-  moveToWorkspace: 'Move to workspace…',
 
   /* hero */
   greeting: 'Ask me what to design',

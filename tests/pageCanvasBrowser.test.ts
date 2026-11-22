@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { Page } from 'puppeteer-core'
 import { findBrowserPath } from '../server/screenshot'
 import { fixtureUrl, pagePerTest } from './browser'
-import { openCanvasPage, showCanvasPage } from './canvasPageFixture'
+import { openCanvasPage, prepareCanvasPage, showCanvasPage } from './canvasPageFixture'
 import type { Canvas, Frame } from '../shared/types'
 import type { inspectElement } from '../src/lib/frameBridge'
 
@@ -59,6 +59,39 @@ describe.skipIf(!findBrowserPath())('page camera and snapping', { timeout: 30_00
   beforeEach(async () => {
     page = await pages.open()
     await page.setViewport({ width: 1200, height: 800 })
+  })
+
+  it('opens the landing page’s flow-start history once for a Home history link', async () => {
+    await prepareCanvasPage(page)
+    const versions = page.waitForRequest((request) => new URL(request.url()).pathname === '/api/frames/start/versions')
+    const data = {
+      ...canvas([frame('first-frame', 'first', 0), frame('top-left', 'second', 0), frame('start', 'second', 500)]),
+      landingPageId: 'second',
+      role: 'view' as const,
+      pages: [
+        { id: 'first', name: 'Main' },
+        { id: 'second', name: 'Exploration', startFrameId: 'start' },
+      ],
+    }
+    async function seedHistoryCanvas() {
+      await page.waitForFunction(() => !!window.canvasPageHarness && !!document.querySelector('.stage'))
+      await page.evaluate((data) => window.canvasPageHarness.seed(data.frames, data), data)
+      await page.waitForSelector('[data-doop-frame-shell]')
+    }
+
+    await page.goto(fixtureUrl('canvasPage.html?history=1&page=first'))
+    await seedHistoryCanvas()
+    await versions
+    await page.waitForFunction(() =>
+      document.querySelector('[role="dialog"]')?.textContent?.includes('“start” — version history'),
+    )
+    expect(new URL(page.url()).searchParams.get('history')).toBeNull()
+    expect(new URL(page.url()).searchParams.get('page')).toBe('first')
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('[role="dialog"]', { hidden: true })
+    await page.reload()
+    await seedHistoryCanvas()
+    expect(await page.$('[role="dialog"]')).toBeNull()
   })
 
   /* a page-state wait that, when it never comes true, says what the page did */
