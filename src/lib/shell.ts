@@ -19,10 +19,10 @@ export function isDesktopShell(): boolean {
   return typeof shell.__DOOP_DESKTOP__ === 'string' && (typeof window === 'undefined' || window === window.top)
 }
 
-/** Canvas tab strip in the top browsing context — desktop shell and plain
- *  browser alike. Nested iframes (split view) stay without their own strip. */
+/** Canvas tab strip only in the desktop shell's top browsing context.
+ *  Browsers and nested iframes (split view) stay without their own strip. */
 export function supportsCanvasTabs(): boolean {
-  return typeof window === 'undefined' || window === window.top
+  return isDesktopShell()
 }
 
 /** The shell's version string, null outside the shell. */

@@ -3,7 +3,11 @@ import { beforeEach, expect, it, vi } from 'vitest'
 
 vi.mock('../src/App', () => ({ navigate: vi.fn() }))
 vi.mock('../src/lib/auth', () => ({ authClient: {} }))
-vi.mock('../src/lib/shell', async (load) => ({ ...(await load<object>()), isDesktopShell: () => true }))
+vi.mock('../src/lib/shell', async (load) => ({
+  ...(await load<object>()),
+  isDesktopShell: () => true,
+  supportsCanvasTabs: () => true,
+}))
 import { moveTab, setTabsUser, tabShortcutTarget, useTabs } from '../src/lib/desktop'
 
 const seed = (ids: string[]) => useTabs.setState({ tabs: ids.map((id) => ({ id, name: id.toUpperCase() })) })

@@ -34,13 +34,20 @@ describe('outside the shell', () => {
     expect(hasInsetTrafficLights()).toBe(false)
   })
 
-  it('still offers the canvas tab strip in a top-level browser window', () => {
-    expect(supportsCanvasTabs()).toBe(true)
+  it('does not offer the canvas tab strip in a browser window', () => {
+    expect(supportsCanvasTabs()).toBe(false)
   })
 
   it('ignores a platform marker without a version marker', () => {
     g.__DOOP_DESKTOP_PLATFORM__ = 'windows'
     expect(desktopPlatform()).toBeNull()
+  })
+})
+
+describe('canvas tabs', () => {
+  it('offers the tab strip in the desktop shell', () => {
+    shell('0.1.5', 'macos')
+    expect(supportsCanvasTabs()).toBe(true)
   })
 })
 

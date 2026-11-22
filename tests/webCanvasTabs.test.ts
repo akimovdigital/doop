@@ -7,7 +7,7 @@ vi.mock('../src/lib/posthog', () => ({ posthog: { capture: vi.fn() } }))
 vi.mock('../src/lib/shell', async (load) => ({
   ...(await load<object>()),
   isDesktopShell: () => false,
-  supportsCanvasTabs: () => true,
+  supportsCanvasTabs: () => false,
 }))
 
 const { ensureTab, openCanvasTab, setTabsUser, useTabs } = await import('../src/lib/desktop')
@@ -21,26 +21,24 @@ beforeEach(() => {
   vi.mocked(navigate).mockClear()
 })
 
-it('opens and persists tabs without the desktop shell', () => {
-  expect(openCanvasTab('c1', 'First')).toBe(true)
-  expect(openCanvasTab('c2', 'Second')).toBe(true)
-  expect(useTabs.getState().tabs.map((tab) => tab.id)).toEqual(['c1', 'c2'])
-  expect(navigate).toHaveBeenCalled()
+it('does not create or persist tab state without the desktop shell', () => {
+  expect(openCanvasTab('c1', 'First')).toBe(false)
+  expect(openCanvasTab('c2', 'Second')).toBe(false)
+  expect(useTabs.getState().tabs).toEqual([])
+  expect(navigate).not.toHaveBeenCalled()
 
   setTabsUser(null)
   setTabsUser('web-user')
-  expect(useTabs.getState().tabs.map((tab) => ({ id: tab.id, name: tab.name }))).toEqual([
-    { id: 'c1', name: 'First' },
-    { id: 'c2', name: 'Second' },
-  ])
+  expect(useTabs.getState().tabs).toEqual([])
+  expect(localStorage.getItem('doop-open-tabs:web-user')).toBeNull()
 })
 
-it('ensures a deep-linked canvas appears in the strip', () => {
+it('does not add a deep-linked canvas to hidden web tab state', () => {
   ensureTab('deep', 'Deep link')
-  expect(useTabs.getState().tabs).toEqual([{ id: 'deep', name: 'Deep link' }])
+  expect(useTabs.getState().tabs).toEqual([])
 })
 
-it('restores legacy grouped canvases in one row and keeps pins and page links', () => {
+it('does not restore legacy tab state into the web shell', () => {
   setTabsUser(null)
   localStorage.setItem(
     'doop-open-tabs:web-user',
@@ -53,9 +51,5 @@ it('restores legacy grouped canvases in one row and keeps pins and page links', 
   localStorage.setItem('doop-tab-groups:web-user', JSON.stringify({ groupFilter: 'Editorial' }))
 
   setTabsUser('web-user')
-  expect(useTabs.getState().tabs).toEqual([
-    { id: 'c2', name: 'Pinned', pinned: true },
-    { id: 'c1', name: 'First', pageId: 'page-one' },
-    { id: 'c3', name: 'Third' },
-  ])
+  expect(useTabs.getState().tabs).toEqual([])
 })
