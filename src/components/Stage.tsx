@@ -38,8 +38,18 @@ import { cn } from '../lib/utils'
 import { gesture } from '../lib/gesture'
 import { hasFrameClip, pasteFrameAtScreen } from '../lib/frameClipboard'
 import { MenuHint } from './ui/menu'
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from './ui/context-menu'
 import { Toolbar, ToolbarButton, ToolbarDivider, ToolbarHighlight } from './ui/toolbar'
+import { ActionMenuItem } from './ActionMenuItem'
+import { PageStrip } from './PageStrip'
 import { ZoomControls } from './ZoomControls'
 import { Tooltip } from './ui/tooltip'
 import {
@@ -1515,6 +1525,8 @@ export function Stage({
           </Toolbar>
         </div>
 
+        <PageStrip hidden={uiHidden} />
+
         <ZoomControls
           labelRef={zoomLabelRef}
           hidden={uiHidden}
@@ -1535,6 +1547,26 @@ export function Stage({
               <MenuHint>{MOD_KEY}V</MenuHint>
             </ContextMenuItem>
             <ContextMenuItem onSelect={onAddFrame}>{t('stage.newFrame')}</ContextMenuItem>
+            {canvasPages(canvas).length > 1 && (
+              <>
+                <ActionMenuItem id="previous-page" />
+                <ActionMenuItem id="next-page" />
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger>{t('stage.goToPage')}</ContextMenuSubTrigger>
+                  <ContextMenuSubContent>
+                    {canvasPages(canvas).map((page) => (
+                      <ContextMenuItem
+                        key={page.id}
+                        disabled={page.id === activePageId}
+                        onSelect={() => useStore.getState().setActivePage(page.id)}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{page.name}</span>
+                      </ContextMenuItem>
+                    ))}
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
+              </>
+            )}
           </ContextMenuContent>
         )}
       </ContextMenu>
