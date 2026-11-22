@@ -2,6 +2,18 @@
 
 Формат записи: дата, PR или синк со ссылкой, что сделали, что сработало, что сломалось и причина, урок или правило на будущее. Причину не выдумывать. Повторяющийся урок переносить правилом в `.cursor/rules/git-workflow.mdc`.
 
+## 22.11.2026 — PR #14, page strip on stage
+
+PR: [#14](https://github.com/akimovdigital/doop/pull/14), SHA [`511a1cc`](https://github.com/akimovdigital/doop/commit/511a1cce4adfcd96b094971c55ed293dbe07630d).
+
+**Что сделали.** На stage рядом с зумом — `PageStrip` (чипы страниц + ‹ ›). В контекстном меню пустого холста — Previous/Next/Go to page. Layers Pages и pages split не трогали. Скрин: `/cursor/stores/self/media/canvas-page-switching.png`.
+
+**Что сработало.** typecheck, lint, `pageStrip` + pages unit. Полоску нельзя ставить в bottom-left: там карточка Getting started (`z-40`) перекрывает.
+
+**Что сломалось.** Первая позиция bottom-left была невидима под onboarding. CI на форке пустой.
+
+**Урок.** Stage chrome для Pages — рядом с зумом (bottom-right cluster), не под Getting started. Pages ≠ canvas tabs.
+
 ## 22.11.2026 — PR #12, web canvas tabs
 
 PR: [#12](https://github.com/akimovdigital/doop/pull/12), SHA [`7a2678b`](https://github.com/akimovdigital/doop/commit/7a2678b7889fa34e577339342a27b01cc833b14c).
