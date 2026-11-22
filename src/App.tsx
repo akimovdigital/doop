@@ -251,23 +251,23 @@ export function App() {
           itself by the same variable instead of hardcoding the banner height */}
       <div className="h-dvh overflow-auto pt-14 [--app-inset:56px] sm:pt-10 sm:[--app-inset:40px]">{page}</div>
     </>
-  ) : supportsCanvasTabs() ? (
+  ) : canvasId && !prototypeOf && supportsCanvasTabs() ? (
     /* the tab strip uses the same --app-inset contract as the banner:
        fixed screens (the canvas workspace) offset themselves. Nested
        frames (split view) skip the strip and keep a bare page. */
     <>
       <DesktopTabs path={path} />
       <div
-        id={canvasId ? 'desktop-canvas-content' : undefined}
-        role={canvasId ? 'tabpanel' : undefined}
-        aria-labelledby={canvasId ? `desktop-canvas-tab-${canvasId}` : undefined}
+        id="desktop-canvas-content"
+        role="tabpanel"
+        aria-labelledby={`desktop-canvas-tab-${canvasId}`}
         className="h-dvh overflow-auto pt-[38px] [--app-inset:38px]"
       >
         {firstSplit && secondSplit ? <DesktopSplit tabs={[firstSplit, secondSplit]} /> : page}
       </div>
     </>
   ) : (
-    page
+    <ShellDragBar reserveSpace>{page}</ShellDragBar>
   )
 }
 

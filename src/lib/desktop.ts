@@ -29,7 +29,7 @@ import { initAppMenu } from './appMenu'
 import { pressedKey } from './keys'
 import { type Chord, matchesChord } from './actions/chords'
 
-export type CanvasTab = { id: string; name: string; pinned?: boolean; pageId?: string; group?: string }
+export type CanvasTab = { id: string; name: string; pinned?: boolean; pageId?: string }
 
 type ShellWindow = Window & {
   __DOOP_TAB_WINDOWS__?: boolean
@@ -76,7 +76,6 @@ function load(id: string): CanvasTab[] {
         name: typeof tab.name === 'string' ? tab.name : 'Untitled canvas',
         ...(tab.pinned === true && { pinned: true }),
         ...(typeof tab.pageId === 'string' && tab.pageId && { pageId: tab.pageId }),
-        ...(tab.pinned !== true && typeof tab.group === 'string' && tab.group.trim() && { group: tab.group.trim() }),
       })
     }
     return tabs
@@ -85,71 +84,16 @@ function load(id: string): CanvasTab[] {
   }
 }
 
-type TabGroups = { groupNames: string[]; groupFilter: string | null }
-
-export const useTabs = create<{ tabs: CanvasTab[]; split: [string, string] | null } & TabGroups>(() => ({
+export const useTabs = create<{ tabs: CanvasTab[]; split: [string, string] | null }>(() => ({
   tabs: [],
   split: null,
-  groupNames: [],
-  groupFilter: null,
 }))
 
-function groupStorageKey(id: string) {
-  return `doop-tab-groups:${id}`
-}
-
-function loadTabGroups(id: string): TabGroups {
-  try {
-    const saved = JSON.parse(tabStorage().getItem(groupStorageKey(id)) ?? '{}')
-    const groupNames: string[] = Array.isArray(saved?.groupNames)
-      ? saved.groupNames.filter((name: unknown) => typeof name === 'string' && name.trim() !== '')
-      : []
-    return { groupNames, groupFilter: typeof saved?.groupFilter === 'string' ? saved.groupFilter : null }
-  } catch {
-    return { groupNames: [], groupFilter: null }
-  }
-}
-
-function persistTabGroups() {
-  if (!userId) return
-  try {
-    const { groupNames, groupFilter } = useTabs.getState()
-    tabStorage().setItem(groupStorageKey(userId), JSON.stringify({ groupNames, groupFilter }))
-  } catch {
-    /* blocked storage only means the view resets on relaunch */
-  }
-}
-
-export function setTabGroupFilter(group: string | null) {
-  if (group === useTabs.getState().groupFilter) return
-  useTabs.setState({ groupFilter: group })
-  persistTabGroups()
-}
-
-function setTabs(tabs: CanvasTab[], groups: TabGroups = useTabs.getState()) {
-  const buckets = new Map<string, CanvasTab[]>()
-  for (const tab of tabs) {
-    if (!tab.group) continue
-    const members = buckets.get(tab.group) ?? []
-    members.push(tab)
-    buckets.set(tab.group, members)
-  }
-  const groupNames = [...new Set([...groups.groupNames, ...buckets.keys()])]
-  const groupFilter = groups.groupFilter && groupNames.includes(groups.groupFilter) ? groups.groupFilter : null
-  const ordered = tabs.filter((tab) => tab.pinned)
-  for (const tab of tabs) {
-    if (tab.pinned) continue
-    if (!tab.group) ordered.push(tab)
-    else if (buckets.has(tab.group)) {
-      ordered.push(...buckets.get(tab.group)!)
-      buckets.delete(tab.group)
-    }
-  }
+function setTabs(tabs: CanvasTab[]) {
+  const ordered = [...tabs.filter((tab) => tab.pinned), ...tabs.filter((tab) => !tab.pinned)]
   useTabs.setState(({ split }) => ({
     tabs: ordered,
     split: split?.every((id) => ordered.some((tab) => tab.id === id)) ? split : null,
-    groupNames,
-    groupFilter,
   }))
   if (!userId) return
   try {
@@ -157,7 +101,6 @@ function setTabs(tabs: CanvasTab[], groups: TabGroups = useTabs.getState()) {
   } catch {
     /* blocked storage only means tabs don't survive a relaunch */
   }
-  persistTabGroups()
 }
 
 /** Called by App whenever the session's user changes (including to null on
@@ -168,13 +111,13 @@ export function setTabsUser(id: string | null) {
   const pending = userId === null ? useTabs.getState().tabs : []
   userId = id
   if (!id) {
-    useTabs.setState({ tabs: [], split: null, groupNames: [], groupFilter: null })
+    useTabs.setState({ tabs: [], split: null })
     return
   }
   const restored = load(id)
   const restoredIds = new Set(restored.map((tab) => tab.id))
   useTabs.setState({ split: null })
-  setTabs([...restored, ...pending.filter((tab) => !restoredIds.has(tab.id))], loadTabGroups(id))
+  setTabs([...restored, ...pending.filter((tab) => !restoredIds.has(tab.id))])
 }
 
 /** Make sure a tab exists for the canvas and its label is current. Called on
@@ -192,40 +135,7 @@ export function setCanvasTabPinned(id: string, pinned: boolean) {
   const { tabs } = useTabs.getState()
   const tab = tabs.find((item) => item.id === id)
   if (!tab || Boolean(tab.pinned) === pinned) return
-  setTabs(tabs.map((item) => (item.id === id ? { ...item, pinned: pinned || undefined, group: undefined } : item)))
-}
-
-export function groupCanvasTab(id: string, group?: string) {
-  const { tabs } = useTabs.getState()
-  setTabs(tabs.map((tab) => (tab.id === id ? { ...tab, group, pinned: undefined } : tab)))
-}
-
-export function renameCanvasTabGroup(previous: string, group: string) {
-  const { tabs, groupFilter, groupNames } = useTabs.getState()
-  setTabs(
-    tabs.map((tab) => (tab.group === previous ? { ...tab, group } : tab)),
-    {
-      groupNames: groupNames.map((name) => (name === previous ? group : name)),
-      groupFilter: groupFilter === previous ? group : groupFilter,
-    },
-  )
-}
-
-export function createTabGroup(group: string) {
-  const { tabs, groupNames } = useTabs.getState()
-  setTabs(tabs, { groupNames: [...groupNames, group], groupFilter: group })
-}
-
-/** Keep the canvases open when their group is removed. */
-export function removeTabGroup(group: string) {
-  const { tabs, groupFilter, groupNames } = useTabs.getState()
-  setTabs(
-    tabs.map((tab) => (tab.group === group ? { ...tab, group: undefined } : tab)),
-    {
-      groupNames: groupNames.filter((name) => name !== group),
-      groupFilter: groupFilter === group ? null : groupFilter,
-    },
-  )
+  setTabs(tabs.map((item) => (item.id === id ? { ...item, pinned: pinned || undefined } : item)))
 }
 
 export async function renameCanvasTab(id: string, name: string) {
@@ -321,12 +231,11 @@ export function closeOtherTabs(id: string, currentPath: string) {
   if (currentPath !== `/c/${id}`) navigate(canvasTabTarget(keep))
 }
 
-/** A drag reorders a contiguous run of tabs without pinning or regrouping. */
+/** A drag reorders a contiguous run of tabs without changing its pin state. */
 export function tabMoveRange(tabs: readonly CanvasTab[], index: number) {
   const tab = tabs[index]
   if (!tab) return null
-  const sameRun = (other: CanvasTab | undefined) =>
-    other && Boolean(other.pinned) === Boolean(tab.pinned) && other.group === tab.group
+  const sameRun = (other: CanvasTab | undefined) => other && Boolean(other.pinned) === Boolean(tab.pinned)
   let first = index
   let last = index
   while (sameRun(tabs[first - 1])) first--
@@ -402,6 +311,32 @@ export function closeActiveTab() {
     return
   }
   shellWindow.__TAURI__?.window?.getCurrentWindow?.().close().catch(console.error)
+}
+
+/** Native Doop Dev menu commands operate on tabs in the focused window. */
+function runWindowMenu(command: unknown) {
+  if (command === 'back') return history.back()
+  if (command === 'forward') return history.forward()
+  if (command === 'reload') return location.reload()
+  if (command === 'settings') {
+    if (location.pathname !== '/settings') navigate('/settings')
+    return
+  }
+
+  const { tabs } = useTabs.getState()
+  const current = tabs.findIndex((tab) => location.pathname === `/c/${tab.id}`)
+  if (command === 'next-tab' || command === 'previous-tab') {
+    const step = command === 'next-tab' ? 1 : -1
+    const next = current < 0 ? (step === 1 ? tabs[0] : tabs.at(-1)) : tabs[(current + step + tabs.length) % tabs.length]
+    if (next && next !== tabs[current]) navigate(canvasTabTarget(next))
+    return
+  }
+
+  const tab = tabs[current]
+  if (!tab) return
+  if (command === 'toggle-pin') setCanvasTabPinned(tab.id, !tab.pinned)
+  if (command === 'close-other-tabs') closeOtherTabs(tab.id, location.pathname)
+  if (command === 'move-tab' && supportsCanvasWindows()) void moveCanvasTabToWindow(tab).catch(console.error)
 }
 
 /* ---------- sign-in handoff from the system browser ---------- */
@@ -548,6 +483,9 @@ export function initDesktopShell() {
      it as an event — the page never sees the keystroke. Windows has no menu
      bar, so Ctrl+W arrives as a plain keydown. Both close the active tab. */
   shellWindow.__TAURI__?.event?.listen?.('close-tab', closeActiveTab).catch(console.error)
+  shellWindow.__TAURI__?.event
+    ?.listen?.<unknown>('window-menu', ({ payload }) => runWindowMenu(payload))
+    .catch(console.error)
   /* the macOS menu bar, built from the action registry (appMenu.ts); a shell
      older than that has only the View menu (view_menu.rs), which a reload
      leaves showing the last canvas until a canvas reports in again, so it

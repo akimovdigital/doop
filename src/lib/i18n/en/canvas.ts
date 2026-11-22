@@ -130,8 +130,6 @@ export const canvas = {
 
   /* desktop tab strip */
   openCanvases: 'Open canvases',
-  tabGroups: 'Tab groups',
-  allTabGroups: 'All tabs',
   closeTab: 'Close tab',
   newCanvas: 'New canvas',
   copyLink: 'Copy link',
@@ -145,12 +143,6 @@ export const canvas = {
   renameFile: 'Rename canvas',
   tabRenameFailed: 'Could not rename the canvas.',
   tabCopyFailed: 'Could not copy the canvas link.',
-  addToTabGroup: 'Add to tab group',
-  newTabGroup: 'New group',
-  tabGroupName: 'Group name',
-  renameTabGroup: 'Rename group',
-  removeTabGroup: 'Remove group',
-  removeFromTabGroup: 'Remove from group',
   moveToNewWindow: 'Move to new window',
   tabWindowFailed: 'Could not open a new window.',
   openInSplitTab: 'Open in split view',
