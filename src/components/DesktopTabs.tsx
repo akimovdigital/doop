@@ -47,6 +47,7 @@ import { chordHint } from '../lib/actions/chords'
 import { hasInsetTrafficLights, isDesktopShell, supportsCanvasTabs } from '../lib/shell'
 import { useWindowFrame } from '../lib/windowFrame'
 import { WindowControls } from './WindowControls'
+import { canvasTabAgentBusy } from '../lib/canvasTabAgentBusy'
 import { canEditOpenCanvas, useStore } from '../lib/store'
 import { useT } from '../lib/i18n'
 
@@ -66,15 +67,10 @@ function TabAgentGrid() {
   )
 }
 
-/** Idle: the prompt glyph. Busy: the OpenCode grid, and only for the open
- *  canvas — tasks and presence in the store belong to that canvas. */
+/** Idle: the prompt glyph. Busy: the OpenCode grid on the active tab while
+ *  live tasks, agent status, or a prompt send apply to this canvas. */
 function TabCodeMark({ canvasId, selected }: { canvasId: string; selected: boolean }) {
-  const working = useStore(
-    (s) =>
-      s.canvas?.id === canvasId &&
-      (s.tasks.some((task) => task.agentName && !task.endedAt && !task.failedAt) ||
-        Object.values(s.presences).some((peer) => peer.kind === 'agent' && !!peer.status)),
-  )
+  const working = useStore((s) => canvasTabAgentBusy(s, canvasId, selected))
   if (working) return <TabAgentGrid />
   return <CodeTabIcon size="rail" className={cn('shrink-0', selected && 'text-brand')} />
 }

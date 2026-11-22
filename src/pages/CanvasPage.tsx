@@ -372,6 +372,7 @@ export function CanvasPage({
       disconnect()
       useStore.getState().setCanvas(null)
       useStore.getState().setPresences([])
+      useStore.getState().setTasks([])
       useStore.getState().setCanvasNotFound(false)
       select(null)
       useStore.getState().setTool('select')

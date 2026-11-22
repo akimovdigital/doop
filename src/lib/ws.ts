@@ -7,6 +7,11 @@ import { noteTheirSave } from './theirSaves'
 
 let socket: WebSocket | null = null
 let currentCanvasId: string | null = null
+
+/** Canvas id the socket is joining or joined — set before init, survives reconnect. */
+export function joinedCanvasId(): string | null {
+  return currentCanvasId
+}
 /* joined without a session, as a guest on a link-shared canvas */
 let joinedAsGuest = false
 let retryTimer: number | null = null
