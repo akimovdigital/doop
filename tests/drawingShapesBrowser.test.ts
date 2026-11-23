@@ -199,6 +199,81 @@ describe.skipIf(!findBrowserPath())('drawing on the canvas', { timeout: 30_000 }
   const stageCursor = () =>
     page.$eval('.stage', (el) => decodeURIComponent(getComputedStyle(el).cursor).match(/data-cursor='([^']+)'/)?.[1])
 
+  async function wheelZoom(clientX: number, clientY: number, deltaY: number) {
+    return page.evaluate(
+      async (cx, cy, delta) => {
+        const stage = document.querySelector('.stage')!
+        const under = () => {
+          const rect = stage.getBoundingClientRect()
+          const vp = window.drawingHarness.camera()
+          return { x: (cx - rect.left - vp.x) / vp.zoom, y: (cy - rect.top - vp.y) / vp.zoom, zoom: vp.zoom }
+        }
+        const before = under()
+        // A trackpad can send several wheel events before one animation frame.
+        for (let i = 0; i < 4; i++)
+          stage.dispatchEvent(
+            new WheelEvent('wheel', {
+              deltaY: delta,
+              ctrlKey: true,
+              clientX: cx,
+              clientY: cy,
+              bubbles: true,
+              cancelable: true,
+            }),
+          )
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+        return { before, after: under() }
+      },
+      clientX,
+      clientY,
+      deltaY,
+    )
+  }
+
+  it('pivots ctrl+wheel zoom on the pointer before and after the stage moves', async () => {
+    const first = await wheelZoom(300, 240, -10)
+    expect(first.after.zoom).toBeGreaterThan(first.before.zoom)
+    expect(first.after.x).toBeCloseTo(first.before.x, 6)
+    expect(first.after.y).toBeCloseTo(first.before.y, 6)
+
+    // Move and resize the stage, as docked chrome does. Let its resize observer run.
+    await page.evaluate(async () => {
+      const root = document.getElementById('root')!
+      root.style.left = '120px'
+      root.style.top = '90px'
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    })
+    const moved = await wheelZoom(500, 400, -10)
+    expect(moved.after.zoom).toBeGreaterThan(moved.before.zoom)
+    expect(moved.after.x).toBeCloseTo(moved.before.x, 6)
+    expect(moved.after.y).toBeCloseTo(moved.before.y, 6)
+  })
+
+  it('updates the pen badge as wheel zoom changes the snap radius', async () => {
+    await page.click('[aria-label="Vector path"]')
+    await page.mouse.click(220, 250)
+    await page.mouse.click(420, 250)
+
+    await page.mouse.move(426, 250)
+    await page.waitForSelector('[data-path-anchor="1"][data-snapped="true"]')
+    expect(await stageCursor()).toBe('pen-anchor')
+    // Keep the pointer still. A six-pixel gap at 2× exceeds the snap radius at 3×.
+    await wheelZoom(426, 250, -10)
+    expect(await stageCursor()).toBe('pen')
+    expect(await page.$('[data-path-snap]')).toBeNull()
+    await wheelZoom(426, 250, 10)
+    expect(await stageCursor()).toBe('pen-anchor')
+
+    await page.mouse.move(226, 250)
+    await page.waitForSelector('[data-path-snap="close"]')
+    expect(await stageCursor()).toBe('pen-close')
+    await wheelZoom(226, 250, -10)
+    expect(await stageCursor()).toBe('pen')
+    await wheelZoom(226, 250, 10)
+    expect(await stageCursor()).toBe('pen-close')
+    await page.waitForSelector('[data-path-snap="close"]')
+  })
+
   it('snaps to intermediate anchors and lets Alt place a point freely', async () => {
     await page.click('[aria-label="Vector path"]')
     expect(await stageCursor()).toBe('pen')

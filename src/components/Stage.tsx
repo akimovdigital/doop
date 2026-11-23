@@ -355,10 +355,9 @@ export function Stage({
     return () => window.removeEventListener('popstate', onPop)
   }, [])
 
-  /* Viewport → DOM without React: no component subscribes to the viewport, so
-     pan/zoom never renders anything. A store subscription writes the world
-     transform, the grid layer, the --zoom variable (which counter-scales
-     labels/pins/cursors from CSS), and the zoom pill's % directly. */
+  /* A store subscription writes the camera directly to the DOM: the world
+     transform, grid layer, --zoom (which counter-scales labels/pins/cursors),
+     and zoom pill. This keeps camera painting off the Stage render path. */
   useLayoutEffect(() => {
     let lastPaintedZoom: number | undefined
     let lastPixelGridOpacity: number | undefined
@@ -800,8 +799,7 @@ export function Stage({
 
   /* wheel: pan / pinch-zoom — needs a non-passive listener. Trackpads fire
      wheel events faster than the display refreshes, so deltas accumulate and
-     flush once per animation frame: one store update (→ one React render)
-     per painted frame instead of one per input event. */
+     flush once per animation frame: one store update per painted frame. */
   useEffect(() => {
     const el = ref.current
     if (!el) return
@@ -809,6 +807,8 @@ export function Stage({
     let panX = 0
     let panY = 0
     let zoomDelta = 0
+    /* The latest zoom event's pointer stays in client px. The flush converts
+       it to stage px using the origin cached for the gesture. */
     let pinchClientX = 0
     let pinchClientY = 0
     let lastPinchInput = -Infinity
