@@ -242,5 +242,33 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     await page.keyboard.press('Enter')
     await page.waitForSelector('[data-design-pin="2"][data-status="pending"]')
     await editFrame!.waitForFunction(() => document.querySelector('#title')?.textContent === 'Edited second page')
+
+    const editedBox = await (await editFrame!.$('#title'))!.boundingBox()
+    const cssX = editedBox!.x + 30
+    const cssY = editedBox!.y + editedBox!.height / 2
+    await page.mouse.move(cssX, cssY)
+    await page.waitForSelector('[data-design-hover="#title"]', { visible: true })
+    await page.mouse.click(cssX, cssY)
+    await page.waitForSelector(field, { visible: true })
+    expect(await page.$('[data-design-region]')).toBeNull()
+    await page.locator('[data-design-card] button[aria-label="Edit CSS properties"]').click()
+    const inspector = '[data-design-css-inspector]'
+    const filter = `${inspector} input[aria-label="Filter properties"]`
+    const color = `${inspector} input[aria-label="color"]`
+    await page.waitForSelector(`${filter}:focus`)
+    await page.keyboard.type('color')
+    await page.waitForSelector(color, { visible: true })
+    await page.$eval(color, (input) => (input as HTMLInputElement).select())
+    await page.keyboard.type('#da1376')
+    await editFrame!.waitForFunction(
+      () => getComputedStyle(document.querySelector('#title')!).color === 'rgb(218, 19, 118)',
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForSelector(inspector, { hidden: true })
+    await page.keyboard.press('Escape')
+    await page.waitForSelector(field, { hidden: true })
+    await editFrame!.waitForFunction(
+      () => getComputedStyle(document.querySelector('#title')!).color === 'rgb(31, 39, 106)',
+    )
   })
 })

@@ -7,8 +7,9 @@ import { Button } from './ui/button'
 import { Checkbox } from './ui/checkbox'
 import { Switch } from './ui/switch'
 import { IconButton } from './ui/icon-button'
-import { CheckIcon, ChevronDownIcon, HotspotIcon, MessageSquareIcon, PlusIcon, XIcon } from './ui/icons'
+import { CheckIcon, ChevronDownIcon, HotspotIcon, MessageSquareIcon, PlusIcon, SlidersIcon, XIcon } from './ui/icons'
 import { Textarea } from './ui/textarea'
+import { DesignCssInspector } from './DesignCssInspector'
 import type { useDesignMode } from './useDesignMode'
 
 type Mode = ReturnType<typeof useDesignMode>
@@ -202,6 +203,7 @@ export function DesignModeOverlay({
   const t = useT()
   const surface = useSurface(viewportRef, screen, revision)
   const fieldRef = useRef<HTMLTextAreaElement>(null)
+  const cssButtonRef = useRef<HTMLButtonElement>(null)
   const shieldRef = useRef<HTMLDivElement>(null)
   const picking = mode.enabled && !mode.usingPage && !mode.editingText
   const cardOpen = picking && !!mode.draft
@@ -307,9 +309,9 @@ export function DesignModeOverlay({
       : inset
   const top = Math.min(...anchors.map((rect) => rect.y))
   const comment = draft?.comment.trim()
-  const canSubmit = !!(comment || draft?.textEdit)
+  const canSubmit = !!(comment || draft?.textEdit || draft?.cssEdits?.length)
   const rows = Math.min(3, (draft?.comment ?? '').split('\n').length)
-  const cardHeight = (comment || draft?.id ? 58 : 34) + (rows - 1) * 20
+  const cardHeight = (canSubmit || draft?.id ? 58 : 34) + (rows - 1) * 20
   let cardTop = inset
   if (surface && anchors.length) {
     const below = surface.y + bottom * surface.scale + inset
@@ -318,6 +320,9 @@ export function DesignModeOverlay({
     // Keep the note from covering the selected text before the second click.
     cardTop = below > limit && above >= inset ? above : Math.max(inset, Math.min(below, limit))
   }
+  const cssBelow = (surface?.viewportHeight ?? 0) - cardTop - cardHeight - 2 * inset
+  const cssAbove = cardTop - 2 * inset
+  const cssOnTop = cssBelow < 210 && cssAbove > cssBelow
   const submitLabel = t(draft?.id ? 'panels.designSave' : mode.saved.batch ? 'panels.designStack' : 'panels.designSend')
   const tagBadge = 'absolute right-0 bottom-full max-w-full truncate rounded-row bg-brand px-1 text-micro/4 text-white'
 
@@ -439,13 +444,41 @@ export function DesignModeOverlay({
               onKeyDown={(e) => e.stopPropagation()}
               onKeyUp={(e) => e.stopPropagation()}
             />
-            {!comment && !draft.id && (
+            {draft.elements.length === 1 && !draft.textEdit && (
+              <IconButton
+                ref={cssButtonRef}
+                size="sm"
+                className="size-5"
+                aria-label={t('panels.designCssEdit')}
+                title={t('panels.designCssEdit')}
+                aria-expanded={!!mode.cssInspector}
+                onClick={() => void mode.toggleCssInspector()}
+                disabled={mode.busy}
+              >
+                <SlidersIcon size={13} />
+              </IconButton>
+            )}
+            {!canSubmit && !draft.id && (
               <IconButton size="sm" className="size-5" aria-label={submitLabel} disabled>
                 <span aria-hidden="true">↵</span>
               </IconButton>
             )}
           </div>
-          {(comment || draft.id) && (
+          {mode.cssInspector && (
+            <DesignCssInspector
+              properties={mode.cssInspector.properties}
+              edits={draft.cssEdits ?? []}
+              above={cssOnTop}
+              maxHeight={Math.min(270, Math.max(124, cssOnTop ? cssAbove : cssBelow))}
+              onChange={mode.setCssProperty}
+              onAdd={mode.addCssProperty}
+              onClose={() => {
+                mode.closeCssInspector()
+                cssButtonRef.current?.focus()
+              }}
+            />
+          )}
+          {(canSubmit || draft.id) && (
             <div className="flex items-center justify-between gap-1">
               <label className="inline-flex cursor-pointer items-center gap-1.5 text-caption text-ink-soft">
                 {t('panels.designBatch')}
@@ -552,7 +585,7 @@ function AnnotationQueue({ mode }: { mode: Mode }) {
           variant="bare"
           className="h-6 min-w-0 flex-1 justify-start gap-1 px-0.5 text-caption text-ink"
           title={[selector, visibleText && `“${visibleText}”`, note.comment].filter(Boolean).join(' ')}
-          aria-label={`${note.number}. ${note.textEdit ? `“${visibleText}”` : note.comment}`}
+          aria-label={`${note.number}. ${note.textEdit ? `“${visibleText}”` : note.comment || (note.cssEdits?.length ? t('panels.designCssChanges') : '')}`}
           disabled={mode.busy}
           onClick={() => mode.openNote(note)}
         >
@@ -563,7 +596,9 @@ function AnnotationQueue({ mode }: { mode: Mode }) {
             {selector}
             {visibleText && <span className="ml-1 text-ink-soft">“{visibleText}”</span>}
           </span>
-          <span className="min-w-0 flex-1 truncate text-left">{note.comment}</span>
+          <span className="min-w-0 flex-1 truncate text-left">
+            {note.comment || (note.cssEdits?.length ? t('panels.designCssChanges') : '')}
+          </span>
           {note.textEdit && <span className="shrink-0 rounded-row bg-brand/10 px-1 text-brand">T</span>}
           {note.elements.length > 1 && (
             <span className="shrink-0 rounded-row bg-brand/10 px-1 text-brand">+{note.elements.length - 1}</span>

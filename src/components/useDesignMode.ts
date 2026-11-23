@@ -10,6 +10,7 @@ import {
   noteHtml,
   readDesignNotes,
   writeDesignNotes,
+  type DesignCssEdit,
   type DesignNote,
   type DesignNotesAction,
   type DesignTextEdit,
@@ -32,8 +33,13 @@ interface Target {
 
 type Details = Omit<NoteElement, 'label' | 'htmlExcerpt'> & Target
 export type DesignPoint = { x: number; y: number }
-type Draft = Pick<DesignNote, 'elements' | 'region' | 'comment' | 'textEdit'> & { id?: string }
+type Draft = Pick<DesignNote, 'elements' | 'region' | 'comment' | 'textEdit' | 'cssEdits'> & { id?: string }
+type CssInspector = { selector: string; properties: Record<string, string> }
 type LocatedPin = { rect: NoteRect; missing: boolean }
+
+function annotationSelector(element: NoteElement) {
+  return element.doopId ? `[data-doop-id="${CSS.escape(element.doopId)}"]` : element.selector
+}
 
 const subscribers = new Set<() => void>()
 const notesByCanvas = new Map<string, SavedDesignNotes>()
@@ -95,6 +101,8 @@ export function useDesignMode({
   const [usingPage, setUsingPage] = useState(false)
   const [queueOpen, setQueueOpen] = useState(false)
   const [draft, setDraft] = useState<Draft | null>(null)
+  const [cssInspector, setCssInspector] = useState<CssInspector | null>(null)
+  const cssRequest = useRef(0)
   const [editingText, setEditingText] = useState(false)
   const textSession = useRef<{ id: string; win: Window }>()
   const [hover, setHover] = useState<Target | null>(null)
@@ -138,13 +146,23 @@ export function useDesignMode({
     setEditingText(false)
   }
 
+  function closeCssInspector() {
+    cssRequest.current++
+    setCssInspector(null)
+  }
+
+  function closeDraft() {
+    closeCssInspector()
+    setDraft(null)
+  }
+
   function clearInteraction() {
     cancelText()
     clearHover()
     pickSequence.current++
     drag.current = undefined
     setRegion(undefined)
-    setDraft(null)
+    closeDraft()
   }
 
   function holdPage() {
@@ -185,12 +203,16 @@ export function useDesignMode({
       setQueueOpen(false)
       return true
     }
+    if (cssInspector) {
+      closeCssInspector()
+      return true
+    }
     switch (designEscape({ active: enabled, dragging: !!drag.current, noteOpen: !!draft })) {
       case 'drag':
         cancelDrag()
         return true
       case 'note':
-        setDraft(null)
+        closeDraft()
         pickSequence.current++
         return true
       case 'mode':
@@ -245,6 +267,7 @@ export function useDesignMode({
       elements: value.elements,
       region: value.region,
       textEdit: value.textEdit,
+      cssEdits: value.cssEdits,
       comment,
     }
   }
@@ -300,7 +323,7 @@ export function useDesignMode({
     const textEdit: DesignTextEdit = { before: existing?.textEdit?.before ?? before, after }
     const element = existing?.elements[0] ?? { ...detail, label: label(detail), htmlExcerpt: noteHtml(detail) }
     const value = { id: existing?.id, elements: [element], comment: existing?.comment ?? '', textEdit }
-    setDraft(null)
+    closeDraft()
     if (textEdit.before === after && existing) dispatch({ type: 'remove', ids: [existing.id] })
     else if (mode === 'chat') draftToChat(value)
     else if (existing) dispatch({ type: 'update', id: existing.id, changes: { textEdit } })
@@ -312,17 +335,84 @@ export function useDesignMode({
     if (!win || !allowed) return
     const edits = pageNotes.flatMap((note) => {
       const first = note.elements[0]
-      if (
-        !note.textEdit ||
-        !first ||
-        note.pageUrl !== pageUrl
-      )
-        return []
-      const selector = first.doopId ? `[data-doop-id="${CSS.escape(first.doopId)}"]` : first.selector
+      if (!note.textEdit || !first || note.pageUrl !== pageUrl) return []
+      const selector = annotationSelector(first)
       return [{ ...note.textEdit, id: note.id, selector, pending: note.status === 'pending' }]
     })
     win.postMessage({ type: 'doop:textEdit', action: 'sync', edits }, '*')
   }, [allowed, screenKey, documentRevision, pageUrl, getWindow, pageNotes])
+
+  async function toggleCssInspector() {
+    const first = draft?.elements[0]
+    if (!enabled || busy || !draft || !first || draft.elements.length !== 1 || draft.textEdit) return
+    if (cssInspector) return closeCssInspector()
+    const win = getWindow()
+    if (!win) return
+    const request = ++cssRequest.current
+    const selector = annotationSelector(first)
+    const reply = await askFrameWindow(win, 'doop:css', { action: 'inspect', selector })
+    if (request !== cssRequest.current || win !== getWindow() || !reply?.properties) return
+    const properties = { ...(reply.properties as Record<string, string>) }
+    for (const { prop, before } of draft.cssEdits ?? []) properties[prop] = before
+    setCssInspector({ selector, properties })
+  }
+
+  async function addCssProperty(prop: string) {
+    const win = getWindow()
+    const inspector = cssInspector
+    if (!win || !inspector || (!prop.startsWith('--') && !CSS.supports(prop, 'initial'))) return false
+    if (Object.hasOwn(inspector.properties, prop)) return true
+    const request = cssRequest.current
+    const reply = await askFrameWindow(win, 'doop:css', { action: 'inspect', selector: inspector.selector, prop })
+    if (request !== cssRequest.current || win !== getWindow() || !reply?.properties) return false
+    setCssInspector({
+      ...inspector,
+      properties: { ...inspector.properties, ...(reply.properties as Record<string, string>) },
+    })
+    return true
+  }
+
+  function setCssProperty(prop: string, after: string) {
+    if (!cssInspector || busy) return
+    after = after.trim()
+    if (after && !CSS.supports(prop, after)) return
+    const computed = cssInspector.properties[prop] ?? ''
+    setDraft((current) => {
+      if (!current) return current
+      const edits = current.cssEdits ?? []
+      const existing = edits.find((edit) => edit.prop === prop)
+      const before = existing?.before ?? computed
+      const next = edits.filter((edit) => edit.prop !== prop)
+      if (after && after !== before) next.push({ prop, before, after })
+      return { ...current, cssEdits: next }
+    })
+  }
+
+  useEffect(() => {
+    const win = getWindow()
+    if (!win || !allowed) return
+    const targets = new Map<string, Record<string, string>>()
+    function add(element: NoteElement, edits: DesignCssEdit[]) {
+      const selector = annotationSelector(element)
+      const properties = targets.get(selector) ?? (Object.create(null) as Record<string, string>)
+      for (const { prop, after } of edits) properties[prop] = after
+      targets.set(selector, properties)
+    }
+    for (const note of pageNotes) {
+      if (note.status !== 'pending' || note.pageUrl !== pageUrl) continue
+      if (enabled && draft?.id === note.id && draft.cssEdits) continue
+      if (note.elements[0] && note.cssEdits?.length) add(note.elements[0], note.cssEdits)
+    }
+    if (enabled && draft?.elements[0] && draft.cssEdits?.length) add(draft.elements[0], draft.cssEdits)
+    win.postMessage(
+      {
+        type: 'doop:css',
+        action: 'sync',
+        targets: [...targets].map(([selector, properties]) => ({ selector, properties })),
+      },
+      '*',
+    )
+  }, [allowed, screenKey, documentRevision, pageUrl, getWindow, pageNotes, enabled, draft])
 
   async function pick(at: DesignPoint, shift: boolean, alt: boolean) {
     const seq = ++pickSequence.current
@@ -334,8 +424,9 @@ export function useDesignMode({
     if (!detail || pickSequence.current !== seq) return
     const element = { ...detail, label: label(detail), htmlExcerpt: noteHtml(detail) }
     if (alt) return draftToChat({ elements: [element], comment: '' })
+    closeCssInspector()
     setDraft((current) => {
-      if (shift && current && !current.region) {
+      if (shift && current && !current.region && !current.textEdit && !current.cssEdits?.length) {
         if (current.elements.some((el) => el.selector === element.selector)) return current
         return { ...current, elements: [...current.elements, element] }
       }
@@ -381,6 +472,7 @@ export function useDesignMode({
     cancelDrag()
     if (current.rect) {
       pickSequence.current++
+      closeCssInspector()
       setDraft({ region: current.rect, elements: [], comment: '' })
     } else void pick(at, shift, alt)
   }
@@ -388,6 +480,7 @@ export function useDesignMode({
   function openNote(note: DesignNote) {
     if (!allowed || busy) return
     enter()
+    closeCssInspector()
     setQueueOpen(false)
     if (source === 'browser' ? note.pageUrl !== pageUrl : note.frameId !== frameId)
       onNavigate(note.frameId, note.pageUrl)
@@ -397,12 +490,13 @@ export function useDesignMode({
       elements: note.elements,
       region: note.region,
       textEdit: note.textEdit,
+      cssEdits: note.cssEdits,
     })
   }
 
   function deleteNote(id: string) {
     dispatch({ type: 'remove', ids: [id] })
-    if (draft?.id === id) setDraft(null)
+    if (draft?.id === id) closeDraft()
   }
 
   async function sendNotes(notes: DesignNote[]) {
@@ -429,7 +523,7 @@ export function useDesignMode({
   async function submit() {
     if (
       !draft ||
-      (!draft.comment.trim() && !draft.textEdit) ||
+      (!draft.comment.trim() && !draft.textEdit && !draft.cssEdits?.length) ||
       !frame ||
       !allowed ||
       useStore.getState().composerSend?.status === 'busy'
@@ -440,7 +534,15 @@ export function useDesignMode({
       dispatch({
         type: 'update',
         id: draft.id,
-        changes: { comment: note.comment, elements: note.elements, region: note.region },
+        changes: {
+          comment: note.comment,
+          elements: note.elements,
+          region: note.region,
+          cssEdits: note.cssEdits,
+          ...(note.status !== 'pending' && note.cssEdits?.length
+            ? { status: 'pending' as const, cardId: undefined, sentAt: undefined, resolvedAt: undefined }
+            : {}),
+        },
       })
     } else {
       dispatch({ type: 'add', note })
@@ -450,7 +552,7 @@ export function useDesignMode({
         if (!(await sendNotes([queued]))) return
       }
     }
-    setDraft(null)
+    closeDraft()
   }
 
   async function sendPending() {
@@ -478,7 +580,7 @@ export function useDesignMode({
         const first = note.elements[0]
         const last = lastRects.current.get(note.id) ?? note.lastRect ?? first?.rect ?? note.region
         if (!first || !last) return [note.id, last && { rect: last, missing: false }] as const
-        const selector = first.doopId ? `[data-doop-id="${CSS.escape(first.doopId)}"]` : first.selector
+        const selector = annotationSelector(first)
         const reply = await askFrameWindow(win, 'doop:locate', { selector }, 1000, 'doop:located')
         const rect = reply?.rect as NoteRect | null | undefined
         if (!cancelled && rect) lastRects.current.set(note.id, rect)
@@ -523,6 +625,13 @@ export function useDesignMode({
         return true
       }
     }
+    if (target?.closest('[data-design-css-inspector]')) {
+      if (event.key === 'Escape') {
+        target.closest('[data-design-card]')?.querySelector<HTMLButtonElement>('button[aria-expanded="true"]')?.focus()
+        return escape()
+      }
+      return false
+    }
     if (!enabled) return false
     if (event.code === 'Space' && !event.isComposing && !event.metaKey && !event.ctrlKey && !event.altKey) {
       if (target?.closest('input,textarea,select,button,[contenteditable],[role="switch"]')) return false
@@ -542,6 +651,11 @@ export function useDesignMode({
     pageNotes,
     handleKey,
     editingText,
+    cssInspector,
+    toggleCssInspector,
+    closeCssInspector,
+    addCssProperty,
+    setCssProperty,
     startTextEdit,
     finishTextEdit,
     usingPage: enabled && usingPage,
@@ -581,7 +695,7 @@ export function useDesignMode({
     setBatch: (batch: boolean) => changeSaved(canvasId!, (prev) => ({ ...prev, batch })),
     clearPending: () => {
       const ids = saved.notes.filter((note) => note.status === 'pending').map((note) => note.id)
-      if (draft?.id && ids.includes(draft.id)) setDraft(null)
+      if (draft?.id && ids.includes(draft.id)) closeDraft()
       dispatch({ type: 'remove', ids })
     },
     resolve: (id: string) => dispatch({ type: 'update', id, changes: { status: 'resolved', resolvedAt: Date.now() } }),
