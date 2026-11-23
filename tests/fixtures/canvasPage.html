@@ -9,6 +9,8 @@
       import React from 'react'
       import { createRoot } from 'react-dom/client'
       import { CanvasPage } from '/src/pages/CanvasPage.tsx'
+      import { FrameView } from '/src/components/FrameView.tsx'
+      import { Stage } from '/src/components/Stage.tsx'
       import { TooltipProvider } from '/src/components/ui/tooltip.tsx'
       import { useStore } from '/src/lib/store.ts'
       import '/src/styles.css'
@@ -23,6 +25,9 @@
             .getState()
             .setCanvas({ id: canvasId, name: 'Canvas', frames, role: 'edit', createdAt: 0, updatedAt: 0, ...canvas }),
         setPages: (pages) => useStore.getState().setPages(pages, canvasId),
+        camera: () => useStore.getState().viewport,
+        setCamera: (viewport) => useStore.getState().setViewport(viewport),
+        componentTypes: { stage: Stage, frame: FrameView },
       }
       createRoot(document.getElementById('root')).render(
         React.createElement(TooltipProvider, null, React.createElement(CanvasPage, { canvasId })),
