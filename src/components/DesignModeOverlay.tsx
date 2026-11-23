@@ -6,7 +6,7 @@ import { Button } from './ui/button'
 import { Checkbox } from './ui/checkbox'
 import { Switch } from './ui/switch'
 import { IconButton } from './ui/icon-button'
-import { AnnotationIcon, CheckIcon, ChevronDownIcon, MessageSquareIcon, PlusIcon, XIcon } from './ui/icons'
+import { CheckIcon, ChevronDownIcon, MessageSquareIcon, PlusIcon, XIcon } from './ui/icons'
 import { Textarea } from './ui/textarea'
 import type { useDesignMode } from './useDesignMode'
 
@@ -58,18 +58,6 @@ export function DesignModeControls({ mode }: { mode: Mode }) {
         </div>
       ) : (
         <>
-          {!mode.enabled && (
-            <IconButton
-              size="sm"
-              aria-label={t('panels.designAnnotate')}
-              title={t('panels.designAnnotateShortcut')}
-              className="w-auto min-w-6 gap-1 px-1 sm:inline-flex"
-              onClick={mode.toggle}
-            >
-              <AnnotationIcon size="rail" />
-              <span className="hidden px-0.5 text-caption @min-[650px]:inline">{t('panels.designAnnotate')}</span>
-            </IconButton>
-          )}
           {mode.saved.notes.length > 0 && (
             <IconButton
               size="sm"

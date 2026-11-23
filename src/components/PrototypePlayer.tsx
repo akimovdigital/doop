@@ -651,6 +651,8 @@ export function PrototypePlayer({
           onNavigate={(id) => navigate(id, 'instant', 0)}
           onRestart={restart}
           onHotspots={flashHotspots}
+          onDesignMode={design.allowed ? design.toggle : undefined}
+          designModeOn={design.enabled}
           scaling={scaling}
           onScalingChange={setScaling}
           onMenuClose={(event) => {

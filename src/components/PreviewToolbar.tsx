@@ -46,6 +46,9 @@ interface PreviewToolbarProps {
   onNavigate: (id: string) => void
   onRestart: () => void
   onHotspots: () => void
+  /** editors: the pointer-in-square button toggles Design Mode (⌘⇧D) instead of flashing hotspots */
+  onDesignMode?: () => void
+  designModeOn?: boolean
   scaling: ProtoScaling
   onScalingChange: (next: ProtoScaling) => void
   onMenuClose: (event: Event) => void
@@ -95,9 +98,23 @@ export function PreviewToolbar(props: PreviewToolbarProps) {
         <IconButton size="sm" aria-label={t('panels.protoRestart')} onClick={props.onRestart}>
           <HistoryIcon size="rail" />
         </IconButton>
-        <IconButton size="sm" aria-label={t('panels.protoHotspots')} onClick={props.onHotspots}>
-          <HotspotIcon size="rail" />
-        </IconButton>
+        {props.onDesignMode ? (
+          <IconButton
+            size="sm"
+            aria-label={t('panels.designAnnotate')}
+            title={t('panels.designAnnotateShortcut')}
+            aria-pressed={props.designModeOn ?? false}
+            on={props.designModeOn}
+            data-design-toggle=""
+            onClick={props.onDesignMode}
+          >
+            <HotspotIcon size="rail" />
+          </IconButton>
+        ) : (
+          <IconButton size="sm" aria-label={t('panels.protoHotspots')} onClick={props.onHotspots}>
+            <HotspotIcon size="rail" />
+          </IconButton>
+        )}
         <ScalingMenu scaling={props.scaling} onChange={props.onScalingChange} onClose={props.onMenuClose} />
         {onClose && canvasId && (
           <IconButton
