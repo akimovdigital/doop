@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { Frame as BrowserFrame, KeyInput, Page } from 'puppeteer-core'
 import { findBrowserPath } from '../server/screenshot'
 import type { AgentTask, Canvas } from '../shared/types'
-import { fixtureUrl, pagePerTest } from './browser'
+import { fixtureUrl, pagePerTest, replaceInputText } from './browser'
 
 const canvas: Canvas = {
   id: 'design-preview',
@@ -60,6 +60,7 @@ type Fixture = {
   designSendDelay?: number
   designSendError?: string
   designCropHasMarkup: boolean
+  finishDesignCrop?: () => void
   readDesignDraft: (canvasId: string) => string
   writeDesignDraft: (canvasId: string, text: string) => void
   editFrame: (id: string, html: string) => void
@@ -85,13 +86,14 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await page.setViewport({ width: 1000, height: 760, deviceScaleFactor: 1 })
   })
 
-  async function mount(data = canvas, synced = false) {
+  async function mount(data = canvas, synced = false, mac = false) {
     await page.goto(fixtureUrl('prototype.html'))
     await page.waitForFunction(() => (window as unknown as Fixture).fixtureReady)
     await page.evaluate(
-      (data, synced, reset) => {
+      (data, synced, reset, mac) => {
         const fixture = window as unknown as Fixture
         if (reset) localStorage.clear()
+        if (mac) Object.assign(window, { __DOOP_DESKTOP__: '0.14.0', __DOOP_DESKTOP_TRAFFIC_LIGHTS__: true })
         fixture.mockDesignSends()
         fixture.seed(data)
         if (synced) fixture.playSynced(data.frames[0]!.id)
@@ -100,6 +102,7 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
       data,
       synced,
       firstMount,
+      mac,
     )
     firstMount = false
     const id = data.frames[0]!.id
@@ -216,6 +219,14 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
   const sent = () => page.evaluate(() => (window as unknown as Fixture).designSends)
   const draft = () => page.evaluate((id) => (window as unknown as Fixture).readDesignDraft(id), canvas.id)
 
+  it('keeps full-window prototype controls outside the macOS traffic lights', async () => {
+    await mount(canvas, false, true)
+    const toolbar = '[data-preview-toolbar]'
+    expect(await page.$eval(toolbar, (el) => getComputedStyle(el).paddingLeft)).toBe('76px')
+    await enter()
+    expect(await page.$eval(toolbar, (el) => getComputedStyle(el).paddingLeft)).toBe('76px')
+  })
+
   it('toggles with ⌘⇧D inside the iframe, highlights a parent, and follows the Esc chain', async () => {
     const frame = await mount()
     await frame.focus('#go')
@@ -321,6 +332,10 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     let frame = await mount()
     await enter()
     await pick(frame, '#title')
+    const selection = '[data-design-selection]'
+    const card = '[data-design-card]'
+    const previousHeight = await page.$eval(selection, (el) => el.getBoundingClientRect().height)
+    const previousTop = await page.$eval(card, (el) => el.getBoundingClientRect().top)
     const original = await frame.$eval('#title', (el) => getComputedStyle(el).color)
     await page.click(control('Edit CSS properties'))
     const filter = 'input[aria-label="Filter properties"]'
@@ -328,6 +343,27 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await page.waitForSelector(filter, { visible: true })
     await page.type(filter, 'color')
     await page.waitForSelector(color, { visible: true })
+    await replaceInputText(page, filter, 'font-size')
+    const fontSize = 'input[aria-label="font-size"]'
+    await replaceInputText(page, fontSize, '48px')
+    await frame.waitForFunction(() => getComputedStyle(document.querySelector('#title')!).fontSize === '48px')
+    const top = await location(frame, '#title', 0, 0)
+    const bottom = await location(frame, '#title', 0, 1)
+    const expectedHeight = bottom.y - top.y
+    await page.waitForFunction(
+      (selection, card, height, top) => {
+        const ring = document.querySelector(selection)?.getBoundingClientRect()
+        const note = document.querySelector(card)?.getBoundingClientRect()
+        return !!ring && !!note && Math.abs(ring.height - height) < 1 && note.top > top
+      },
+      {},
+      selection,
+      card,
+      expectedHeight,
+      previousTop,
+    )
+    expect(expectedHeight).toBeGreaterThan(previousHeight)
+    await replaceInputText(page, filter, 'color')
     await capture('dm-14-css-inspector')
     await page.focus(color)
     await page.$eval(color, (el) => (el as HTMLInputElement).select())
@@ -335,7 +371,10 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await frame.waitForFunction(() => getComputedStyle(document.querySelector('#title')!).color === 'rgb(218, 19, 118)')
     await page.keyboard.press('Escape')
     await page.waitForSelector('[data-design-css-inspector]', { hidden: true })
-    expect(await frame.$eval('#title', (el) => getComputedStyle(el).color)).toBe('rgb(218, 19, 118)')
+    expect(await frame.$eval('#title', (el) => [getComputedStyle(el).color, getComputedStyle(el).fontSize])).toEqual([
+      'rgb(218, 19, 118)',
+      '48px',
+    ])
     await page.click('[role="switch"]')
     await page.click(control('Add to stack'))
     await page.waitForSelector(pin(1))
@@ -345,7 +384,10 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await capture('dm-15-css-edited-note')
     expect(await sent()).toEqual([])
     frame = await mount()
-    await frame.waitForFunction(() => getComputedStyle(document.querySelector('#title')!).color === 'rgb(218, 19, 118)')
+    await frame.waitForFunction(() => {
+      const style = getComputedStyle(document.querySelector('#title')!)
+      return style.color === 'rgb(218, 19, 118)' && style.fontSize === '48px'
+    })
     await page.click(control('1 pending; show details'))
     await page.click(control('Remove annotation 1'))
     await frame.waitForFunction(
@@ -426,7 +468,23 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await draw(at.x + 30, at.y + 25, 124, 70)
     await page.waitForSelector('[data-markup-tool="ellipse"]')
     await page.click('[role="switch"]')
+    await page.evaluate(() => {
+      const toBlob = HTMLCanvasElement.prototype.toBlob
+      HTMLCanvasElement.prototype.toBlob = function (callback, ...options) {
+        HTMLCanvasElement.prototype.toBlob = toBlob
+        toBlob.call(
+          this,
+          (blob) => {
+            ;(window as unknown as Fixture).finishDesignCrop = () => callback(blob)
+          },
+          ...options,
+        )
+      }
+    })
     await page.click(control('Add to stack'))
+    await page.waitForFunction(() => typeof (window as unknown as Fixture).finishDesignCrop === 'function')
+    expect(await page.$(pin(1))).toBeNull()
+    await page.evaluate(() => (window as unknown as Fixture).finishDesignCrop!())
     await page.waitForSelector(pin(1))
     const ellipse = '[data-markup-status="pending"] [data-markup-tool="ellipse"]'
     await page.waitForSelector(ellipse)
@@ -584,7 +642,7 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     const queue = '[data-preview-toolbar] [data-design-queue]'
     const clear = `${queue} header ${control('Clear All')}`
     await page.waitForSelector(clear, { visible: true })
-    expect(await page.$eval(`${queue} header h2`, (el) => el.textContent)).toBe('1 edits')
+    expect(await page.$eval(`${queue} header h2`, (el) => el.textContent)).toBe('1 edit')
     expect(await page.$eval(`${queue} li`, (el) => el.textContent)).toContain(`button“Open now”${comment}+1`)
     const layout = await page.$eval(
       queue,

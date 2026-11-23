@@ -55,3 +55,8 @@ export function hasInsetTrafficLights(): boolean {
   const inset = shell.__DOOP_DESKTOP_TRAFFIC_LIGHTS__
   return typeof inset === 'boolean' ? inset : shellVersionAtLeast(0, 1, 2)
 }
+
+/** Full-window preview chrome can share the macOS overlay title bar. */
+export function previewTrafficLightsClass(fullWindow: boolean): string | undefined {
+  if (fullWindow && hasInsetTrafficLights()) return 'pl-[76px]!'
+}

@@ -4,6 +4,15 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+enum {
+    DictationInterim,
+    DictationFinal,
+    DictationEnd,
+    DictationError,
+    DictationDisabled,
+    DictationNoSpeech,
+};
+
 typedef void (*DictationCallback)(uint64_t, uint32_t, const char *);
 
 static uint64_t activeId;
@@ -51,12 +60,20 @@ bool doop_dictation_available(const char *language) {
     return false;
 }
 
+static uint32_t recognitionOutcome(NSError *error, bool isRecording) {
+    for (NSError *cause = error; cause; cause = cause.userInfo[NSUnderlyingErrorKey]) {
+        if ([cause.domain isEqualToString:@"kLSRErrorDomain"] && cause.code == 201) return DictationDisabled;
+        if ([cause.domain isEqualToString:@"kAFAssistantErrorDomain"] && cause.code == 1110) return DictationNoSpeech;
+    }
+    return error && isRecording ? DictationError : DictationEnd;
+}
+
 API_AVAILABLE(macos(10.15))
 static void beginListening(uint64_t session, NSLocale *locale) {
     if (session != activeId) return;
     recognizer = [[SFSpeechRecognizer alloc] initWithLocale:locale];
     if (!recognizer.isAvailable) {
-        finish(session, 3);
+        finish(session, DictationError);
         return;
     }
 
@@ -64,7 +81,7 @@ static void beginListening(uint64_t session, NSLocale *locale) {
     AVAudioInputNode *input = engine.inputNode;
     AVAudioFormat *format = [input outputFormatForBus:0];
     if (!format.sampleRate || !format.channelCount) {
-        finish(session, 3);
+        finish(session, DictationError);
         return;
     }
 
@@ -79,22 +96,23 @@ static void beginListening(uint64_t session, NSLocale *locale) {
     [engine prepare];
     NSError *error = nil;
     if (![engine startAndReturnError:&error]) {
-        finish(session, 3);
+        finish(session, DictationError);
         return;
     }
 
     task = [recognizer recognitionTaskWithRequest:buffers resultHandler:^(SFSpeechRecognitionResult *result, NSError *problem) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (activeId != session) return;
-            if (result) notify(session, result.isFinal ? 1 : 0, result.bestTranscription.formattedString.UTF8String);
-            if (result.isFinal || problem) finish(session, problem && audio ? 3 : 2);
+            if (result) notify(session, result.isFinal ? DictationFinal : DictationInterim,
+                               result.bestTranscription.formattedString.UTF8String);
+            if (result.isFinal || problem) finish(session, recognitionOutcome(problem, audio != nil));
         });
     }];
 }
 
 void doop_dictation_start(uint64_t session, const char *language, DictationCallback callback) {
     if (@available(macOS 10.15, *)) {
-        if (activeId) finish(activeId, 2);
+        if (activeId) finish(activeId, DictationEnd);
         activeId = session;
         notify = callback;
         NSLocale *locale = [NSLocale localeWithLocaleIdentifier:@(language)];
@@ -102,19 +120,19 @@ void doop_dictation_start(uint64_t session, const char *language, DictationCallb
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (activeId != session) return;
                 if (status != SFSpeechRecognizerAuthorizationStatusAuthorized) {
-                    finish(session, 3);
+                    finish(session, DictationError);
                     return;
                 }
                 [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL granted) {
                     dispatch_async(dispatch_get_main_queue(), ^{
                         if (granted) beginListening(session, locale);
-                        else finish(session, 3);
+                        else finish(session, DictationError);
                     });
                 }];
             });
         }];
     } else {
-        callback(session, 3, NULL);
+        callback(session, DictationError, NULL);
     }
 }
 
@@ -122,13 +140,13 @@ void doop_dictation_stop(uint64_t session, bool cancel) {
     if (@available(macOS 10.15, *)) {
         if (activeId != session) return;
         if (cancel || !audio) {
-            finish(session, 2);
+            finish(session, DictationEnd);
             return;
         }
         stopAudio();
         [request endAudio];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1500 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
-            finish(session, 2);
+            finish(session, DictationEnd);
         });
     }
 }

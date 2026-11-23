@@ -74,6 +74,14 @@ describe('translateIn', () => {
     )
   })
 
+  it('counts pending design edits in English and Portuguese', async () => {
+    await i18n.setLocale('pt-BR')
+    expect(i18n.translateIn('en', 'panels.designEdits', { count: 1 })).toBe('1 edit')
+    expect(i18n.translateIn('en', 'panels.designEdits', { count: 2 })).toBe('2 edits')
+    expect(i18n.translateIn('pt-BR', 'panels.designEdits', { count: 1 })).toBe('1 edição')
+    expect(i18n.translateIn('pt-BR', 'panels.designEdits', { count: 2 })).toBe('2 edições')
+  })
+
   it('falls back to English, then to the key, instead of rendering a blank', () => {
     const missing = 'settings.notThere' as MessageKey
     expect(i18n.translateIn('pt-BR', missing)).toBe('settings.notThere')

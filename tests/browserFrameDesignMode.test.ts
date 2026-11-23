@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Page } from 'puppeteer-core'
 import { findBrowserPath } from '../server/screenshot'
-import { pagePerTest, serveBuilt, type BuiltServer } from './browser'
+import { pagePerTest, replaceInputText, serveBuilt, type BuiltServer } from './browser'
 import { Client, freePort, startServer, type Server } from './harness'
 
 const present = '[data-browser-surface="present"]:modal'
@@ -128,6 +128,9 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     const mount = async () => {
       await page.goto(`${web.origin}/c/${canvasId}`)
       const frame = await page.waitForSelector('[data-browser-shield]', { visible: true })
+      await page.evaluate(() =>
+        Object.assign(window, { __DOOP_DESKTOP__: '0.14.0', __DOOP_DESKTOP_TRAFFIC_LIGHTS__: true }),
+      )
       await frame!.click({ count: 2 })
       await page.waitForSelector(present, { visible: true })
     }
@@ -135,7 +138,14 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     const shots = process.env.DOOP_DESIGN_SHOTS === '1' ? join(homedir(), 'doop-element-comments') : null
     if (shots) await mkdir(shots, { recursive: true })
     await mount()
+    const bar = `${present} .browser-overlay-bar`
+    expect(
+      await page.$eval(`${bar} button[aria-label="Back"]`, (el) => el.getBoundingClientRect().left),
+    ).toBeGreaterThanOrEqual(76)
     await annotate(page)
+    expect(
+      await page.$eval(`${bar} [data-design-hint]`, (el) => el.getBoundingClientRect().left),
+    ).toBeGreaterThanOrEqual(76)
     let siteFrame = await (await iframe())!.contentFrame()
     await siteFrame!.waitForFunction(() => {
       const heading = document.querySelector('h1')
@@ -269,10 +279,27 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     const filter = `${inspector} input[aria-label="Filter properties"]`
     const color = `${inspector} input[aria-label="color"]`
     await page.waitForSelector(`${filter}:focus`)
-    await page.keyboard.type('color')
-    await page.waitForSelector(color, { visible: true })
-    await page.$eval(color, (input) => (input as HTMLInputElement).select())
-    await page.keyboard.type('#da1376')
+    const selection = '[data-design-selection]'
+    const beforeHeight = await page.$eval(selection, (el) => el.getBoundingClientRect().height)
+    await replaceInputText(page, filter, 'font-size')
+    await replaceInputText(page, `${inspector} input[aria-label="font-size"]`, '48px')
+    await editFrame!.waitForFunction(() => getComputedStyle(document.querySelector('#title')!).fontSize === '48px')
+    const elementHeight = await editFrame!.$eval('#title', (el) => el.getBoundingClientRect().height)
+    const scale = await page.$eval(
+      `${present} iframe[data-design-screen]`,
+      (el) => el.getBoundingClientRect().height / el.clientHeight,
+    )
+    const expectedHeight = elementHeight * scale
+    expect(expectedHeight).toBeGreaterThan(beforeHeight)
+    await page.waitForFunction(
+      (selection, height) =>
+        Math.abs((document.querySelector(selection)?.getBoundingClientRect().height ?? 0) - height) < 1,
+      {},
+      selection,
+      expectedHeight,
+    )
+    await replaceInputText(page, filter, 'color')
+    await replaceInputText(page, color, '#da1376')
     await editFrame!.waitForFunction(
       () => getComputedStyle(document.querySelector('#title')!).color === 'rgb(218, 19, 118)',
     )

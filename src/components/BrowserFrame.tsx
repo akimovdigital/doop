@@ -38,6 +38,7 @@ import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY } from '../lib/layoutZoom'
 import { canEditOpenCanvas, useStore } from '../lib/store'
 import { cn } from '../lib/utils'
 import { stopActiveDictation } from '../lib/dictation'
+import { previewTrafficLightsClass } from '../lib/shell'
 import { onFrameMessage } from '../lib/frameBridge'
 import { desktopPlatform } from '../lib/shell'
 import { DesignModeControls, DesignModeHint, DesignModeOverlay, DesignModeToggle } from './DesignModeOverlay'
@@ -616,7 +617,7 @@ export function BrowserFrame({
         }}
       >
         {overlay && (
-          <div className="browser-overlay-bar">
+          <div className={cn('browser-overlay-bar', previewTrafficLightsClass(overlay === 'present'))}>
             {design.enabled ? (
               <DesignModeHint mode={design} />
             ) : (

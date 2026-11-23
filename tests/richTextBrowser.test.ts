@@ -6,7 +6,14 @@ import type { TextFormatCommand } from '../src/lib/richText'
 import type { ElementInfo, StylePatch } from '../src/lib/frameBridge'
 
 type Fixture = {
-  messages: { type: string; reqId?: string; html?: string; state?: Record<string, boolean>; info?: ElementInfo }[]
+  messages: {
+    type: string
+    reqId?: string
+    html?: string
+    discrete?: boolean
+    state?: Record<string, boolean>
+    info?: ElementInfo
+  }[]
 }
 
 describe.skipIf(!findBrowserPath())('rich text editing', { timeout: 30_000 }, () => {
@@ -247,7 +254,9 @@ describe.skipIf(!findBrowserPath())('rich text editing', { timeout: 30_000 }, ()
     await render('<p id="text" style="margin:0;font:24px Arial">One</p>')
     await page.keyboard.press('End')
     await page.keyboard.press('Enter')
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    // Separate the preceding line break from the list conversion even when
+    // the iframe's typing timer or its message to the parent runs late.
+    await page.waitForFunction(() => (window as unknown as Fixture).messages.some((m) => m.type === 'doop:edited'))
     await page.evaluate(() => {
       ;(window as unknown as Fixture).messages = []
     })
@@ -256,7 +265,9 @@ describe.skipIf(!findBrowserPath())('rich text editing', { timeout: 30_000 }, ()
     // The list is saved as one discrete edit, not left to the typing debounce.
     await page.waitForFunction(
       (tag) =>
-        (window as unknown as Fixture).messages.some((m) => m.type === 'doop:edited' && m.html?.includes(`<${tag}`)),
+        (window as unknown as Fixture).messages.some(
+          (m) => m.type === 'doop:edited' && m.discrete && m.html?.includes(`<${tag}`),
+        ),
       {},
       tag,
     )
