@@ -272,3 +272,11 @@ export function pagePerTest(options: { permissions?: Permission[] } = {}): TestP
 export function fixtureUrl(file: string): string {
   return `${rig().fixtureOrigin}${FIXTURES}/${file}`
 }
+
+export async function replaceInputText(page: Page, selector: string, text: string): Promise<void> {
+  await page.waitForSelector(selector, { visible: true })
+  await page.focus(selector)
+  // Locator.fill clears before focusing, so a focus-triggered React render can restore the old value.
+  await page.$eval(selector, (input) => (input as HTMLInputElement).select())
+  await page.keyboard.type(text)
+}

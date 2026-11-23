@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Page } from 'puppeteer-core'
 import { findBrowserPath } from '../server/screenshot'
-import { pagePerTest, serveBuilt, type BuiltServer } from './browser'
+import { pagePerTest, replaceInputText, serveBuilt, type BuiltServer } from './browser'
 import { Client, freePort, startServer, type Server } from './harness'
 
 const present = '[data-browser-surface="present"]:modal'
@@ -281,8 +281,8 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     await page.waitForSelector(`${filter}:focus`)
     const selection = '[data-design-selection]'
     const beforeHeight = await page.$eval(selection, (el) => el.getBoundingClientRect().height)
-    await page.locator(filter).fill('font-size')
-    await page.locator(`${inspector} input[aria-label="font-size"]`).fill('48px')
+    await replaceInputText(page, filter, 'font-size')
+    await replaceInputText(page, `${inspector} input[aria-label="font-size"]`, '48px')
     await editFrame!.waitForFunction(() => getComputedStyle(document.querySelector('#title')!).fontSize === '48px')
     const elementHeight = await editFrame!.$eval('#title', (el) => el.getBoundingClientRect().height)
     const scale = await page.$eval(
@@ -298,10 +298,8 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
       selection,
       expectedHeight,
     )
-    await page.locator(filter).fill('color')
-    await page.waitForSelector(color, { visible: true })
-    await page.$eval(color, (input) => (input as HTMLInputElement).select())
-    await page.keyboard.type('#da1376')
+    await replaceInputText(page, filter, 'color')
+    await replaceInputText(page, color, '#da1376')
     await editFrame!.waitForFunction(
       () => getComputedStyle(document.querySelector('#title')!).color === 'rgb(218, 19, 118)',
     )
