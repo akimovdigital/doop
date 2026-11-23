@@ -73,6 +73,6 @@ export async function showCanvasPage(
   await page.goto(fixtureUrl(`canvasPage.html${search}`))
   await page.waitForFunction(() => !!window.canvasPageHarness && !!document.querySelector('.stage'))
   await page.evaluate((frames, canvas) => window.canvasPageHarness.seed(frames, canvas), frames, canvas)
-  /* an empty canvas has no frame title to wait for: its Layers rail is what shows */
-  await page.waitForSelector(frames.length ? '[data-frame-title]' : '[data-slot="pages-panel"]')
+  /* Both HTML and Browser frames have a shell, even when they have no title label. */
+  await page.waitForSelector(frames.length ? '[data-doop-frame-shell]' : '[data-slot="pages-panel"]')
 }

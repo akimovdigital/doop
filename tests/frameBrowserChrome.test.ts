@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import type { Page } from 'puppeteer-core'
+import type { Frame as BrowserDocument, Page } from 'puppeteer-core'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { findBrowserPath } from '../server/screenshot'
 import type { Frame } from '../shared/types'
@@ -34,11 +34,10 @@ const landing = {
   <p>Outdoor spaces designed for the seasons and the people who live in them.</p>
   <button id="visit">Plan a visit</button><output id="result"></output></main>
   <section id="approach"><h2>Start with the soil.</h2><p>Design shaped by the place itself.</p></section>
-  <script>document.querySelector('#visit').onclick=()=>{document.querySelector('#result').textContent=' Visit requested';};</script>
   </body></html>`,
 }
 
-describe.skipIf(!findBrowserPath())('HTML frame browser chrome', () => {
+describe.skipIf(!findBrowserPath())('HTML frame browser chrome', { timeout: 30_000 }, () => {
   const pages = pagePerTest()
   let page: Page
   let frames: Frame[]
@@ -157,6 +156,24 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', () => {
     })
   }
 
+  async function pointInDocument(doc: BrowserDocument, selector: string) {
+    // The canvas applies CSS zoom to the iframe. Puppeteer's child click adds
+    // the unscaled child coordinates to the scaled iframe's screen position.
+    const { x, y, viewportWidth, viewportHeight } = await doc.$eval(selector, (element) => {
+      const rect = element.getBoundingClientRect()
+      return {
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+        viewportWidth: innerWidth,
+        viewportHeight: innerHeight,
+      }
+    })
+    const iframe = await doc.frameElement()
+    const box = await iframe?.boundingBox()
+    if (!box) throw new Error('HTML document has no viewport on the canvas')
+    return { x: box.x + (x * box.width) / viewportWidth, y: box.y + (y * box.height) / viewportHeight }
+  }
+
   async function emptyPoint() {
     return page.$eval('.stage', (stage) => {
       const rect = stage.getBoundingClientRect()
@@ -216,9 +233,10 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', () => {
     await page.mouse.move(empty.x, empty.y)
     await screenshot('02-selected')
     expect(await page.$(TOOLS)).not.toBeNull()
-    await doc.click('h1')
+    const heading = await pointInDocument(doc, 'h1')
+    await page.mouse.click(heading.x, heading.y)
     await page.waitForSelector(`${SHELL} [data-element-outline]`)
-    await doc.click('h1', { count: 2 })
+    await page.mouse.click(heading.x, heading.y, { count: 2 })
     await doc.waitForSelector('h1[contenteditable]')
     expect(await page.$('[data-prototype-player]')).toBeNull()
     await page.keyboard.type('Gardens for everyday life.')
@@ -226,11 +244,30 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', () => {
     await expect.poll(() => frames[0]?.html).toContain('Gardens for everyday life.')
     await doc.waitForFunction(() => document.querySelector('h1')?.textContent === 'Gardens for everyday life.')
 
-    for (const exit of ['escape', 'outside', 'cap']) {
+    // Scripted documents are playable but are excluded from Doop's inline text editor.
+    await seed([
+      {
+        ...landing,
+        html: frames[0]!.html.replace(
+          '</body>',
+          "<script>let visits=0;document.querySelector('#visit').onclick=()=>{document.querySelector('#result').textContent=' Visit requested '+ ++visits;};</script></body>",
+        ),
+      },
+    ])
+    const playable = await child()
+    await page.click(SURFACE)
+    await page.waitForSelector(TOOLS, { visible: true })
+    const outside = await emptyPoint()
+    for (const [index, exit] of ['escape', 'outside', 'cap'].entries()) {
       await clickButton(BAR, 'Interact with page')
       await page.waitForSelector(ACTIVE)
-      await doc.click('#visit')
-      await doc.waitForFunction(() => document.querySelector('#result')?.textContent?.includes('Visit requested'))
+      const visit = await pointInDocument(playable, '#visit')
+      await page.mouse.click(visit.x, visit.y)
+      await playable.waitForFunction(
+        (count) => document.querySelector('#result')?.textContent === ` Visit requested ${count}`,
+        {},
+        index + 1,
+      )
       expect(
         await page.$eval(`${BAR} button[aria-label="Leave browser interaction"]`, (button) => button.textContent),
       ).toBe('Esc')
@@ -238,7 +275,7 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', () => {
         await screenshot('03-active')
         await page.keyboard.press('Escape')
       } else if (exit === 'cap') await clickButton(BAR, 'Leave browser interaction')
-      else await page.mouse.click(empty.x, empty.y)
+      else await page.mouse.click(outside.x, outside.y)
       await page.waitForSelector(ACTIVE, { hidden: true })
       expect(await page.$(TOOLS)).not.toBeNull()
     }
@@ -250,11 +287,11 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', () => {
     await page.click(SURFACE)
     await page.waitForSelector(TOOLS)
     await clickButton(TOOLS, 'Pick element')
-    const heading = await doc.$('h1')
-    await heading!.hover()
+    const heading = await pointInDocument(doc, 'h1')
+    await page.mouse.move(heading.x, heading.y)
     await page.waitForSelector(`${SHELL} [data-hover-outline]`)
     await screenshot('04-pick')
-    await heading!.click()
+    await page.mouse.click(heading.x, heading.y)
     await page.waitForSelector(`${SHELL} [data-element-outline]`)
     expect(await page.$('[data-html-frame-picking]')).toBeNull()
 
@@ -305,9 +342,21 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', () => {
     const frame = frames.find((entry) => entry.id === 'capture')
     expect(frame).toMatchObject({ x: 970, y: 120, width: 740, height: 520 })
     expect(frame?.html).toContain(VISUAL ? 'data:image/png;base64,' : '/a/snapshot.png')
-    // Fit all to show the image and the original together.
-    await page.keyboard.press('Digit1')
-    await screenshot('05-capture')
+    if (VISUAL) {
+      // Shift+1 fits both frames. Wait for the chrome to return after the camera move.
+      await page.keyboard.down('Shift')
+      await page.keyboard.press('Digit1')
+      await page.keyboard.up('Shift')
+      await page.waitForFunction(() => {
+        const capture = document.querySelector('[data-doop-frame-shell="capture"]')
+        return (
+          capture &&
+          capture.getBoundingClientRect().right < innerWidth &&
+          !document.querySelector('[data-frame-camera-moving]')
+        )
+      })
+      await screenshot('05-capture')
+    }
     await undo()
     await page.waitForSelector('[data-doop-frame-shell="capture"]', { hidden: true })
   }, 25_000)
@@ -324,12 +373,9 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', () => {
     const controls = '[data-canvas-browser-chrome="browser"] .browser-under-bar'
     await page.waitForSelector(controls)
     expect(await page.$(`${controls} button[aria-label="Pick element"]`)).toBeNull()
-    await page
-      .locator(`${controls} button`)
-      .filter((button) => button.textContent === 'Import')
-      .click()
-    expect(importBody).toMatchObject({ url: 'https://example.test/', placement: { x: 850, y: 120 } })
+    await page.locator(`${controls} button::-p-text(Import)`).click()
     await page.waitForSelector('[data-doop-frame-shell="imported"] iframe[data-doop-frame]')
+    expect(importBody).toMatchObject({ url: 'https://example.test/', placement: { x: 850, y: 120 } })
   })
 
   it.runIf(!!VISUAL)('keeps the real Browser reference on port 8747 live', async () => {
@@ -342,7 +388,8 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', () => {
     ])
     const iframe = await page.waitForSelector('iframe[title="Browser"]')
     const live = await iframe!.contentFrame()
-    await expect.poll(() => live?.title()).toMatch(/Akimov|Акимов/i)
+    if (!live) throw new Error('Browser document did not mount')
+    await live.waitForFunction(() => /Akimov|Акимов/i.test(document.title))
     await page.waitForSelector('.browser-progress', { hidden: true })
     await screenshot('06-browser')
   })

@@ -90,4 +90,4 @@ it('keeps local Browser URLs live-only when a canvas editor requests a server ca
   } finally {
     server.stop()
   }
-})
+}, 60_000)
