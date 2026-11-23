@@ -1,9 +1,12 @@
 export const DICTATION_HOLD_MS = 300
 
+type DictationError = 'generic' | 'disabled'
+
 export interface SpeechCallbacks {
   result(transcript: string, final: boolean): void
   end(): void
-  error(): void
+  noSpeech(): void
+  error(reason?: DictationError): void
 }
 
 interface SpeechSession {
@@ -19,7 +22,7 @@ export interface DictationEngine {
 export interface DictationState {
   available: boolean
   listening: boolean
-  error: boolean
+  error: DictationError | null
 }
 
 interface DictationField {
@@ -40,12 +43,20 @@ export function dictationLocale(locale: string): string {
 }
 
 export function createDictation(engine: DictationEngine | undefined, field?: DictationField) {
-  let state: DictationState = { available: !!engine, listening: false, error: false }
+  let state: DictationState = { available: !!engine, listening: false, error: null }
   let session: { speech?: SpeechSession; base: string; lastWritten?: string } | undefined
   let press: { timer: ReturnType<typeof setTimeout>; held: boolean } | undefined
   const listeners = new Set<() => void>()
 
-  function publish(listening: boolean, error = false) {
+  let errorTimer: ReturnType<typeof setTimeout> | undefined
+
+  function dismissError() {
+    if (state.error) publish(state.listening)
+  }
+
+  function publish(listening: boolean, error: DictationError | null = null) {
+    clearTimeout(errorTimer)
+    errorTimer = error ? setTimeout(dismissError, 4000) : undefined
     state = { ...state, listening, error }
     listeners.forEach((listener) => listener())
   }
@@ -75,7 +86,7 @@ export function createDictation(engine: DictationEngine | undefined, field?: Dic
     session = current
     previous?.speech?.cancel()
     publish(true)
-    function finish(error: boolean) {
+    function finish(error: DictationError | null = null) {
       if (session !== current) return
       session = undefined
       releaseActive()
@@ -94,11 +105,12 @@ export function createDictation(engine: DictationEngine | undefined, field?: Dic
           current.lastWritten = current.base + join + transcript.trim()
           field.onText(current.lastWritten)
         },
-        end: () => finish(false),
-        error: () => finish(true),
+        end: () => finish(),
+        noSpeech: () => finish(),
+        error: (reason = 'generic') => finish(reason),
       })
     } catch {
-      finish(true)
+      finish('generic')
     }
   }
 
@@ -152,6 +164,7 @@ export function createDictation(engine: DictationEngine | undefined, field?: Dic
       if (!state.listening) releaseActive()
     },
     toggle,
+    dismissError,
     escape,
     dispose() {
       clearPress()
@@ -177,7 +190,8 @@ interface RecognitionEvent extends Event {
   results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>
 }
 
-type SpeechEvent = { type: 'result'; transcript: string; final: boolean } | { type: 'end' | 'error' }
+type SpeechEvent =
+  { type: 'result'; transcript: string; final: boolean } | { type: 'end' | 'error' | 'disabled' | 'no_speech' }
 
 interface NativeCore {
   invoke<T>(command: string, args: Record<string, unknown>): Promise<T>
@@ -201,13 +215,15 @@ function nativeEngine(core: NativeCore): DictationEngine {
       const events = new core.Channel()
       events.onmessage = (event) => {
         if (event.type === 'result') callbacks.result(event.transcript, event.final)
+        else if (event.type === 'disabled') callbacks.error('disabled')
+        else if (event.type === 'no_speech') callbacks.noSpeech()
         else callbacks[event.type]()
       }
       const starting = core.invoke('dictation_start', { token, locale, events })
-      void starting.catch(callbacks.error)
+      void starting.catch(() => callbacks.error())
       function end(cancel: boolean) {
         void starting.then(
-          () => core.invoke('dictation_stop', { token, cancel }).catch(callbacks.error),
+          () => core.invoke('dictation_stop', { token, cancel }).catch(() => callbacks.error()),
           () => {},
         )
       }
@@ -240,7 +256,10 @@ export function pickDictationEngine(view: SpeechWindow = window): DictationEngin
           results.every((part) => part.isFinal),
         )
       })
-      recognition.addEventListener('error', callbacks.error)
+      recognition.addEventListener('error', (event) => {
+        if ((event as Event & { error?: string }).error === 'no-speech') callbacks.noSpeech()
+        else callbacks.error()
+      })
       recognition.addEventListener('end', callbacks.end)
       recognition.start()
       const finish = (stop: () => void) => {

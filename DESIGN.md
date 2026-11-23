@@ -105,7 +105,7 @@ menu use the shared menu surface, radius and elevation.
 The editor can shrink the player into a centered 80% window with a 300 px minimum width where
 space permits, a panel radius, an edge and `shadow-pop`. The 150 ms ease-out resize follows the
 reduced-motion preference. The site and its overlays share a separately measured, clipped viewport
-inside the window. Standalone preview keeps the same bar layout with its editor actions hidden.
+inside the window. Standalone preview keeps the same bar layout with its editor actions hidden. Full-window toolbars reserve 76 px on the left when macOS overlays the window controls.
 
 ## Development performance HUD
 
@@ -113,7 +113,7 @@ The opt-in HUD sits in the lower-right corner above the canvas toolbar and moves
 
 ### Prototype annotations
 
-Design Mode replaces the address and navigation cluster in the 36 px preview toolbar with an Exit icon and a brand-tinted hint. Holding Space over the preview restores page interaction until release. Hover and selection use 1 px brand outlines with tag badges at their top-right corners. A compact note pill sits below the selection and shows the Batch edits controls after typing. Numbered pins use 16 px brand circles at the top-right corners of their anchors and appear during Design Mode. The split Send pill stays in the toolbar while notes are pending. Its chevron anchors the queue popover. Text-only targets can be edited in the preview. The toolbar shows the save and cancel keys during an edit, and queued text edits carry a T marker. Single-element notes expose a sliders button that anchors a dark CSS inspector with a filter, inline values and changed properties first. Region notes open in move mode and add Draw, Ellipse, Rectangle and Arrow to the toolbar. Clicking the active tool returns to move mode. Markup uses 2 px brand strokes in page coordinates and stays visible with the region pin.
+Design Mode replaces the address and navigation cluster in the 36 px preview toolbar with an Exit icon and a brand-tinted hint. Holding Space over the preview restores page interaction until release. Hover and selection use 1 px brand outlines with tag badges at their top-right corners. The selection and note anchor follow changes to the element’s rendered bounds. A compact note pill sits below the selection and shows the Batch edits controls after typing. Numbered pins use 16 px brand circles at the top-right corners of their anchors and appear during Design Mode. The split Send pill stays in the toolbar while notes are pending. Its chevron anchors the queue popover. Text-only targets can be edited in the preview. The toolbar shows the save and cancel keys during an edit, and queued text edits carry a T marker. Single-element notes expose a sliders button that anchors a dark CSS inspector with a filter, inline values and changed properties first. Region notes open in move mode and add Draw, Ellipse, Rectangle and Arrow to the toolbar. Clicking the active tool returns to move mode. Markup uses 2 px brand strokes in page coordinates and stays visible with the region pin.
 
 The note pill and queue use the toolbar's solid dark `--surface`, light `--ink`, a one-pixel `--line` border and `shadow-pop`. The queue is up to 300 px wide. Its header keeps the edit count and Clear All visible while notes scroll. Each row shows a label followed by the comment, with ellipses for long text. Pending, sent and resolved notes live in local storage per canvas. Sent pins are dimmed and resolved pins are hidden.
 
@@ -123,7 +123,7 @@ At the bottom center of the preview, an 80 × 16 px button presents a textless 7
 
 Element and region chips sit above the draft in the preview capsule and the Agents composer. They use the shared row radius, brand tint and inset brand ring. The tooltip shows the selector, dimensions and component name when available. Draft chips have a remove button. Sent messages show the same chips above the note text. When a crop exists, its thumbnail appears inside the chip.
 
-Dictate appears in the note's action row when it contains a comment, a text edit or CSS edits and in the capsule composer when speech recognition is available. A red recording indicator and a status hint appear while dictation is active. The indicator pulses when motion is allowed.
+Dictate appears in the note's action row when it contains a comment, a text edit or CSS edits and in the capsule composer when speech recognition is available. A red recording indicator and a status hint appear while dictation is active. The indicator pulses when motion is allowed. Dictation errors appear below the input and dismiss after four seconds or on the next pointer or key press. When macOS Dictation is off, the notice includes an Open Settings action.
 
 ## Browser frame Design Mode
 

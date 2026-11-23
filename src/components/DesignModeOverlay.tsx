@@ -2,7 +2,6 @@ import { DictateButton } from './DictateButton'
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
-import { hasInsetTrafficLights } from '../lib/shell'
 import { markupPath, markupStrokeWidth, type MarkupStroke, type MarkupTool } from '../lib/designMarkup'
 import type { DesignNote, NoteRect } from '../lib/designNotes'
 import { Button } from './ui/button'
@@ -131,13 +130,7 @@ export function DesignModeHint({ mode }: { mode: Mode }) {
             : 'panels.designPickHint',
   )
   return (
-    <div
-      data-design-hint=""
-      className={cn(
-        'flex min-w-0 flex-1 items-center gap-1 text-caption text-brand',
-        hasInsetTrafficLights() && 'pl-[76px]',
-      )}
-    >
+    <div data-design-hint="" className="flex min-w-0 flex-1 items-center gap-1 text-caption text-brand">
       <IconButton size="sm" className="text-brand" aria-label={t('panels.designExit')} onClick={mode.exit}>
         <XIcon size="rail" />
       </IconButton>
@@ -244,6 +237,8 @@ export function DesignModeOverlay({
   const t = useT()
   const surface = useSurface(viewportRef, screen, revision)
   const fieldRef = useRef<HTMLTextAreaElement>(null)
+  const cardRef = useRef<HTMLElement>(null)
+  const [measuredCardHeight, setMeasuredCardHeight] = useState(0)
   const cssButtonRef = useRef<HTMLButtonElement>(null)
   const shieldRef = useRef<HTMLDivElement>(null)
   const picking = mode.enabled && !mode.usingPage && !mode.editingText
@@ -253,6 +248,19 @@ export function DesignModeOverlay({
     if (cardOpen) fieldRef.current?.focus({ preventScroll: true })
     else if (picking) shieldRef.current?.focus({ preventScroll: true })
   }, [cardOpen, picking])
+
+  useLayoutEffect(() => {
+    const card = cardRef.current
+    if (!cardOpen || !card) return
+    const measure = () => setMeasuredCardHeight(card.offsetHeight)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(card)
+    return () => {
+      observer.disconnect()
+      setMeasuredCardHeight(0)
+    }
+  }, [cardOpen])
 
   useLayoutEffect(() => {
     const shield = shieldRef.current
@@ -339,7 +347,10 @@ export function DesignModeOverlay({
   if (!mode.allowed) return null
   const { draft, hover } = mode
   const selected =
-    draft?.elements.map((el, index) => (index === 0 && draft.id && mode.pins[draft.id]?.rect) || el.rect) ?? []
+    draft?.elements.map(
+      (el, index) =>
+        mode.selectionRects?.[index] ?? ((index === 0 && draft.id && mode.pins[draft.id]?.rect) || el.rect),
+    ) ?? []
   const draftRegion = draft && mode.visibleRegion(draft)
   const anchors = draftRegion ? [draftRegion] : selected
   const cardWidth = Math.min(290, Math.max(0, (surface?.viewportWidth ?? 290) - 2 * inset))
@@ -353,7 +364,7 @@ export function DesignModeOverlay({
   const comment = draft?.comment.trim()
   const canSubmit = !!(comment || draft?.textEdit || draft?.cssEdits?.length || draft?.markup?.length)
   const rows = Math.min(3, (draft?.comment ?? '').split('\n').length)
-  const cardHeight = (canSubmit || draft?.id ? 58 : 34) + (rows - 1) * 20
+  const cardHeight = measuredCardHeight || (canSubmit || draft?.id ? 58 : 34) + (rows - 1) * 20
   let cardTop = inset
   if (surface && anchors.length) {
     const below = surface.y + bottom * surface.scale + inset
@@ -489,6 +500,7 @@ export function DesignModeOverlay({
       )}
       {cardOpen && draft && (
         <section
+          ref={cardRef}
           data-design-card=""
           role="group"
           aria-label={t('panels.designNote')}
@@ -546,8 +558,8 @@ export function DesignModeOverlay({
             />
           )}
           {(canSubmit || draft.id) && (
-            <div className="flex items-center justify-between gap-1">
-              <label className="inline-flex cursor-pointer items-center gap-1.5 text-caption text-ink-soft">
+            <div className="flex flex-wrap items-center gap-1">
+              <label className="mr-auto inline-flex cursor-pointer items-center gap-1.5 text-caption text-ink-soft">
                 {t('panels.designBatch')}
                 <Switch
                   size="sm"
@@ -558,7 +570,7 @@ export function DesignModeOverlay({
                   onCheckedChange={mode.setBatch}
                 />
               </label>
-              <div className="flex items-center gap-1">
+              <div className="contents">
                 {(comment || draft.textEdit || !!draft.cssEdits?.length) && (
                   <DictateButton text={draft.comment} onText={mode.setComment} disabled={mode.busy} />
                 )}

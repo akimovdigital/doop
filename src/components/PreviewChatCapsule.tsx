@@ -191,7 +191,7 @@ export function PreviewChatCapsule({
             </div>
           )}
           <form
-            className="mt-1 flex items-end gap-2"
+            className="mt-1 grid grid-cols-[minmax(0,1fr)_auto_auto] items-end gap-2"
             onSubmit={(event) => {
               event.preventDefault()
               void submit()

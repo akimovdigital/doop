@@ -1200,9 +1200,23 @@ export function frameRuntime(browse?: { token: string; url: string }) {
   }
   window.addEventListener('scroll', annotationChanged, true)
   window.addEventListener('resize', annotationChanged)
-  if (typeof ResizeObserver !== 'undefined') {
-    var annotationResize = new ResizeObserver(annotationChanged)
-    annotationResize.observe(document.documentElement)
+  var annotationResize = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(annotationChanged) : null
+  function watchAnnotations(on, selectors) {
+    annotationWatching = on
+    annotationResize?.disconnect()
+    if (!on) return
+    if (annotationResize) {
+      var targets = new Set([document.documentElement])
+      selectors.forEach(function (selector) {
+        var el = styleTarget(selector)
+        if (!el) return
+        targets.add(el)
+        // ResizeObserver does not report changes to non-replaced inline boxes.
+        if (el.parentElement) targets.add(el.parentElement)
+      })
+      targets.forEach(function (el) { annotationResize.observe(el) })
+    }
+    annotationChanged()
   }
 
   function annotationTarget(el, x, y) {
@@ -1259,6 +1273,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
     if (el.textContent !== edit.before || el.childElementCount) el.textContent = edit.before
     if (document.activeElement === el) el.blur()
     window.getSelection()?.removeAllRanges()
+    annotationChanged()
     if (mode === 'cancel') return
     postToEditor({
       type: 'doop:textEdit-finished', id: edit.id, mode: mode,
@@ -1286,6 +1301,10 @@ export function frameRuntime(browse?: { token: string; url: string }) {
     ev.preventDefault()
     ev.stopImmediatePropagation()
     endAnnotationText(mode)
+  }, true)
+
+  window.addEventListener('input', function (event) {
+    if (event.target === annotationText?.el) annotationChanged()
   }, true)
 
   function syncAnnotationText(edits) {
@@ -2376,8 +2395,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
     }
     if (d.type === 'doop:annotation-wheel') annotationWheel(d)
     if (d.type === 'doop:annotation-watch') {
-      annotationWatching = !!d.on
-      if (annotationWatching) annotationChanged()
+      watchAnnotations(!!d.on, Array.isArray(d.selectors) ? d.selectors : [])
     }
     if (d.type === 'doop:locate') {
       var found = null

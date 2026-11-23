@@ -1,6 +1,7 @@
 import { useEffect, useId, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { useT } from '@/lib/i18n'
 import { prototypePath } from '../lib/prototype'
+import { previewTrafficLightsClass } from '../lib/shell'
 import { isProtoScaling, matchPreviewFrames, previewFrameFromAddress, type ProtoScaling } from '../lib/prototypePlayer'
 import { DesignModeToggle } from './DesignModeOverlay'
 import { IconButton } from './ui/icon-button'
@@ -69,6 +70,7 @@ export function PreviewToolbar(props: PreviewToolbarProps) {
       className={cn(
         'dark @container relative z-10 flex h-9 shrink-0 items-center gap-1.5 border-b border-line bg-surface px-1.5 text-ink sm:gap-2 sm:px-2',
         minimized && 'rounded-t-panel',
+        previewTrafficLightsClass(!minimized),
         props.annotationHint && 'border-brand/30',
       )}
       onKeyDown={(event) => event.stopPropagation()}

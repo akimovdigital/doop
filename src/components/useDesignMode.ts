@@ -724,12 +724,23 @@ export function useDesignMode({
   }
 
   const watching = allowed && (enabled || pageNotes.length > 0)
+  const draftElements = draft?.elements
+  const watchedSelectors = useMemo(
+    () =>
+      JSON.stringify([
+        ...new Set([
+          ...(draftElements ?? []).map(annotationSelector),
+          ...pageNotes.flatMap((note) => (note.elements[0] ? [annotationSelector(note.elements[0])] : [])),
+        ]),
+      ]),
+    [draftElements, pageNotes],
+  )
   useEffect(() => {
     const win = getWindow()
     if (!win || !watching) return
-    win.postMessage({ type: 'doop:annotation-watch', on: true }, '*')
+    win.postMessage({ type: 'doop:annotation-watch', on: true, selectors: JSON.parse(watchedSelectors) }, '*')
     return () => win.postMessage({ type: 'doop:annotation-watch', on: false }, '*')
-  }, [screenKey, documentRevision, watching, getWindow])
+  }, [screenKey, documentRevision, watching, watchedSelectors, getWindow])
 
   const [windowRevision, refreshWindow] = useState(0)
   const refreshPins = useCallback(
@@ -747,6 +758,30 @@ export function useDesignMode({
     },
     [screenKey, documentRevision],
   )
+  const [selection, setSelection] = useState<{ elements: NoteElement[]; rects: (NoteRect | null)[] }>()
+  useEffect(() => {
+    const win = getWindow()
+    if (!win || !enabled || !draftElements?.length) return
+    let cancelled = false
+    void Promise.all(
+      draftElements.map(async (element) => {
+        const reply = await askFrameWindow(
+          win,
+          'doop:locate',
+          { selector: annotationSelector(element) },
+          1000,
+          'doop:located',
+        )
+        return (reply?.rect as NoteRect | null | undefined) ?? null
+      }),
+    ).then((rects) => {
+      if (!cancelled) setSelection({ elements: draftElements, rects })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [screenKey, documentRevision, enabled, draftElements, windowRevision, getWindow])
+
   useEffect(() => {
     const win = getWindow()
     if (!win || !watching || !canvasId) return
@@ -862,6 +897,7 @@ export function useDesignMode({
     busy,
     hover,
     draft,
+    selectionRects: selection && selection.elements === draftElements ? selection.rects : undefined,
     region,
     pins,
     saved,

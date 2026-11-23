@@ -7,7 +7,7 @@ use std::sync::{
 use tauri::{ipc::Channel, Runtime, WebviewWindow};
 
 #[derive(Clone, serde::Serialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum DictationEvent {
     Result {
         transcript: String,
@@ -16,6 +16,8 @@ pub enum DictationEvent {
     },
     End,
     Error,
+    Disabled,
+    NoSpeech,
 }
 
 struct Active {
@@ -61,6 +63,8 @@ extern "C" fn speech_event(id: u64, kind: u32, text: *const c_char) {
             final_result: kind == 1,
         },
         2 => DictationEvent::End,
+        4 => DictationEvent::Disabled,
+        5 => DictationEvent::NoSpeech,
         _ => DictationEvent::Error,
     };
     let _ = events.send(event);
