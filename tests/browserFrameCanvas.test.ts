@@ -13,6 +13,9 @@ const BAR = '.browser-canvas-bar'
 const PRESENT = '.browser-surface:modal'
 const SIDE = '.browser-surface:popover-open'
 const LIVE = '[data-browser-active="true"]'
+const HANDLES = '[data-frame-resize-handles]'
+const IFRAME = 'iframe[title="Browser"]'
+const MODEL = 'button[aria-label^="Model:"]'
 
 describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
   const pages = pagePerTest()
@@ -64,6 +67,7 @@ describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
       if (!pathname.startsWith('/api/')) return void request.continue()
       let body: unknown = {}
       if (pathname === '/api/auth/get-session') body = { user: { id: 'u', name: 'Tester' }, session: { userId: 'u' } }
+      if (pathname === '/api/agent-runners') body = { runners: [] }
       if (pathname === '/api/canvases/c/frames' && request.method() === 'POST') {
         const data = JSON.parse(request.postData()!) as Partial<Frame>
         body = {
@@ -84,7 +88,7 @@ describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
     })
   })
 
-  async function seed(address?: string) {
+  async function seed(address?: string, keepAgentsOpen = false) {
     if (address !== undefined) {
       frames.push({
         ...canvasFrame({ id: 'browser', name: 'Browser', x: 150, y: 120, width: 620, height: 500 }),
@@ -98,7 +102,27 @@ describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
     if (frames.length) await page.waitForSelector(SHIELD, { visible: true })
     // The floating Agents rail and Inspector can otherwise overlap the grips.
     const agentsClose = await page.$('button[aria-label="Close panel"]')
-    if (agentsClose) await agentsClose.click()
+    if (agentsClose && !keepAgentsOpen) await agentsClose.click()
+  }
+
+  async function browserCenter() {
+    return page.$eval('[data-browser-frame]', (node) => {
+      const rect = node.getBoundingClientRect()
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+    })
+  }
+
+  async function clickEmptyCanvas() {
+    const point = await page.$eval('.stage', (stage) => {
+      const rect = stage.getBoundingClientRect()
+      for (let y = rect.bottom - 80; y > rect.top; y -= 25) {
+        for (let x = rect.left + rect.width / 2; x < rect.right; x += 25) {
+          if (document.elementFromPoint(x, y)?.matches('.stage, .world')) return { x, y }
+        }
+      }
+      throw new Error('No empty canvas point')
+    })
+    await page.mouse.click(point.x, point.y)
   }
 
   async function clickButton(scope: string, name: string) {
@@ -150,9 +174,14 @@ describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
         })),
       ),
     )
-    await page.click(SHIELD)
+    const center = await browserCenter()
+    expect(await page.$(HANDLES)).toBeNull()
+    await page.mouse.click(center.x, center.y)
+    await page.waitForSelector(HANDLES)
+    // Let any single-click activation run before checking the next click.
+    await new Promise((resolve) => setTimeout(resolve, 600))
     expect(await page.$(LIVE)).toBeNull()
-    await page.click(SHIELD)
+    await page.mouse.click(center.x, center.y)
     await page.waitForSelector(LIVE)
     expect(
       await page.$eval(`${BAR} button[aria-label="Leave browser interaction"]`, (button) => button.textContent?.trim()),
@@ -166,7 +195,7 @@ describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
     expect(child).toBeTruthy()
     await child!.waitForSelector('h1')
     await child!.evaluate(() => window.scrollTo(0, 400))
-    await page.click(SHIELD, { count: 2 })
+    await page.mouse.click(center.x, center.y, { count: 2 })
     await page.waitForSelector(PRESENT, { visible: true })
     await page.keyboard.press('Escape')
     await page.waitForSelector(PRESENT, { hidden: true })
@@ -181,6 +210,86 @@ describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
     await page.waitForSelector(SIDE, { hidden: true })
     expect(await child!.evaluate(() => window.scrollY)).toBe(400)
   }, 15_000)
+
+  it('selects and activates at the same coordinates even when the model menu is initially open', async () => {
+    await seed(url, true)
+    await page.waitForSelector(`${MODEL}:not(:disabled)`)
+    await page.click(MODEL)
+    await page.waitForSelector('[role="menu"]', { visible: true })
+    const center = await browserCenter()
+    expect(await page.$(HANDLES)).toBeNull()
+    await page.mouse.click(center.x, center.y)
+    await page.waitForSelector('[role="menu"]', { hidden: true })
+    await page.waitForSelector(HANDLES)
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    expect(await page.$(LIVE)).toBeNull()
+    await page.mouse.click(center.x, center.y)
+    await page.waitForSelector(LIVE)
+  }, 12_000)
+
+  it.each([false, true])('presents on double click without activating first (selected: %s)', async (selected) => {
+    await seed(url)
+    const center = await browserCenter()
+    if (selected) {
+      await page.mouse.click(center.x, center.y)
+      await page.waitForSelector(HANDLES)
+    } else expect(await page.$(HANDLES)).toBeNull()
+    await page.evaluate(() => {
+      const frame = document.querySelector('[data-browser-frame]')!
+      new MutationObserver(() => {
+        if (frame.hasAttribute('data-browser-active')) frame.setAttribute('data-test-activated', '')
+      }).observe(frame, { attributeFilter: ['data-browser-active'] })
+    })
+    await page.mouse.click(center.x, center.y, { count: 2 })
+    await page.waitForSelector(PRESENT, { visible: true })
+    expect(await page.$('[data-test-activated]')).toBeNull()
+  })
+
+  it('does not activate after moving more than 4px and returning to the press point', async () => {
+    await seed(url)
+    const { x, y } = await browserCenter()
+    await page.mouse.click(x, y)
+    await page.waitForSelector(HANDLES)
+    await page.mouse.down()
+    await page.mouse.move(x + 12, y)
+    await page.mouse.move(x, y)
+    await page.mouse.up()
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    expect(await page.$(LIVE)).toBeNull()
+    expect(await page.$(HANDLES)).not.toBeNull()
+  })
+
+  it.each(['empty canvas', 'chrome', 'Escape', 'Esc cap'])(
+    'deactivates after iframe focus via %s',
+    async (exit) => {
+      await seed(url)
+      await page.waitForSelector(IFRAME, { visible: true })
+      const center = await browserCenter()
+      await page.mouse.click(center.x, center.y)
+      await page.waitForSelector(HANDLES)
+      await page.mouse.click(center.x, center.y)
+      await page.waitForSelector(LIVE)
+      await page.mouse.click(center.x, center.y)
+      await page.waitForFunction((selector) => document.activeElement?.matches(selector), {}, IFRAME)
+      const cap = `${BAR} button[aria-label="Leave browser interaction"]`
+      expect(await page.$(cap)).not.toBeNull()
+
+      if (exit === 'empty canvas') await clickEmptyCanvas()
+      else if (exit === 'chrome') await clickButton(BAR, 'URL')
+      else if (exit === 'Escape') {
+        // Return focus to Doop without clicking a control that deactivates.
+        await page.focus('[data-browser-frame]')
+        expect(await page.$(LIVE)).not.toBeNull()
+        await page.keyboard.press('Escape')
+      } else await clickButton(BAR, 'Leave browser interaction')
+
+      await page.waitForSelector(LIVE, { hidden: true })
+      expect(await page.$(cap)).toBeNull()
+      if (exit === 'empty canvas') expect(await page.$(HANDLES)).toBeNull()
+      else await page.waitForSelector(HANDLES)
+    },
+    12_000,
+  )
 
   it('keeps browser controls clickable with the Hand or a drawing tool selected', async () => {
     await seed(url)

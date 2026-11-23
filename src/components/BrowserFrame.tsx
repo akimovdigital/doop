@@ -47,6 +47,11 @@ import type { ResizeHandle } from '../lib/elementResize'
 type WebPage = { src: string; request?: { address: string; reload: number }; status: 'loading' | 'ready' | 'error' }
 const DEVICE_ICONS = { laptop: Laptop, tablet: Tablet, phone: Smartphone }
 const ACTIVATION_DELAY = 300
+const ACTIVATION_MOVE_LIMIT = 4
+
+function movedPastClick(start: { x: number; y: number }, event: ReactPointerEvent) {
+  return Math.abs(event.clientX - start.x) + Math.abs(event.clientY - start.y) > ACTIVATION_MOVE_LIMIT
+}
 
 /** CSS top layer changes how the element paints without changing its parent.
  * Moving the iframe to a portal or constructing a second iframe restarts it. */
@@ -361,6 +366,11 @@ export function BrowserFrame({
           // Let Hand pan from the grip, while a control keeps its own click.
           if (event.target instanceof Element && event.target.closest('button, input')) event.stopPropagation()
         }}
+        onClickCapture={() => {
+          // Keep the Esc button mounted until the click, including from an iframe.
+          cancelActivation()
+          setActive(false)
+        }}
         onDoubleClick={(event) => event.stopPropagation()}
       >
         <div
@@ -422,7 +432,7 @@ export function BrowserFrame({
             className="h-4 rounded-row border border-line bg-paper-deep px-1 font-mono text-micro text-ink-soft"
             title={t('canvas.browserDeactivate')}
             aria-label={t('canvas.browserDeactivate')}
-            onClick={() => setActive(false)}
+            onClick={() => shell.current?.focus({ preventScroll: true })}
           >
             Esc
           </Button>
@@ -548,6 +558,7 @@ export function BrowserFrame({
                 className="absolute inset-0"
                 data-browser-shield=""
                 onPointerDown={(event) => {
+                  cancelActivation()
                   press.current =
                     canvasInput &&
                     event.button === 0 &&
@@ -562,16 +573,16 @@ export function BrowserFrame({
                   if (canvasInput && state.selectedId === frame.id && !window.matchMedia(MOBILE_QUERY).matches)
                     state.setInspectorOpen(true)
                 }}
+                onPointerMove={(event) => {
+                  if (press.current && movedPastClick(press.current, event)) press.current = null
+                }}
+                onPointerLeave={() => {
+                  press.current = null
+                }}
                 onPointerUp={(event) => {
                   const start = press.current
                   press.current = null
-                  if (
-                    !start?.selected ||
-                    !address ||
-                    Math.abs(event.clientX - start.x) + Math.abs(event.clientY - start.y) > 4
-                  )
-                    return
-                  cancelActivation()
+                  if (!start?.selected || !address || movedPastClick(start, event)) return
                   activation.current = setTimeout(() => setActive(true), ACTIVATION_DELAY)
                 }}
                 onPointerCancel={cancelActivation}
