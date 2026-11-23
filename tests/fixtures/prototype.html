@@ -29,7 +29,13 @@
       import '/src/styles.css'
       const root = createRoot(document.getElementById('root'))
       window.messages = []
-      window.addEventListener('message', (ev) => window.messages.push(ev.data))
+      window.prototypeInteractivity = new WeakMap()
+      window.addEventListener('message', (ev) => {
+        window.messages.push(ev.data)
+        if (ev.source && ev.data?.type === 'doop:proto-result') {
+          window.prototypeInteractivity.set(ev.source, ev.data.on)
+        }
+      })
       window.seed = (canvas) => useStore.getState().setCanvas(canvas)
       window.editFrame = (id, html) => {
         const frame = useStore.getState().canvas.frames.find((f) => f.id === id)

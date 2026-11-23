@@ -140,7 +140,7 @@ export function PreviewChatCapsule({
       {chat.open ? (
         <section
           aria-label={hint}
-          className="pointer-events-auto mb-2 w-full max-w-[560px] rounded-panel border-2 border-line bg-surface p-2.5 text-ink shadow-pop motion-safe:animate-[preview-chat-in_150ms_ease-out]"
+          className="dark pointer-events-auto mb-2 w-full max-w-[560px] rounded-panel border border-line bg-surface p-2.5 text-ink shadow-pop motion-safe:animate-[preview-chat-in_150ms_ease-out]"
         >
           <div className="flex items-center justify-between gap-2">
             <span className="flex min-w-0 items-center gap-1.5 text-caption font-semibold">

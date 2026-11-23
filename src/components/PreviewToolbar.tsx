@@ -63,9 +63,9 @@ export function PreviewToolbar(props: PreviewToolbarProps) {
       role="group"
       aria-label={t('panels.protoToolbar')}
       className={cn(
-        '@container relative z-10 flex h-9 shrink-0 items-center gap-1.5 border-b border-line bg-surface px-1.5 text-ink sm:gap-2 sm:px-2',
+        'dark @container relative z-10 flex h-9 shrink-0 items-center gap-1.5 border-b border-line bg-surface px-1.5 text-ink sm:gap-2 sm:px-2',
         minimized && 'rounded-t-panel',
-        props.annotationHint && 'border-brand/30 bg-brand/10',
+        props.annotationHint && 'border-brand/30',
       )}
       onKeyDown={(event) => event.stopPropagation()}
       onKeyUp={(event) => event.stopPropagation()}

@@ -48,6 +48,7 @@ const canvas: Canvas = {
 }
 type Fixture = {
   fixtureReady: boolean
+  prototypeInteractivity: WeakMap<Window, boolean>
   seed: (canvas: Canvas) => void
   play: (frameId: string) => void
   playSynced: (frameId: string) => void
@@ -96,12 +97,10 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
       firstMount,
     )
     firstMount = false
-    await page.waitForFunction(() =>
-      (window as unknown as { messages: { type: string; on?: boolean }[] }).messages.some(
-        (message) => message.type === 'doop:proto-result' && message.on,
-      ),
-    )
-    return screen(data.frames[0]!.id)
+    const id = data.frames[0]!.id
+    const frame = await screen(id)
+    await waitForInteractivity(id, true)
+    return frame
   }
 
   async function screen(id: string): Promise<BrowserFrame> {
@@ -109,6 +108,20 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     const frame = await iframe!.contentFrame()
     await frame!.waitForSelector('body > :not(script)', { visible: true })
     return frame!
+  }
+
+  // The player's DOM changes before the sandboxed runtime acknowledges the switch.
+  async function waitForInteractivity(id: string, enabled: boolean) {
+    await page.waitForFunction(
+      (id, enabled) => {
+        const iframe = document.querySelector<HTMLIFrameElement>(`iframe[data-doop-proto-frame="${CSS.escape(id)}"]`)
+        const win = iframe?.contentWindow
+        return !!win && (window as unknown as Fixture).prototypeInteractivity.get(win) === enabled
+      },
+      {},
+      id,
+      enabled,
+    )
   }
 
   async function location(frame: BrowserFrame, selector: string, fx = 0.5, fy = 0.5) {
@@ -179,8 +192,8 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     const frame = await mount()
     await frame.focus('#go')
     await chord('D', true)
+    await page.waitForSelector('[data-preview-toolbar] [data-design-hint]', { visible: true })
     expect(await page.$(address)).toBeNull()
-    await page.waitForSelector('[data-preview-toolbar] [data-design-hint]')
     expect(await page.$eval('[data-design-hint]', (el) => el.textContent)).toBe(
       'Click or drag to select · Hold Space to use page · ↑↓ to adjust',
     )
@@ -212,14 +225,10 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
   it('temporarily re-enables page clicks while Space is held and resumes picking after iframe keyup', async () => {
     const frame = await mount()
     await enter()
+    await waitForInteractivity('home', false)
     await page.keyboard.down('Space')
     await page.waitForSelector('[data-design-shield]', { hidden: true })
-    await page.waitForFunction(
-      () =>
-        (window as unknown as { messages: { type: string; on?: boolean }[] }).messages
-          .filter((message) => message.type === 'doop:proto-result')
-          .at(-1)?.on === true,
-    )
+    await waitForInteractivity('home', true)
     await clickAt(frame, '#go')
     const next = await screen('next')
     await next.$eval('h1', (el) => {
@@ -251,9 +260,13 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     )
     expect(attachments).toEqual([])
     expect(scope).toEqual({ frameId: 'home', selector: '#go' })
+    await waitForInteractivity('home', false)
     await page.click(control('Exit Design Mode'))
-    await frame.$eval('#go', (button) => (button as HTMLElement).click())
-    await screen('next')
+    await page.waitForSelector(address, { visible: true })
+    await waitForInteractivity('home', true)
+    await clickAt(frame, '#go')
+    const next = await screen('next')
+    expect(await next.$eval('h1', (el) => el.textContent)).toBe('The second screen')
     expect(await page.$('[data-design-pin]')).toBeNull()
   })
 
@@ -300,6 +313,7 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await page.waitForSelector('[data-design-pin][data-status="sent"]')
     await page.click(control('Annotation queue'))
     const queue = '[data-design-queue]'
+    await page.waitForSelector(`${queue} ${control('Clear All')}:disabled`, { visible: true })
     await page.click(`${queue} [data-design-queue-note="sent"]:first-child ${control('Resolve')}`)
     await page.waitForSelector(pin(1), { hidden: true })
     await page.click(`${queue} label:has(input[type="checkbox"])`)
@@ -315,16 +329,43 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await pick(frame, '#go')
     await clickAt(frame, '#title', 'Shift')
     await page.waitForFunction(() => document.querySelectorAll('[data-design-selection]').length === 2)
-    await page.keyboard.type('Align both')
+    const comment = 'Align both elements and keep the left edges level when the heading wraps onto a second line.'
+    await page.keyboard.type(comment)
     await page.click('[role="switch"]')
     await page.click(control('Add to stack'))
     await page.waitForSelector(pin(1))
     await page.click(control('1 pending; show details'))
     const queue = '[data-preview-toolbar] [data-design-queue]'
-    await page.waitForSelector(queue)
-    expect(await page.$eval(queue, (el) => el.textContent)).toContain('1 edits')
-    expect(await page.$eval(`${queue} li`, (el) => el.textContent)).toContain('button“Open now”Align both+1')
-    await page.click(`${queue} ${control('Clear All')}`)
+    const clear = `${queue} header ${control('Clear All')}`
+    await page.waitForSelector(clear, { visible: true })
+    expect(await page.$eval(`${queue} header h2`, (el) => el.textContent)).toBe('1 edits')
+    expect(await page.$eval(`${queue} li`, (el) => el.textContent)).toContain(`button“Open now”${comment}+1`)
+    const layout = await page.$eval(
+      queue,
+      (el, comment) => {
+        const header = el.querySelector('header')!
+        const heading = header.querySelector('h2')!.getBoundingClientRect()
+        const clear = header.querySelector('button')!
+        const action = clear.getBoundingClientRect()
+        const row = el.querySelector('li')!
+        const text = Array.from(row.querySelectorAll('span')).find((span) => span.textContent === comment)!
+        const bounds = el.getBoundingClientRect()
+        return {
+          clearVisible: clear.textContent === 'Clear All' && action.left > heading.right && action.right < bounds.right,
+          rowFits:
+            row.getBoundingClientRect().right < bounds.right &&
+            row.scrollWidth === row.clientWidth &&
+            el.scrollWidth === el.clientWidth,
+          commentTruncates:
+            text.clientWidth > 0 &&
+            text.scrollWidth > text.clientWidth &&
+            getComputedStyle(text).textOverflow === 'ellipsis',
+        }
+      },
+      comment,
+    )
+    expect(layout).toEqual({ clearVisible: true, rowFits: true, commentTruncates: true })
+    await page.click(clear)
     await page.waitForSelector(queue, { hidden: true })
     expect(await page.$(pin(1))).toBeNull()
     expect(await page.$(control('Send 1 to agent'))).toBeNull()

@@ -331,7 +331,7 @@ export function DesignModeOverlay({
           data-design-card=""
           role="group"
           aria-label={t('panels.designNote')}
-          className={cn(shell, 'pointer-events-auto absolute z-30 grid gap-1 border-brand/40 px-2 py-1')}
+          className={cn(shell, 'dark pointer-events-auto absolute z-30 grid gap-1 px-2 py-1')}
           style={{ width: cardWidth, left: cardLeft, top: cardTop }}
         >
           <div className="flex min-w-0 items-center gap-1.5">
@@ -461,7 +461,7 @@ function AnnotationQueue({ mode }: { mode: Mode }) {
         <Button
           size="sm"
           variant="bare"
-          className="h-6 min-w-0 flex-1 justify-start gap-1 px-0.5 text-caption"
+          className="h-6 min-w-0 flex-1 justify-start gap-1 px-0.5 text-caption text-ink"
           title={[selector, visibleText && `“${visibleText}”`, note.comment].filter(Boolean).join(' ')}
           aria-label={`${note.number}. ${note.comment}`}
           disabled={mode.busy}
@@ -470,9 +470,11 @@ function AnnotationQueue({ mode }: { mode: Mode }) {
           <span className="grid h-3.5 min-w-3.5 shrink-0 place-items-center rounded-row bg-brand px-0.5 text-micro text-white">
             {note.number}
           </span>
-          <span className="max-w-[35%] shrink-0 truncate">{selector}</span>
-          {visibleText && <span className="max-w-[36%] truncate text-ink-soft">“{visibleText}”</span>}
-          <span className="min-w-0 truncate">{note.comment}</span>
+          <span className="max-w-[50%] truncate">
+            {selector}
+            {visibleText && <span className="ml-1 text-ink-soft">“{visibleText}”</span>}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-left">{note.comment}</span>
           {note.elements.length > 1 && (
             <span className="shrink-0 rounded-row bg-brand/10 px-1 text-brand">+{note.elements.length - 1}</span>
           )}
@@ -520,52 +522,46 @@ function AnnotationQueue({ mode }: { mode: Mode }) {
       aria-label={t('panels.designQueue')}
       className={cn(
         shell,
-        'absolute right-0 top-full z-30 mt-1.5 grid max-h-[60vh] w-[min(280px,calc(100cqw-76px))] gap-2 overflow-auto p-2',
+        'absolute right-0 top-full z-30 mt-1.5 grid max-h-[60vh] w-[min(300px,calc(100cqw-76px))] grid-cols-1 grid-rows-[auto_minmax(0,1fr)] gap-2 p-2',
       )}
     >
       <header className="flex items-center justify-between gap-2">
-        <h2 className="text-caption text-ink-soft">
-          {pending.length ? t('panels.designEdits', { count: pending.length }) : t('panels.designQueue')}
-        </h2>
-        {pending.length > 0 ? (
-          <Button
-            size="pill"
-            variant="bare"
-            className="h-5 px-1 text-caption text-ink-soft"
-            title={t('panels.designClear')}
-            disabled={mode.busy}
-            onClick={() => {
-              mode.clearPending()
-              mode.setQueueOpen(false)
-            }}
-          >
-            {t('panels.designClear')}
-          </Button>
-        ) : (
-          <IconButton size="sm" aria-label={t('common.close')} onClick={() => mode.setQueueOpen(false)}>
-            <XIcon size="rail" />
-          </IconButton>
-        )}
+        <h2 className="truncate text-caption text-ink-soft">{t('panels.designEdits', { count: pending.length })}</h2>
+        <Button
+          size="pill"
+          variant="bare"
+          className="h-5 px-1 text-caption text-ink-soft"
+          aria-label={t('panels.designClear')}
+          disabled={mode.busy || pending.length === 0}
+          onClick={() => {
+            mode.clearPending()
+            mode.setQueueOpen(false)
+          }}
+        >
+          {t('panels.designClear')}
+        </Button>
       </header>
-      {pending.length > 0 && <ol>{pending.map(row)}</ol>}
-      {mode.saved.notes.some((note) => note.status !== 'pending') && (
-        <div className="grid gap-1">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="text-caption text-ink-soft">{t('panels.designSent')}</h3>
-            <label className="inline-flex items-center gap-1.5 text-caption text-ink-soft">
-              <Checkbox checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} />
-              {t('panels.designShowResolved')}
-            </label>
+      <div className="grid grid-cols-1 gap-2 overflow-y-auto">
+        {pending.length > 0 && <ol>{pending.map(row)}</ol>}
+        {mode.saved.notes.some((note) => note.status !== 'pending') && (
+          <div className="grid grid-cols-1 gap-1">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-caption text-ink-soft">{t('panels.designSent')}</h3>
+              <label className="inline-flex items-center gap-1.5 text-caption text-ink-soft">
+                <Checkbox checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} />
+                {t('panels.designShowResolved')}
+              </label>
+            </div>
+            <ol>{sent.map(row)}</ol>
           </div>
-          <ol>{sent.map(row)}</ol>
-        </div>
-      )}
-      {!mode.saved.notes.length && <p className="text-caption text-ink-soft">{t('panels.designEmpty')}</p>}
-      {mode.sendError && (
-        <p role="alert" className="text-caption text-accent-ink">
-          {mode.sendError}
-        </p>
-      )}
+        )}
+        {!mode.saved.notes.length && <p className="text-caption text-ink-soft">{t('panels.designEmpty')}</p>}
+        {mode.sendError && (
+          <p role="alert" className="text-caption text-accent-ink">
+            {mode.sendError}
+          </p>
+        )}
+      </div>
     </section>
   )
 }
