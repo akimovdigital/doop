@@ -1,7 +1,8 @@
 import type { Canvas, ElementComment, Frame } from '../../shared/types'
-import { canvasPages, framePageId } from '../../shared/pages'
+import { canvasPages } from '../../shared/pages'
 import { frameDesignPoint } from '../../shared/frameRotation'
 import { FRAME_COMMENT_SELECTOR, sameCommentAnchor, type CommentAnchorInput } from '../../shared/comments'
+import { frameSpatialIndex } from './spatialIndex'
 import { useStore } from './store'
 import { api } from './api'
 import { requestFrame } from './frameBridge'
@@ -49,12 +50,7 @@ export function frameAtPoint(
   pageId: string | null,
   point: Point,
 ): Frame | undefined {
-  return [...canvas.frames].reverse().find((f) => {
-    if (f.hidden || (pageId !== null && framePageId(canvas, f) !== pageId)) return false
-    /* a turned frame is hit where it is drawn: the point goes into its own axes first */
-    const d = frameDesignPoint(point, f)
-    return d.x >= 0 && d.y >= 0 && d.x <= f.width && d.y <= f.height
-  })
+  return frameSpatialIndex(canvas).frameAtPoint(pageId, point)
 }
 
 /** The anchor a pin dropped at a world point takes. `probe` asks a frame's

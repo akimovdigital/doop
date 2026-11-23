@@ -212,6 +212,50 @@ function prepareGesture(scenario: Scenario, scene: Scene, duration: number) {
   return { ...plan, drive, reset, select: () => useStore.getState().selectMany(originals.map(({ id }) => id)) }
 }
 
+// Keep the established motion trajectory and time its release separately. The
+// ordinary zoom exercises a reusable layout scale, the wide zoom a cold raise.
+async function measureSettle(scenario: 'zoom' | 'zoom-wide'): Promise<Sample['settle']> {
+  const warm = scenario === 'zoom'
+  const world = document.querySelector<HTMLElement>('.world')!
+  const iframe = world.querySelector<HTMLIFrameElement>('[data-doop-frame-shell="f0"] iframe')!
+  if (!iframe) throw new Error('Settle probe requires the first live iframe')
+  const target = warm ? 1.5 : 2
+  const from = warm ? 2 : 0.7
+  harness.setCamera({ x: 50, y: 50, zoom: from })
+  await sleep(600)
+  for (let step = 1; step < 8; step++) {
+    harness.setCamera({ x: 50, y: 50, zoom: from + ((target - from) * step) / 8 })
+    await nextFrame()
+  }
+
+  const release = performance.now()
+  harness.setCamera({ x: 50, y: 50, zoom: target })
+  const first = await nextFrame()
+  const before = iframe.getBoundingClientRect()
+  let layout = world.style.zoom
+  let layoutChanges = 0
+  let maxDriftPx = 0
+  let deferredPeak = 0
+  const times = [first]
+  while (times.at(-1)! < release + 600) {
+    times.push(await nextFrame())
+    if (world.style.zoom === layout) continue
+    layout = world.style.zoom
+    layoutChanges++
+    deferredPeak = Math.max(
+      deferredPeak,
+      world.querySelectorAll('[data-frame-layout-root][style*="content-visibility: hidden"]').length,
+    )
+    const after = iframe.getBoundingClientRect()
+    maxDriftPx = Math.max(
+      maxDriftPx,
+      ...(['x', 'y', 'width', 'height'] as const).map((key) => Math.abs(after[key] - before[key])),
+    )
+  }
+  const { max, intervals } = intervalStats(times)
+  return { maxMs: max, intervals, layoutChanges, maxDriftPx, deferredPeak }
+}
+
 async function run(): Promise<Sample> {
   const query = new URLSearchParams(location.search)
   const scenario = scenarios.find((value) => value === query.get('scenario')) ?? 'zoom'
@@ -307,9 +351,11 @@ async function run(): Promise<Sample> {
   const commits = { ...harness.commits }
   const liveAfter = liveDocuments()
   const heapBytes = heap()
+  const settle = scenario === 'zoom' || scenario === 'zoom-wide' ? await measureSettle(scenario) : undefined
   const after = await vmStat()
   return {
     ...meta,
+    ...(settle ? { settle } : {}),
     elapsedMs,
     openMs: null,
     frames: stats,

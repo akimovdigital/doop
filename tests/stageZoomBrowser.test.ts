@@ -143,3 +143,77 @@ describe.skipIf(!findBrowserPath())('canvas zoom commits', { timeout: 30_000 }, 
     expect(commits.frameView).toBeLessThanOrEqual(10)
   })
 })
+
+describe.skipIf(!findBrowserPath())('settled WebKit layout path', { timeout: 30_000 }, () => {
+  const pages = pagePerTest()
+
+  it('keeps visible iframe geometry and reveals a panned-to iframe at the new layout zoom', async () => {
+    const page = await pages.open()
+    await page.setViewport({ width: 1280, height: 800 })
+    await page.evaluateOnNewDocument(() => {
+      // Exercise Stage's counter-zoom path in the repository's Chromium rig.
+      Object.defineProperty(navigator, 'userAgent', { value: 'Safari/605.1.15' })
+    })
+    await openCanvasPage(page, [
+      canvasFrame({ id: 'near', name: 'Near', x: 0, y: 0, width: 300, height: 200 }),
+      canvasFrame({ id: 'far', name: 'Far', x: 5000, y: 0, width: 300, height: 200 }),
+    ])
+    await page.waitForFunction(() => document.querySelectorAll('iframe[data-doop-frame]').length === 2)
+
+    const result = await page.evaluate(async () => {
+      const { setCamera } = window.canvasPageHarness
+      const world = document.querySelector<HTMLElement>('.world')!
+      const near = world.querySelector<HTMLIFrameElement>('[data-frame-layout-root="near"] iframe')!
+      const far = world.querySelector<HTMLIFrameElement>('[data-frame-layout-root="far"] iframe')!
+      const content = far.contentWindow
+      const viewport = { x: 50, y: 100, zoom: 2 }
+      setCamera(viewport)
+      await new Promise(requestAnimationFrame)
+      const before = near.getBoundingClientRect()
+      return new Promise<{
+        drift: number
+        nearEffectiveZoom: number
+        farEffectiveZoom: number
+        wasDeferred: boolean
+        revealed: boolean
+        sameDocument: boolean
+      }>((resolve, reject) => {
+        const observer = new MutationObserver(() => {
+          const k = Number(world.style.zoom)
+          if (k < 2) return
+          observer.disconnect()
+          clearTimeout(timeout)
+          const after = near.getBoundingClientRect()
+          const drift = Math.max(
+            ...(['x', 'y', 'width', 'height'] as const).map((key) => Math.abs(after[key] - before[key])),
+          )
+          const wrapper = far.parentElement!
+          const wasDeferred = wrapper.style.contentVisibility === 'hidden'
+          setCamera({ ...viewport, x: viewport.x - 5000 * viewport.zoom })
+          resolve({
+            drift,
+            nearEffectiveZoom: k * Number(getComputedStyle(near).zoom),
+            farEffectiveZoom: k * Number(getComputedStyle(far).zoom),
+            wasDeferred,
+            revealed:
+              wrapper.style.contentVisibility !== 'hidden' && Math.abs(far.getBoundingClientRect().x - after.x) < 1,
+            sameDocument: far.isConnected && far.contentWindow === content,
+          })
+        })
+        const timeout = window.setTimeout(() => {
+          observer.disconnect()
+          reject(new Error('Layout zoom did not settle to 2×'))
+        }, 5000)
+        observer.observe(world, { attributes: true, attributeFilter: ['style'] })
+      })
+    })
+    expect(result).toMatchObject({
+      nearEffectiveZoom: 1,
+      farEffectiveZoom: 1,
+      wasDeferred: true,
+      revealed: true,
+      sameDocument: true,
+    })
+    expect(result.drift).toBeLessThan(1)
+  })
+})

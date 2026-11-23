@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, type PointerEvent as ReactPointerEvent, type RefObject } from 'react'
 import { create } from 'zustand'
 import type { CanvasGuide } from '../../shared/types'
-import { currentPageCanvas } from '../lib/pages'
+import { currentPageCanvas, currentPageSpatialIndex } from '../lib/pages'
 import { commitGuide, newGuide, visibleGuides } from '../lib/guides'
 import { isTypingTarget } from '../lib/keys'
 import { boundsOf, formatRulerValue, rulerTicks } from '../lib/rulers'
@@ -86,8 +86,10 @@ function trackGuide(
     const world = { x: (ev.clientX - box.left - vp.x) / vp.zoom, y: (ev.clientY - box.top - vp.y) / vp.zoom }
     let at = axis === 'v' ? world.x : world.y
     if (!ev.altKey) {
-      const frames = currentPageCanvas()?.frames.filter((f) => !f.hidden) ?? []
-      const snapped = snapFrame('move', { x: world.x, y: world.y, width: 0, height: 0 }, frames, vp.zoom)
+      const rect = { ...world, width: 0, height: 0 }
+      const page = currentPageSpatialIndex()
+      const frames = page?.index.snapCandidates(page.pageId, rect, vp.zoom) ?? []
+      const snapped = snapFrame('move', rect, frames, vp.zoom)
       at = axis === 'v' ? snapped.x : snapped.y
     }
     current = { id, pageId, axis, at: Math.round(at) }

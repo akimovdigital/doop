@@ -26,7 +26,7 @@ import {
 } from '../lib/frameBridge'
 import { gesture } from '../lib/gesture'
 import { iframeBleed } from '../lib/frameBleed'
-import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY, counterZoom } from '../lib/layoutZoom'
+import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY } from '../lib/layoutZoom'
 import { visibleGuides } from '../lib/guides'
 import { snapFrame } from '../lib/snap'
 import { useT } from '../lib/i18n'
@@ -38,7 +38,7 @@ import {
   styledCopy,
   type WorldRect,
 } from '../lib/layerEdits'
-import { currentPageCanvas } from '../lib/pages'
+import { currentPageSpatialIndex } from '../lib/pages'
 import { pickedSelectors, useStore } from '../lib/store'
 
 interface Preview {
@@ -69,7 +69,7 @@ export interface ElementMoveHit {
 
 /** Hit testing happens inside the iframe. Buffer pointer events while it
  * answers so even a fast drag follows the visible element under the press. */
-export function useElementMove(frame: Frame, layoutZoom: number) {
+export function useElementMove(frame: Frame) {
   const t = useT()
   const [preview, setPreview] = useState<Preview | null>(null)
   /* the gesture under way: its element's outline, grips and size badge stay
@@ -401,14 +401,14 @@ export function useElementMove(frame: Frame, layoutZoom: number) {
       const start = outside && layer ? outsideBox(layer) : bounds
       rect = { ...start, x: start.x + point.x - origin.x, y: start.y + point.y - origin.y }
       /* off its frame, the copy lines up with the frames on the page */
-      const targets = outside ? (currentPageCanvas()?.frames.filter((f) => !f.hidden) ?? []) : snapTargets
+      const free = ev.altKey && !duplicating
+      const zoom = useStore.getState().viewport.zoom
+      const page = outside && !free ? currentPageSpatialIndex() : null
+      const targets = outside ? (page?.index.snapCandidates(page.pageId, rect, zoom) ?? []) : snapTargets
       /* edges and center pull onto the ruler guides (⌥ moves freely, except
          that the ⌥⇧ duplicate chord holds ⌥ and its copy snaps like any
          move); an axis Shift holds still stays held */
-      const snapped =
-        ev.altKey && !duplicating
-          ? null
-          : snapFrame('move', rect, targets, useStore.getState().viewport.zoom, visibleGuides())
+      const snapped = free ? null : snapFrame('move', rect, targets, zoom, visibleGuides())
       if (snapped) {
         rect = { ...rect, x: locked === 'x' ? rect.x : snapped.x, y: locked === 'y' ? rect.y : snapped.y }
         useStore.getState().setSnapGuides(snapped.guides.filter((g) => (g.axis === 'v' ? 'x' : 'y') !== locked))
@@ -737,7 +737,7 @@ export function useElementMove(frame: Frame, layoutZoom: number) {
                     height: preview.rect.height,
                     ...(FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY
                       ? null
-                      : { zoom: counterZoom(layoutZoom), transform: `scale(${layoutZoom})` }),
+                      : { zoom: 'var(--frame-counter-zoom, 1)', transform: 'scale(var(--world-layout-zoom, 1))' }),
                     transformOrigin: '0 0',
                   }}
                 />

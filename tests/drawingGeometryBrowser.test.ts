@@ -202,11 +202,8 @@ describe.skipIf(!findBrowserPath())('drawing on the canvas', { timeout: 30_000 }
         '<div data-doop-drawing="rectangle" data-name="Hidden" style="position:absolute;left:152px;top:178px;width:50px;height:50px;visibility:hidden"></div>',
     }
     await seedFrames([source])
-    await page.evaluate(async () => {
-      window.drawingHarness.viewport({ x: 0, y: 0, zoom: 1 })
-      const world = document.querySelector<HTMLElement>('.world')!
-      while (world.style.zoom !== '1') await new Promise((r) => requestAnimationFrame(r))
-    })
+    await page.evaluate(() => window.drawingHarness.viewport({ x: 0, y: 0, zoom: 1 }))
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.world')!).zoom === '1')
     const drawing = await visibleDrawing('Source')
     const from = { x: drawing.x + 30, y: drawing.y + 20 }
     await page.mouse.move(from.x, from.y)
@@ -236,7 +233,11 @@ describe.skipIf(!findBrowserPath())('drawing on the canvas', { timeout: 30_000 }
       window.drawingHarness.peer({ x: 200, y: 150 })
       window.drawingHarness.viewport({ x: 0, y: 0, zoom: 1 })
     })
-    await page.waitForFunction(() => (document.querySelector('.world') as HTMLElement).style.zoom === '1')
+    await page.waitForFunction(
+      () =>
+        getComputedStyle(document.querySelector('.world')!).zoom === '1' &&
+        !!document.querySelector('.world path[d^="M1 1 L16"]'),
+    )
     // sample every frame across the switch: the cursor's transition used to
     // replay its translate from the old zoom while the world snapped
     const maxError = await page.evaluate(async () => {
@@ -248,7 +249,12 @@ describe.skipIf(!findBrowserPath())('drawing on the canvas', { timeout: 30_000 }
       const tick = () => {
         if (!sampling) return
         const vp = window.drawingHarness.camera()
-        worst = Math.max(worst, Math.abs(cursor().getBoundingClientRect().left - stage.left - (vp.x + 200 * vp.zoom)))
+        const { left, top } = cursor().getBoundingClientRect()
+        worst = Math.max(
+          worst,
+          Math.abs(left - stage.left - (vp.x + 200 * vp.zoom)),
+          Math.abs(top - stage.top - (vp.y + 150 * vp.zoom)),
+        )
         requestAnimationFrame(tick)
       }
       tick()

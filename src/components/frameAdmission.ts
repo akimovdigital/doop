@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject
 import { rotatedBounds } from '../../shared/frameRotation'
 import type { Frame } from '../../shared/types'
 import { hasFrameDocument, onFrameDocument } from '../lib/frameBridge'
-import { currentPageCanvas } from '../lib/pages'
+import { currentPageSpatialIndex } from '../lib/pages'
 import { useStore } from '../lib/store'
 
 const EAGER_FRAME_LIMIT = 16
@@ -117,7 +117,17 @@ export function useFrameAdmission(
       if (!cameraMoving && slots > 0 && width > 0 && height > 0) {
         const margin = idle ? NEAR_PX : 0
         const { x, y, zoom } = viewport
-        const candidates = (currentPageCanvas()?.frames ?? [])
+        const page = currentPageSpatialIndex()
+        const rect = {
+          x: (-margin - x) / zoom,
+          y: (-margin - y) / zoom,
+          width: (width + 2 * margin) / zoom,
+          height: (height + 2 * margin) / zoom,
+        }
+        // Prototype idle admission also prepares destinations outside the view.
+        const nearby =
+          page && (idle && prototypeMode ? page.index.all(page.pageId) : page.index.intersect(page.pageId, rect))
+        const candidates = (nearby ?? [])
           .flatMap((frame) => {
             if (ids.has(frame.id) || frame.hidden || !liveById.has(frame.id)) return []
             const box = rotatedBounds(frame, frame.rotation ?? 0)

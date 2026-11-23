@@ -27,7 +27,7 @@ import { useElementMove } from './ElementMove'
 import { FrameLabelLayer } from './FrameLabelLayer'
 import { PathEditor } from './PathEditor'
 import { loadPathEdit, type PathEditSource } from '../lib/pathEditing'
-import { currentPageCanvas } from '../lib/pages'
+import { currentPageCanvas, currentPageSpatialIndex } from '../lib/pages'
 import {
   finishFrameSettle,
   frameShows,
@@ -48,7 +48,7 @@ import { FRAME_BOOTSTRAP } from '../lib/frameRuntime'
 import { canSnapshotFrame, type FrameSnapshots } from '../lib/frameSnapshots'
 import { MOD_KEY } from '../lib/keys'
 import { isDesktopShell } from '../lib/shell'
-import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY, counterZoom } from '../lib/layoutZoom'
+import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY } from '../lib/layoutZoom'
 import { dropEntry, recordCreate, recordUpdate, recordUpdates, trackSave, type HistoryEntry } from '../lib/history'
 import { snapFrame, type SnapGuide } from '../lib/snap'
 import { visibleGuides } from '../lib/guides'
@@ -377,7 +377,6 @@ function FrameSnapshotLayer({
 export const FrameView = memo(function FrameView({
   frame,
   stack,
-  layoutZoom,
   loadDocument = true,
   snapshots,
   compactSectionTitles = false,
@@ -389,7 +388,6 @@ export const FrameView = memo(function FrameView({
   frame: Frame
   /** its place in the page's paint order (the Stage's z-index), front highest */
   stack?: number
-  layoutZoom: number
   loadDocument?: boolean
   snapshots?: FrameSnapshots
   compactSectionTitles?: boolean
@@ -435,7 +433,7 @@ export const FrameView = memo(function FrameView({
     sentCursor.current = cursor
     win.postMessage({ type: 'doop:cursor', cursor }, '*')
   }
-  const elementMove = useElementMove(frame, layoutZoom)
+  const elementMove = useElementMove(frame)
   const labelLayer = useContext(FrameLabelLayer)
   const [pathEdit, setPathEdit] = useState<PathEditSource | null>(null)
   const editRequest = useRef(0)
@@ -797,9 +795,10 @@ export const FrameView = memo(function FrameView({
          the copy should land on the guides like any other move. Frames
          riding along in the group are not neighbours, and neither is a
          hidden frame — there is nothing on the stage to line up with. */
-      const others = currentPageCanvas()?.frames.filter((f) => !f.hidden && !groupIds.has(f.id)) ?? []
       /* a turned frame's edges lie along nothing: no snapping while resizing it */
       const free = (ev.altKey && !duplicating) || !!turn
+      const page = free ? null : currentPageSpatialIndex()
+      const others = page?.index.snapCandidates(page.pageId, raw, zoom, groupIds) ?? []
       let snapped = free ? { ...raw, guides: [] } : snapFrame(mode, raw, others, zoom, visibleGuides(), handle)
       /* with Shift the ratio wins: the snapped axis leads, the other follows */
       if (mode === 'resize' && ev.shiftKey && !free) snapped = keepRatioAfterSnap(handle, from, raw, snapped)
@@ -2012,7 +2011,6 @@ export const FrameView = memo(function FrameView({
       <BrowserFrame
         frame={{ ...frame, browser: frame.browser }}
         stack={stack}
-        layoutZoom={layoutZoom}
         loadDocument={loadDocument}
         onDrag={(event) => startDrag(event, 'move')}
         onResize={(event, handle) => startDrag(event, 'resize', false, false, false, handle)}
@@ -2436,6 +2434,7 @@ export const FrameView = memo(function FrameView({
             {/* always there, so the iframe never moves in the DOM (that reloads
                 it): it carries the iframe out by the bleed margin */}
             <div
+              data-frame-layout-root={mountRuntime && !standalone ? frame.id : undefined}
               className="relative"
               /* the margin is drawn, never pointed at: presses outside the box
                  belong to the canvas, so neither this box nor the iframe takes them */
@@ -2466,7 +2465,7 @@ export const FrameView = memo(function FrameView({
                     ...(bleed ? { pointerEvents: editing ? 'auto' : 'none' } : null),
                     ...(FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY
                       ? null
-                      : { zoom: counterZoom(layoutZoom), transform: `scale(${layoutZoom})` }),
+                      : { zoom: 'var(--frame-counter-zoom, 1)', transform: 'scale(var(--world-layout-zoom, 1))' }),
                     transformOrigin: '0 0',
                     contentVisibility: editing || interacting || selected ? 'visible' : 'auto',
                     /* Chromium paints an opaque backdrop behind an iframe whose
@@ -2480,7 +2479,7 @@ export const FrameView = memo(function FrameView({
               )}
             </div>
             {/* a standalone element is see-through: the paper's grid shows */}
-            {!standalone && <PixelGrid layoutZoom={layoutZoom} />}
+            {!standalone && <PixelGrid />}
             {!frame.html && (
               <div className="absolute inset-0 grid place-items-center bg-[repeating-linear-gradient(45deg,transparent_0_10px,rgba(28,26,21,0.025)_10px_20px)] text-[13px] text-ink-faint">
                 empty frame — add HTML
