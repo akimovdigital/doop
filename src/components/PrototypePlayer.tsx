@@ -554,11 +554,21 @@ export function PrototypePlayer({
       if (win) windows.current.set(key, win)
       else windows.current.delete(key)
     },
-    annotating: !pageInteractive,
+    annotating: !pageInteractive && !design.editingText,
     onDocument: () => {
       if (topEntry()?.key === entry.key) documentChanged((value) => value + 1)
     },
-    onMessage: (data: { type?: string; interaction?: unknown; press?: boolean; command?: unknown }) => {
+    onMessage: (data: {
+      type?: string
+      interaction?: unknown
+      press?: boolean
+      command?: unknown
+      id?: unknown
+      mode?: unknown
+      hit?: unknown
+      before?: unknown
+      after?: unknown
+    }) => {
       /* a covered screen is switched off, but an action it sent before the
          switch reached it must not act over the screen on top */
       if (data.type === 'doop:proto-action') {
@@ -584,7 +594,8 @@ export function PrototypePlayer({
       else if (data.type === 'doop:proto-site-pointer' && topEntry()?.key === entry.key) {
         design.setQueueOpen(false)
         chat.collapse()
-      } else if (data.type === 'doop:annotation-layout' && topEntry()?.key === entry.key) design.refreshPins()
+      } else if (data.type === 'doop:textEdit-finished' && topEntry()?.key === entry.key) design.finishTextEdit(data)
+      else if (data.type === 'doop:annotation-layout' && topEntry()?.key === entry.key) design.refreshPins()
     },
   })
 

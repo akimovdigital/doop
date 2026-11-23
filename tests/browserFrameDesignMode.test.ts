@@ -17,7 +17,9 @@ async function annotate(page: Page) {
   await page.keyboard.press('KeyD')
   await page.keyboard.up('Shift')
   await page.keyboard.up('Meta')
-  await page.waitForSelector('[data-design-shield]', { visible: true })
+  await page.waitForSelector(`${present} [data-browser-viewport][aria-busy="false"] [data-design-shield]`, {
+    visible: true,
+  })
 }
 
 describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout: 60_000 }, () => {
@@ -192,7 +194,7 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     await page.mouse.move(x, y)
     await page.waitForSelector('[data-design-hover="#title"]', { visible: true })
     if (shots) await page.screenshot({ path: join(shots, 'dm-20-browser-frame-design-mode.png') })
-    await page.mouse.click(x, y, { delay: 120 })
+    await page.mouse.click(x, y)
     await page.waitForSelector(field, { visible: true })
     await page.keyboard.type('Make the heading smaller')
     if (shots) await page.screenshot({ path: join(shots, 'dm-21-browser-frame-note.png') })
@@ -224,5 +226,21 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
         attachments: [],
       }),
     ])
+
+    await annotate(page)
+    const editFrame = await (await iframe())!.contentFrame()
+    await editFrame!.waitForFunction(() => document.querySelector('#title')?.textContent === 'Second page')
+    const editBox = await (await editFrame!.$('#title'))!.boundingBox()
+    const editX = editBox!.x + 30
+    const editY = editBox!.y + editBox!.height / 2
+    await page.mouse.move(editX, editY)
+    await page.waitForSelector('[data-design-hover="#title"]', { visible: true })
+    await page.mouse.click(editX, editY, { count: 2 })
+    await editFrame!.waitForSelector('#title[contenteditable="plaintext-only"]:focus')
+    await page.waitForSelector('[data-design-shield]', { hidden: true })
+    await page.keyboard.type('Edited second page')
+    await page.keyboard.press('Enter')
+    await page.waitForSelector('[data-design-pin="2"][data-status="pending"]')
+    await editFrame!.waitForFunction(() => document.querySelector('#title')?.textContent === 'Edited second page')
   })
 })

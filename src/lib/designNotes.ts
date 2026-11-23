@@ -11,6 +11,7 @@ export interface NoteElement {
   selector: string
   doopId?: string
   tag: string
+  textEditable?: boolean
   id: string
   classes: string[]
   text: string
@@ -21,6 +22,11 @@ export interface NoteElement {
   label: string
 }
 
+export interface DesignTextEdit {
+  before: string
+  after: string
+}
+
 export interface DesignNote {
   id: string
   canvasId: string
@@ -29,7 +35,8 @@ export interface DesignNote {
   pageUrl: string
   source?: 'browser'
   number: number
-  kind: 'element' | 'region'
+  kind: 'element' | 'region' | 'textEdit'
+  textEdit?: DesignTextEdit
   elements: NoteElement[]
   region?: NoteRect
   comment: string
@@ -47,7 +54,7 @@ export type DesignNotesAction =
       type: 'update'
       id: string
       changes: Partial<
-        Pick<DesignNote, 'comment' | 'elements' | 'region' | 'status' | 'sentAt' | 'resolvedAt' | 'cardId'>
+        Pick<DesignNote, 'comment' | 'elements' | 'region' | 'textEdit' | 'status' | 'sentAt' | 'resolvedAt' | 'cardId'>
       >
     }
   | { type: 'remove'; ids: string[] }
@@ -98,6 +105,26 @@ export function noteHtml(element: Pick<NoteElement, 'attributes' | 'tag' | 'text
   return `<${element.tag}${attrs}>${escapeHtml(collapse(element.text).slice(0, 500))}</${element.tag}>`
 }
 
+function textEditSummary(edit: DesignTextEdit): string {
+  const limit = 120
+  const before = Array.from(edit.before)
+  const after = Array.from(edit.after)
+  let start = 0
+  if (Math.max(before.length, after.length) > limit) {
+    let common = 0
+    while (common < before.length && before[common] === after[common]) common++
+    start = Math.max(0, common - 30)
+  }
+  const excerpt = (text: string[]) => {
+    const prefix = start ? '…' : ''
+    const end = start + limit - prefix.length
+    const middle = text.slice(start, text.length > end ? end - 1 : end).join('')
+    const suffix = text.length > end ? '…' : ''
+    return (prefix + middle + suffix).replaceAll('\n', '↵')
+  }
+  return `change text to “${excerpt(after)}” (was “${excerpt(before)}”)`
+}
+
 function elementContext(note: DesignNote, element: NoteElement): string {
   const { x, y, width, height } = element.rect
   return [
@@ -124,9 +151,12 @@ export function formatDesignNotes(notes: DesignNote[]): string {
         .map((note) => {
           const label = note.region
             ? `Screenshot region ${Math.round(note.region.width)} × ${Math.round(note.region.height)}`
-            : note.elements.map(elementLabel).join(' + ')
+            : note.textEdit
+              ? `<${note.elements[0]?.tag ?? 'element'}> text edit`
+              : note.elements.map(elementLabel).join(' + ')
           for (const element of note.elements) context.push(elementContext(note, element))
-          return `${notes.length > 1 ? `${note.number}. ` : ''}${label}${note.comment ? `: ${note.comment}` : ''}`
+          const comment = [note.textEdit && textEditSummary(note.textEdit), note.comment].filter(Boolean).join('\n\n')
+          return `${notes.length > 1 ? `${note.number}. ` : ''}${label}${comment ? `: ${comment}` : ''}`
         })
       return (
         byPage.size > 1 || group.some((note) => note.source === 'browser') ? [`On ${url}:`, ...lines] : lines

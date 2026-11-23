@@ -70,6 +70,54 @@ describe('design notes', () => {
     )
     expect(formatDesignNotes([b])).toBe('Screenshot region 80 × 40: Align')
   })
+  it('formats a single text edit for Send or the chat shortcut', () => {
+    const edit: DesignNote = {
+      ...note,
+      kind: 'textEdit',
+      comment: '',
+      textEdit: { before: 'Open now', after: 'Read\nmore' },
+    }
+    expect(formatDesignNotes([edit])).toBe(
+      '<button> text edit: change text to “Read↵more” (was “Open now”)\n\nElement context:\n' + context,
+    )
+  })
+  it('keeps late changes inside the text edit excerpt', () => {
+    const shared = 'a'.repeat(180)
+    const edit: DesignNote = {
+      ...note,
+      kind: 'textEdit',
+      comment: '',
+      textEdit: { before: `${shared}last line`, after: `${shared}new line` },
+    }
+    const summary = formatDesignNotes([edit]).split('\n\n')[0]
+    expect(summary).toContain(`“…${'a'.repeat(30)}new line” (was “…${'a'.repeat(30)}last line”)`)
+  })
+  it('numbers text edits in mixed batches and preserves them in storage', () => {
+    const edit: DesignNote = {
+      ...note,
+      id: 'text',
+      number: 2,
+      kind: 'textEdit',
+      comment: '',
+      textEdit: { before: 'Open now', after: 'Read more' },
+    }
+    const second = { ...edit, id: 'text2', number: 3, textEdit: { before: 'Details', after: 'Learn more' } }
+    expect(formatDesignNotes([second, edit]).split('\n\n')[0]).toBe(
+      '2. <button> text edit: change text to “Read more” (was “Open now”)\n' +
+        '3. <button> text edit: change text to “Learn more” (was “Details”)',
+    )
+    let raw = ''
+    const storage = {
+      getItem: () => raw,
+      setItem: (_key: string, value: string) => {
+        raw = value
+      },
+    }
+    writeDesignNotes(storage, note.canvasId, { batch: false, notes: [note, edit] })
+    expect(formatDesignNotes(readDesignNotes(storage, note.canvasId).notes).split('\n\n')[0]).toBe(
+      '1. <button> — “Open now”: Move this\n2. <button> text edit: change text to “Read more” (was “Open now”)',
+    )
+  })
   it('clips the label text, attribute and HTML text independently', () => {
     const el = { ...element, text: 't'.repeat(501), attributes: [['title', 'a'.repeat(201)]] as [string, string][] }
     const out = formatDesignNotes([{ ...note, elements: [el] }])

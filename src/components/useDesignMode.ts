@@ -12,6 +12,7 @@ import {
   writeDesignNotes,
   type DesignNote,
   type DesignNotesAction,
+  type DesignTextEdit,
   type NoteElement,
   type NoteRect,
   type SavedDesignNotes,
@@ -31,7 +32,7 @@ interface Target {
 
 type Details = Omit<NoteElement, 'label' | 'htmlExcerpt'> & Target
 export type DesignPoint = { x: number; y: number }
-type Draft = Pick<DesignNote, 'elements' | 'region' | 'comment'> & { id?: string }
+type Draft = Pick<DesignNote, 'elements' | 'region' | 'comment' | 'textEdit'> & { id?: string }
 type LocatedPin = { rect: NoteRect; missing: boolean }
 
 const subscribers = new Set<() => void>()
@@ -94,6 +95,8 @@ export function useDesignMode({
   const [usingPage, setUsingPage] = useState(false)
   const [queueOpen, setQueueOpen] = useState(false)
   const [draft, setDraft] = useState<Draft | null>(null)
+  const [editingText, setEditingText] = useState(false)
+  const textSession = useRef<{ id: string; win: Window }>()
   const [hover, setHover] = useState<Target | null>(null)
   const [region, setRegion] = useState<NoteRect>()
   const [pins, setPins] = useState<Record<string, LocatedPin>>({})
@@ -128,7 +131,15 @@ export function useDesignMode({
     setHover(null)
   }
 
+  function cancelText() {
+    const session = textSession.current
+    textSession.current = undefined
+    session?.win.postMessage({ type: 'doop:textEdit', action: 'cancel', id: session.id }, '*')
+    setEditingText(false)
+  }
+
   function clearInteraction() {
+    cancelText()
     clearHover()
     pickSequence.current++
     drag.current = undefined
@@ -166,6 +177,10 @@ export function useDesignMode({
   }
 
   function escape() {
+    if (textSession.current) {
+      cancelText()
+      return true
+    }
     if (allowed && queueOpen) {
       setQueueOpen(false)
       return true
@@ -225,10 +240,11 @@ export function useDesignMode({
       number: 1,
       status: 'pending',
       createdAt: Date.now(),
-      kind: value.region ? 'region' : 'element',
+      kind: value.textEdit ? 'textEdit' : value.region ? 'region' : 'element',
       ...(stored || {}),
       elements: value.elements,
       region: value.region,
+      textEdit: value.textEdit,
       comment,
     }
   }
@@ -245,9 +261,68 @@ export function useDesignMode({
     const store = useStore.getState()
     const previous = store.composerDrafts[canvasId!]
     store.setComposerDraft(canvasId!, previous ? `${previous}\n\n${text}` : text)
+    if (value.id && value.textEdit && note.status === 'pending') dispatch({ type: 'remove', ids: [value.id] })
     exit()
     onDraft({ scope: scopeOf(note), label: note.elements[0]?.label })
   }
+
+  async function startTextEdit(at: DesignPoint) {
+    const win = getWindow()
+    if (!enabled || busy || !win || textSession.current) return
+    const id = crypto.randomUUID()
+    textSession.current = { id, win }
+    pickSequence.current++
+    clearHover()
+    setEditingText(true)
+    const reply = await askFrameWindow(win, 'doop:textEdit', { action: 'start', id, ...at })
+    if (textSession.current?.id !== id) return
+    if (!reply?.started || getWindow() !== win) {
+      cancelText()
+    }
+  }
+
+  function finishTextEdit(data: { id?: unknown; mode?: unknown; hit?: unknown; before?: unknown; after?: unknown }) {
+    if (!textSession.current || textSession.current.id !== data.id) return
+    textSession.current = undefined
+    setEditingText(false)
+    const { before, after, hit, mode } = data
+    if (mode === 'revert' || typeof before !== 'string' || typeof after !== 'string' || before === after || !hit) return
+    if (!frame || !allowed || !after.trim()) return
+    const detail = hit as Details
+    const existing = pageNotes.find(
+      (note) =>
+        note.status === 'pending' &&
+        note.pageUrl === pageUrl &&
+        note.textEdit &&
+        note.elements[0]?.selector === detail.selector &&
+        note.textEdit.after === before,
+    )
+    const textEdit: DesignTextEdit = { before: existing?.textEdit?.before ?? before, after }
+    const element = existing?.elements[0] ?? { ...detail, label: label(detail), htmlExcerpt: noteHtml(detail) }
+    const value = { id: existing?.id, elements: [element], comment: existing?.comment ?? '', textEdit }
+    setDraft(null)
+    if (textEdit.before === after && existing) dispatch({ type: 'remove', ids: [existing.id] })
+    else if (mode === 'chat') draftToChat(value)
+    else if (existing) dispatch({ type: 'update', id: existing.id, changes: { textEdit } })
+    else dispatch({ type: 'add', note: asNote(value, '') })
+  }
+
+  useEffect(() => {
+    const win = getWindow()
+    if (!win || !allowed) return
+    const edits = pageNotes.flatMap((note) => {
+      const first = note.elements[0]
+      if (
+        !note.textEdit ||
+        !first ||
+        note.pageUrl !== pageUrl
+      )
+        return []
+      const selector = first.doopId ? `[data-doop-id="${CSS.escape(first.doopId)}"]` : first.selector
+      return [{ ...note.textEdit, id: note.id, selector, pending: note.status === 'pending' }]
+    })
+    win.postMessage({ type: 'doop:textEdit', action: 'sync', edits }, '*')
+  }, [allowed, screenKey, documentRevision, pageUrl, getWindow, pageNotes])
 
   async function pick(at: DesignPoint, shift: boolean, alt: boolean) {
     const seq = ++pickSequence.current
@@ -316,7 +391,13 @@ export function useDesignMode({
     setQueueOpen(false)
     if (source === 'browser' ? note.pageUrl !== pageUrl : note.frameId !== frameId)
       onNavigate(note.frameId, note.pageUrl)
-    setDraft({ id: note.id, comment: note.comment, elements: note.elements, region: note.region })
+    setDraft({
+      id: note.id,
+      comment: note.comment,
+      elements: note.elements,
+      region: note.region,
+      textEdit: note.textEdit,
+    })
   }
 
   function deleteNote(id: string) {
@@ -346,7 +427,14 @@ export function useDesignMode({
   }
 
   async function submit() {
-    if (!draft?.comment.trim() || !frame || !allowed || useStore.getState().composerSend?.status === 'busy') return
+    if (
+      !draft ||
+      (!draft.comment.trim() && !draft.textEdit) ||
+      !frame ||
+      !allowed ||
+      useStore.getState().composerSend?.status === 'busy'
+    )
+      return
     const note = asNote(draft, draft.comment.trim())
     if (draft.id) {
       dispatch({
@@ -453,6 +541,9 @@ export function useDesignMode({
     enabled,
     pageNotes,
     handleKey,
+    editingText,
+    startTextEdit,
+    finishTextEdit,
     usingPage: enabled && usingPage,
     holdPage,
     releasePage,
@@ -488,8 +579,11 @@ export function useDesignMode({
     refreshPins,
     setComment: (comment: string) => setDraft((value) => value && { ...value, comment }),
     setBatch: (batch: boolean) => changeSaved(canvasId!, (prev) => ({ ...prev, batch })),
-    clearPending: () =>
-      dispatch({ type: 'remove', ids: saved.notes.filter((note) => note.status === 'pending').map((note) => note.id) }),
+    clearPending: () => {
+      const ids = saved.notes.filter((note) => note.status === 'pending').map((note) => note.id)
+      if (draft?.id && ids.includes(draft.id)) setDraft(null)
+      dispatch({ type: 'remove', ids })
+    },
     resolve: (id: string) => dispatch({ type: 'update', id, changes: { status: 'resolved', resolvedAt: Date.now() } }),
   }
 }

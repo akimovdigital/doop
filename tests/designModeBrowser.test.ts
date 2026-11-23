@@ -67,6 +67,7 @@ const field = '[data-design-note-field]'
 const capsule = '[data-preview-chat]'
 const chatField = '[data-preview-chat-field]'
 const control = (label: string) => `button[aria-label="${label}"]`
+const secondClick = { button: 'left', clickCount: 2 } as const
 const pin = (number: number) => `[data-design-pin="${number}"]`
 
 describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }, () => {
@@ -153,9 +154,10 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     }
   }
 
-  async function enter() {
+  async function enter(id = 'home') {
     await page.click(control('Annotate'))
     await page.waitForSelector('[data-design-shield]', { visible: true })
+    await waitForInteractivity(id, false)
   }
 
   async function clickAt(frame: BrowserFrame, selector: string, modifier?: 'Shift' | 'Alt') {
@@ -166,6 +168,28 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     } finally {
       if (modifier) await page.keyboard.up(modifier)
     }
+  }
+
+  async function beginTextEdit(frame: BrowserFrame) {
+    const { x, y } = await location(frame, '#title')
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.up()
+    // The real first click can open its note before the second mouse press.
+    await page.waitForSelector(`${field}:focus`)
+    await page.mouse.down(secondClick)
+    await page.mouse.up(secondClick)
+    await frame.waitForSelector('#title[contenteditable="plaintext-only"]:focus')
+    await page.waitForFunction(() =>
+      document.querySelector('[data-design-hint]')?.textContent?.includes('Return to save'),
+    )
+  }
+
+  async function capture(name: string) {
+    if (process.env.DOOP_DESIGN_SHOTS !== '1') return
+    const dir = join(homedir(), 'doop-element-comments')
+    await mkdir(dir, { recursive: true })
+    await page.screenshot({ path: join(dir, `${name}.png`) })
   }
 
   async function pick(frame: BrowserFrame, selector: string) {
@@ -220,6 +244,64 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     expect(await page.$('[data-design-hint]')).not.toBeNull()
     await page.keyboard.press('Escape')
     await page.waitForSelector(address)
+  })
+
+  it('edits a text-only heading in place, queues it with batch off, reapplies after reload and clears it', async () => {
+    await page.setViewport({ width: 1440, height: 960 })
+    let frame = await mount()
+    await enter()
+    await pick(frame, '#title')
+    expect(await page.$eval('[data-design-hint] span', (el) => el.textContent)).toBe(
+      'Double-click to edit text · Hold Space to use page · Esc to cancel',
+    )
+    await beginTextEdit(frame)
+    expect(await frame.evaluate(() => getSelection()?.toString())).toBe('A sample heading')
+    await page.keyboard.type('Edited heading')
+    await capture('dm-12-text-edit-active')
+    await page.keyboard.press('Enter')
+    await page.waitForSelector(pin(1))
+    await frame.waitForFunction(() => document.querySelector('#title')?.textContent === 'Edited heading')
+    expect(await sent()).toEqual([])
+    await page.click(control('1 pending; show details'))
+    await page.waitForSelector('[data-design-queue-note="pending"]')
+    expect(await page.$eval('[data-design-queue-note="pending"]', (el) => el.textContent)).toContain(
+      '“Edited heading”T',
+    )
+    await capture('dm-13-text-edit-queued')
+    frame = await mount()
+    await frame.waitForFunction(() => document.querySelector('#title')?.textContent === 'Edited heading')
+    await page.click(control('1 pending; show details'))
+    await page.click(control('Clear All'))
+    await frame.waitForFunction(() => document.querySelector('#title')?.textContent === 'A sample heading')
+  })
+
+  it('reverts a text edit before closing the note and hands a subsequent edit to chat with ⌘L', async () => {
+    const frame = await mount()
+    await enter()
+    await pick(frame, '#title')
+    await beginTextEdit(frame)
+    await page.keyboard.type('Discard me')
+    await page.keyboard.press('Escape')
+    await page.waitForSelector(field, { visible: true })
+    expect(await frame.$eval('#title', (el) => el.textContent)).toBe('A sample heading')
+    await page.keyboard.press('Escape')
+    await page.waitForSelector(field, { hidden: true })
+    const wrapper = await location(frame, '#wrap', 0.95, 0.95)
+    await page.mouse.click(wrapper.x, wrapper.y)
+    await page.waitForSelector(`${field}:focus`)
+    await page.mouse.down(secondClick)
+    await page.mouse.up(secondClick)
+    await page.waitForSelector(`${field}:focus`)
+    expect(await frame.$('[contenteditable="plaintext-only"]')).toBeNull()
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('[data-design-shield]:focus')
+    await beginTextEdit(frame)
+    await page.keyboard.type('Send later')
+    await chord('l')
+    await page.waitForSelector(chatField)
+    expect(await draft()).toMatch(/^<h1> text edit: change text to “Send later” \(was “A sample heading”\)/)
+    expect(await sent()).toEqual([])
+    expect(await page.$(control('Send 1 to agent'))).toBeNull()
   })
 
   it('temporarily re-enables page clicks while Space is held and resumes picking after iframe keyup', async () => {

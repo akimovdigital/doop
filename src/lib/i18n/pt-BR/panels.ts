@@ -342,6 +342,8 @@ export const panels: Catalog['panels'] = {
   designAnnotateShortcut: 'Anotar (⌘⇧D)',
   designExit: 'Sair do modo de design',
   designPickHint: 'Clique ou arraste para selecionar · Segure Espaço para usar a página · ↑↓ para ajustar',
+  designTextNoteHint: 'Clique duas vezes para editar o texto · Segure Espaço para usar a página · Esc para cancelar',
+  designTextEditingHint: 'Enter para salvar · Esc para cancelar',
   designNoteHint: 'Segure Espaço para usar a página · Esc para cancelar',
   designNote: 'Anotação de design',
   designDescribe: 'Descreva a alteração',
