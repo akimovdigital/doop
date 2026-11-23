@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Frame as BrowserFrame, KeyInput, Page } from 'puppeteer-core'
 import { findBrowserPath } from '../server/screenshot'
-import type { Canvas } from '../shared/types'
+import type { AgentTask, Canvas } from '../shared/types'
 import { fixtureUrl, pagePerTest } from './browser'
 
 const canvas: Canvas = {
@@ -58,9 +58,12 @@ type Fixture = {
   readDesignDraft: (canvasId: string) => string
   writeDesignDraft: (canvasId: string, text: string) => void
   editFrame: (id: string, html: string) => void
+  setDesignTasks: (tasks: AgentTask[]) => void
 }
 
 const field = '[data-design-note-field]'
+const capsule = '[data-preview-chat]'
+const chatField = '[data-preview-chat-field]'
 const control = (label: string) => `button[aria-label="${label}"]`
 const pin = (number: number) => `[data-design-pin="${number}"]`
 
@@ -326,6 +329,81 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await chord('D', true)
     expect(await page.$(control('Annotate'))).toBeNull()
     expect(await page.$('[data-design-hint]')).toBeNull()
+    expect(await page.$(capsule)).toBeNull()
+  })
+
+  it('expands and collapses the capsule, keeping the side-panel draft, pending count and per-canvas state', async () => {
+    const frame = await mount()
+    await page.waitForSelector(`${capsule}[data-chat-state="collapsed"]`)
+    await page.click(`${capsule} ${control('Ask Doop…')}`)
+    await page.waitForSelector(chatField)
+    await page.keyboard.type('Keep this draft')
+    expect(await draft()).toBe('Keep this draft')
+    await page.keyboard.press('Escape')
+    await page.waitForSelector(chatField)
+    await page.keyboard.press('Escape')
+    await page.waitForSelector(`${capsule}[data-chat-state="collapsed"]`)
+    await chord('/')
+    await page.waitForSelector(chatField)
+    expect(await page.$eval(chatField, (el) => (el as HTMLTextAreaElement).value)).toBe('Keep this draft')
+    const outside = await location(frame, '#title')
+    await page.mouse.click(outside.x, outside.y)
+    await page.waitForSelector(chatField, { hidden: true })
+    await chord('l')
+    await page.waitForSelector(chatField)
+    await enter()
+    await page.waitForSelector(chatField, { hidden: true })
+    await addBatch(frame, '#go', 'Move button', true)
+    await page.click(`${capsule} ${control('1 pending')}`)
+    await page.waitForSelector('[data-design-queue]')
+    await page.keyboard.press('Escape')
+    await page.click(control('Exit Design Mode'))
+    await chord('/')
+    await page.waitForSelector(chatField)
+    expect(await draft()).toBe('Keep this draft')
+    await mount()
+    await page.waitForSelector(chatField)
+    expect(await page.$(`${capsule} [data-preview-chat-pending]`)).not.toBeNull()
+  })
+
+  it('shows the target, agent reply and working, sending, sent and error states', async () => {
+    const frame = await mount(canvas, true)
+    await page.evaluate(() => {
+      const app = window as unknown as Fixture
+      app.setDesignTasks([
+        {
+          id: 'done',
+          agentName: 'Doop',
+          color: '',
+          status: 'Original prompt',
+          queuedBy: 'Test',
+          startedAt: 1,
+          endedAt: 2,
+          reply: 'I updated the header.',
+        },
+        { id: 'working', agentName: 'Doop', color: '', status: 'Current task', startedAt: 3 },
+      ])
+      app.designSendDelay = 350
+    })
+    await page.waitForSelector(`${capsule} [aria-label="Agent working"]`)
+    await enter()
+    await clickAt(frame, '#go', 'Alt')
+    await page.waitForSelector('[data-preview-chat-scope]')
+    expect(await page.$eval('[data-preview-chat-reply]', (el) => el.textContent)).toBe('I updated the header.')
+    expect(await page.$(control('Open chat'))).toBeNull()
+    await page.keyboard.press('Enter')
+    await page.waitForSelector('[data-preview-chat-send="busy"]')
+    await page.waitForSelector('[data-preview-chat-send="sent"]')
+    expect((await sent())[0]?.[4]).toEqual({ frameId: 'home', selector: '#go' })
+    expect(await draft()).toBe('')
+    expect(await page.$('[data-preview-chat-scope]')).toBeNull()
+    await page.evaluate(() => {
+      ;(window as unknown as Fixture).designSendError = 'Test send failure'
+    })
+    await page.type(chatField, 'Keep on failure')
+    await page.keyboard.press('Enter')
+    await page.waitForSelector('[data-preview-chat-send="error"]')
+    expect(await draft()).toBe('Keep on failure')
   })
 
   it.runIf(process.env.DOOP_DESIGN_SHOTS === '1')(
@@ -354,6 +432,7 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
       const frame = await mount(data)
       await frame.evaluate(() => document.fonts.ready.then(() => true))
       await shot('dm-01-off-annotate-button')
+      await shot('chat-01-capsule-collapsed')
       await enter()
       await shot('dm-02-on-hint-row')
       const candidates = await frame.evaluate(() => {
@@ -414,6 +493,7 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
       await page.keyboard.press('Enter')
       await page.waitForSelector(pin(2))
       await shot('dm-07-pins-batch-send-pill')
+      await shot('chat-02-capsule-pending-badge')
       await page.click(control('2 pending; show details'))
       await page.waitForSelector('[data-design-queue]')
       await shot('dm-08-queue-list')
@@ -425,6 +505,41 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
       await page.click(control('Annotation queue'))
       await page.waitForSelector('[data-design-queue-note="sent"]')
       await shot('dm-10-sent-dimmed')
+      await page.keyboard.press('Escape')
+      await page.evaluate(() => {
+        const app = window as unknown as Fixture
+        app.setDesignTasks([
+          {
+            id: 'done',
+            agentName: 'Doop',
+            color: '',
+            status: 'Original prompt',
+            queuedBy: 'Test',
+            startedAt: 1,
+            endedAt: 2,
+            reply: 'I reviewed the first screen. Tell me what you would like to adjust next.',
+          },
+        ])
+        app.designSendDelay = 1000
+      })
+      await page.click(`${capsule} ${control('Ask Doop…')}`)
+      await page.waitForSelector(chatField)
+      await page.type(chatField, 'Tighten the spacing around the introduction.')
+      await shot('chat-03-capsule-expanded')
+      await page.keyboard.press('Enter')
+      await page.waitForSelector('[data-preview-chat-send="busy"]')
+      await shot('chat-04-capsule-sending-or-sent')
+      await page.waitForSelector('[data-preview-chat-send="sent"]')
+      for (const width of [768, 375]) {
+        await page.setViewport({ width, height: 760 })
+        await shot(`chat-responsive-${width}`)
+        await page.click(control('Annotate'))
+        await page.waitForSelector('[data-design-hint]')
+        await shot(`dm-responsive-${width}`)
+        await page.click(control('Exit Design Mode'))
+        await page.click(`${capsule} ${control('Ask Doop…')}`)
+        await page.waitForSelector(chatField)
+      }
     },
   )
 })

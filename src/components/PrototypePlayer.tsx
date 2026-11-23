@@ -25,7 +25,8 @@ import { prototypePath } from '../lib/prototype'
 import { PreviewToolbar } from './PreviewToolbar'
 import { DesignModeControls, DesignModeHint, DesignModeOverlay } from './DesignModeOverlay'
 import { useDesignMode } from './useDesignMode'
-import { navigate as navigateApp } from '../lib/navigate'
+import { PreviewChatCapsule, usePreviewChat } from './PreviewChatCapsule'
+import { useAllowance } from './TeamAllowance'
 import { t as translate, useT } from '@/lib/i18n'
 
 /* One screen on the player's history stack: the frame it shows and how it
@@ -156,7 +157,10 @@ export function PrototypePlayer({
   const [documentRevision, documentChanged] = useState(0)
   const annotationScreen = overlays.at(-1) ?? move?.to ?? stack.at(-1)!
   const getAnnotationWindow = useCallback(() => windows.current.get(annotationScreen.key), [annotationScreen.key])
+  const chat = usePreviewChat(canvasId, canEdit)
+  const { allowance } = useAllowance(chat.allowed)
   const design = useDesignMode({
+    allowance,
     canvasId,
     canEdit,
     frame: frameById(annotationScreen.frameId),
@@ -166,18 +170,14 @@ export function PrototypePlayer({
     components: canvas?.components,
     getWindow: getAnnotationWindow,
     onNavigate: (frameId) => navigate(frameId, 'instant', 0),
-    onDraft: () => {
-      if (onOpenChat) {
-        onClose?.()
-        onOpenChat()
-        return
-      }
-      const state = useStore.getState()
-      state.setPanelTab('tasks')
-      state.requestComposerFocus()
-      if (syncUrl && canvasId) navigateApp(`/c/${canvasId}`)
-    },
+    onDraft: chat.expand,
+    onEnter: chat.collapse,
   })
+
+  function openEditorChat() {
+    onClose?.()
+    onOpenChat?.()
+  }
 
   function entryFor(
     frameId: string,
@@ -274,7 +274,10 @@ export function PrototypePlayer({
         return reload()
       case 'annotate':
         return design.toggle()
+      case 'chat':
+        return chat.expand()
       case 'address':
+        if (chat.allowed && !design.enabled && document.activeElement !== addressRef.current) return chat.expand()
         addressRef.current?.focus()
         return addressRef.current?.select()
     }
@@ -358,7 +361,7 @@ export function PrototypePlayer({
   /* Escape: an open overlay closes first; then the screen's own key:Escape
      interaction; then, over the editor, the player itself */
   function escape() {
-    if (design.escape()) return
+    if (design.escape() || chat.escape()) return
     if (overlaysRef.current.length) return closeOverlay()
     const win = topWindow()
     if (!win) return onClose?.()
@@ -432,9 +435,9 @@ export function PrototypePlayer({
   }
 
   /* the latest handlers for the listeners below, which subscribe once */
-  const handlers = useRef({ escape, back, jumpTo, release, topWindow, shortcut, design, designKey })
+  const handlers = useRef({ escape, back, jumpTo, release, topWindow, shortcut, design, designKey, chat })
   useLayoutEffect(() => {
-    handlers.current = { escape, back, jumpTo, release, topWindow, shortcut, design, designKey }
+    handlers.current = { escape, back, jumpTo, release, topWindow, shortcut, design, designKey, chat }
   })
 
   useEffect(() => {
@@ -454,10 +457,12 @@ export function PrototypePlayer({
       )
       const command = protoShortcut(e)
       if (command === 'annotate' && !handlers.current.design.allowed) return
-      if (target === addressRef.current && command !== 'address' && command !== 'annotate') return
+      if (command === 'chat' && !handlers.current.chat.allowed) return
+      if (target === addressRef.current && command !== 'address' && command !== 'annotate' && command !== 'chat') return
+      if (target?.closest('[data-preview-chat]') && e.key !== 'Escape' && !command) return
       if (inDesignControl && e.key !== 'Escape' && command !== 'annotate') {
         if (target?.closest('[data-design-note-field]')) return
-        if (command !== 'address') return
+        if (command !== 'address' && command !== 'chat') return
       }
       if (command) {
         e.preventDefault()
@@ -563,13 +568,15 @@ export function PrototypePlayer({
           command === 'forward' ||
           command === 'reload' ||
           command === 'address' ||
-          command === 'annotate'
+          command === 'annotate' ||
+          command === 'chat'
         )
           shortcut(command)
       }
       /* Escape with the focus in a screen: the same overlay-first path as a
          key pressed on the player itself */
       else if (data.type === 'doop:esc' && topEntry()?.key === entry.key && screenHasFocus()) escape()
+      else if (data.type === 'doop:proto-site-pointer' && topEntry()?.key === entry.key) chat.collapse()
       else if (data.type === 'doop:annotation-layout' && topEntry()?.key === entry.key) design.refreshPins()
     },
   })
@@ -626,6 +633,10 @@ export function PrototypePlayer({
           ref={viewportRef}
           className={`relative isolate min-h-0 flex-1 overflow-hidden ${minimized ? 'rounded-b-panel' : ''}`}
           data-proto-viewport=""
+          onPointerDownCapture={(event) => {
+            if (event.target instanceof Element && !event.target.closest('[data-preview-chat],[data-design-queue]'))
+              chat.collapse()
+          }}
         >
           {base.map(({ entry, role }) => {
             const frame = frameById(entry.frameId)
@@ -692,6 +703,16 @@ export function PrototypePlayer({
             viewportRef={viewportRef}
             getWindow={getAnnotationWindow}
           />
+          {chat.allowed && canvasId && (
+            <PreviewChatCapsule
+              chat={chat}
+              canvasId={canvasId}
+              pending={design.pendingCount}
+              allowance={allowance}
+              onShowQueue={() => design.setQueueOpen(true)}
+              onOpenChat={onOpenChat ? openEditorChat : undefined}
+            />
+          )}
         </div>
       </div>
       {notice && (

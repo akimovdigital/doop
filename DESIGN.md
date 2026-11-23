@@ -114,3 +114,7 @@ The opt-in HUD sits in the lower-right corner above the canvas toolbar and moves
 ### Prototype annotations
 
 The preview toolbar includes Annotate, a pending-note send pill, and a queue button for editors. Design Mode adds a compact gesture row above the site. The sandboxed frame reports element bounds in design pixels. The player converts those to screen pixels for the 2 px brand outlines and the 22 px numbered pins. Notes and the queue use the shared surface, line, card and popover styles. Pending, sent and resolved notes live in local storage per canvas. Sent pins are dimmed and resolved pins are hidden.
+
+### Prototype chat capsule
+
+Editors get a 36 px capsule centred 12 px above the preview’s bottom edge. It expands in place to a composer up to 560 px wide. Both states use a 2 px line border and the themed surface. The expanded capsule shows the current target, the latest agent reply and the shared composer status. The 150 ms entrance applies only when motion is allowed. Moving between capsule states keeps the canvas draft.

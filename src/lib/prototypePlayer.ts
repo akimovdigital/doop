@@ -216,7 +216,7 @@ export function previewFrameFromAddress(value: string, previewPath: string): str
   }
 }
 
-export type ProtoShortcut = 'back' | 'forward' | 'reload' | 'address' | 'annotate'
+export type ProtoShortcut = 'back' | 'forward' | 'reload' | 'address' | 'annotate' | 'chat'
 
 /** Also inlined in the sandboxed screen; keep this independent of module state. */
 export function protoShortcut(event: KeyboardEvent): ProtoShortcut | undefined {
@@ -231,5 +231,7 @@ export function protoShortcut(event: KeyboardEvent): ProtoShortcut | undefined {
       return 'reload'
     case 'l':
       return 'address'
+    case '/':
+      return 'chat'
   }
 }

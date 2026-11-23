@@ -16,8 +16,8 @@ import {
   type NoteRect,
   type SavedDesignNotes,
 } from '../lib/designNotes'
-import { useStore } from '../lib/store'
-import { useAllowance } from './TeamAllowance'
+import type { Allowance } from '../lib/api'
+import { useStore, type PreviewComposerTarget } from '../lib/store'
 import { sendPrompt } from './sendPrompt'
 
 interface Target {
@@ -33,7 +33,6 @@ type Details = Omit<NoteElement, 'label' | 'htmlExcerpt'> & Target
 export type DesignPoint = { x: number; y: number }
 type Draft = Pick<DesignNote, 'elements' | 'region' | 'comment'> & { id?: string }
 type LocatedPin = { rect: NoteRect; missing: boolean }
-type DraftTarget = { scope?: CardScope; label?: string }
 
 const subscribers = new Set<() => void>()
 const notesByCanvas = new Map<string, SavedDesignNotes>()
@@ -59,6 +58,7 @@ function changeSaved(canvasId: string, update: (previous: SavedDesignNotes) => S
 export function useDesignMode({
   canvasId,
   canEdit,
+  allowance,
   frame,
   screenKey,
   documentRevision,
@@ -71,19 +71,19 @@ export function useDesignMode({
 }: {
   canvasId?: string
   canEdit: boolean
+  allowance: Allowance | null
   frame?: Frame
   screenKey: number
   documentRevision: number
   pageUrl: string
   components?: ComponentDef[]
   getWindow: () => Window | undefined
-  onDraft: (target: DraftTarget) => void
+  onDraft: (target: PreviewComposerTarget) => void
   onNavigate: (frameId: string) => void
   onEnter?: () => void
 }) {
   const allowed = !!canvasId && canEdit
   const saved = useSyncExternalStore(subscribe, () => (allowed ? savedFor(canvasId) : emptyDesignNotes))
-  const { allowance } = useAllowance(allowed)
   const [active, setActive] = useState(false)
   const [queueOpen, setQueueOpen] = useState(false)
   const [draft, setDraft] = useState<Draft | null>(null)

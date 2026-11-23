@@ -45,6 +45,10 @@
       window.play = (startFrameId) =>
         mountPlayer({
           startFrameId,
+          onOpenChat: () => {
+            useStore.getState().setPanelTab('tasks')
+            useStore.getState().requestComposerFocus()
+          },
           onClose: () => {
             window.playerClosed = true
             root.render(null)
@@ -98,6 +102,7 @@
           return { id: 'annotation-card' }
         }
       }
+      window.setDesignTasks = (tasks) => useStore.getState().setTasks(tasks)
       window.readDesignDraft = (canvasId) => useStore.getState().composerDrafts[canvasId]
       window.writeDesignDraft = (canvasId, draft) => useStore.getState().setComposerDraft(canvasId, draft)
       window.fixtureReady = true

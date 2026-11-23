@@ -173,6 +173,7 @@ export const FRAME_PROTO_RUNTIME = `
 
   document.addEventListener('pointerdown', function (ev) {
     if (!protoActive()) return
+    if (ev.isTrusted) parent.postMessage({ type: 'doop:proto-site-pointer' }, '*')
     var hit = protoFind(ev.target, 'press')
     if (!hit || (protoCanvas && hit.interaction.action !== 'scroll-to')) return
     ev.preventDefault()

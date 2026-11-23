@@ -10,6 +10,7 @@ import type {
   Canvas,
   CanvasGuide,
   CanvasFrameMove,
+  CardScope,
   DesignDecision,
   ElementComment,
   Frame,
@@ -37,6 +38,8 @@ export type PanelTab = 'tasks' | 'comments' | 'activity' | 'memory'
 /** A send from the Agents tab composer: in flight, or how the last one
  *  ended. Lives in the store because the composer unmounts with its tab and
  *  a failure must still be there when the tab comes back. */
+export type PreviewComposerTarget = { scope?: CardScope; label?: string }
+
 export type ComposerSend =
   | { canvasId: string; status: 'busy' }
   | { canvasId: string; status: 'sent'; at: number }
@@ -178,6 +181,7 @@ interface State {
    *  switching tabs unmounts the field and must not eat the draft */
   composerDrafts: Record<string, string>
   composerSend: ComposerSend | null
+  previewComposerTargets: Partial<Record<string, PreviewComposerTarget>>
   /** clientId of the peer whose camera this one is tracking (Figma-style
    *  follow); any camera move of our own lets go. An agent is followed to the
    *  frame it works on, and stays followed while it is idle and out of the
@@ -263,6 +267,7 @@ interface State {
   requestComposerFocus(): void
   setComposerDraft(canvasId: string, text: string): void
   setComposerSend(send: ComposerSend | null): void
+  setPreviewComposerTarget(canvasId: string, target: PreviewComposerTarget | undefined): void
   select(id: string | null): void
   /** ⇧-click: add the frame to the selection, or drop it if already in */
   toggleSelect(id: string): void
@@ -361,6 +366,7 @@ export const useStore = create<State>((set, get) => ({
   composerFocusAt: 0,
   composerDrafts: {},
   composerSend: null,
+  previewComposerTargets: {},
   following: null,
   selectedIds: [],
   selectedId: null,
@@ -718,12 +724,18 @@ export const useStore = create<State>((set, get) => ({
   setComposerDraft: (canvasId, text) =>
     set((s) => ({
       composerDrafts: { ...s.composerDrafts, [canvasId]: text },
+      previewComposerTargets:
+        !text && s.previewComposerTargets[canvasId]
+          ? { ...s.previewComposerTargets, [canvasId]: undefined }
+          : s.previewComposerTargets,
       /* a failure stays up until the draft is touched again: it is not on a
          timer, so a send that failed while another tab was open is still
          there when this one comes back */
       composerSend: s.composerSend?.status === 'error' ? null : s.composerSend,
     })),
   setComposerSend: (composerSend) => set({ composerSend }),
+  setPreviewComposerTarget: (canvasId, target) =>
+    set((s) => ({ previewComposerTargets: { ...s.previewComposerTargets, [canvasId]: target } })),
   /* selecting a different frame (or deselecting) closes the Inspector — the
      panel must not follow surface clicks, paste, or undo onto another frame.
      Re-selecting the same frame keeps an open panel open. */
