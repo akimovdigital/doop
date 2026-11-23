@@ -31,6 +31,7 @@ export interface Sample {
   elapsedMs: number
   openMs: number | null
   frames: ReturnType<typeof intervalStats>
+  settle?: { maxMs: number | null; intervals: number; layoutChanges: number; deferredPeak?: number; maxDriftPx: number }
   inputEvents: number
   plannedInputs: number
   cameraSteps: number

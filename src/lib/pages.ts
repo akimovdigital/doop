@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { frameSpatialIndex } from './spatialIndex'
 import { useStore } from './store'
 import { canvasPages, pageFrames } from '../../shared/pages'
 
@@ -14,4 +15,14 @@ export function usePageCanvas() {
 export function currentPageCanvas() {
   const { canvas, activePageId } = useStore.getState()
   return canvas ? { ...canvas, frames: pageFrames(canvas, activePageId ?? canvasPages(canvas)[0]!.id) } : null
+}
+
+export function currentPageSpatialIndex() {
+  const { canvas, activePageId } = useStore.getState()
+  return canvas
+    ? {
+        index: frameSpatialIndex(canvas),
+        pageId: activePageId ?? canvasPages(canvas)[0]!.id,
+      }
+    : null
 }

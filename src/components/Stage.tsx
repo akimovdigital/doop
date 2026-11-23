@@ -7,7 +7,7 @@ import { usePaper, type Paper } from '../lib/paper'
 import { roleAllows } from '../../shared/canvasRole'
 import { onViewCommand } from '../lib/viewMenu'
 import type { Frame } from '../../shared/types'
-import { usePageCanvas, currentPageCanvas } from '../lib/pages'
+import { usePageCanvas, currentPageCanvas, currentPageSpatialIndex } from '../lib/pages'
 import { sendWs } from '../lib/ws'
 import { throttle } from '../lib/throttle'
 import { FrameView, HiddenFrameView } from './FrameView'
@@ -75,18 +75,19 @@ import { CanvasSections } from './CanvasSections'
 import { activeSections } from '../lib/canvasSections'
 import { CommentThreadLayer, FrameLabelLayer } from './FrameLabelLayer'
 import { pixelGridLines } from './PixelGrid'
-import { layoutZoomFor } from '../lib/layoutZoom'
+import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY, counterZoom, settledLayoutZoom } from '../lib/layoutZoom'
+import { createFrameLayoutQueue } from '../lib/frameLayoutQueue'
 import { useT, type PlainMessageKey } from '../lib/i18n'
 import { NO_INSETS, fitBox, fitColumnStart, type StageInsets } from '../lib/viewFit'
 import { spaceWouldScroll } from '../lib/spaceScroll'
 import { ZOOM_DRAG_MIN, ZOOM_TOOL_STEP, zoomAtPoint, zoomToBox } from '../lib/zoomTool'
 
 const MIN_ZOOM = 0.01
-/* The settled world is laid out at up to this zoom too (layoutZoomFor), so
+/* The settled world is laid out at up to this zoom too (settledLayoutZoom), so
    the desktop app stays sharp all the way in. That costs little: WebKit and
    Chromium both tile what is on screen, so backing memory follows the
-   viewport rather than the zoom, and frame documents never re-lay out (each
-   iframe undoes the zoom). Mirrored by FOLLOW_MAX_ZOOM. */
+   viewport rather than the zoom, and the iframe styling keeps the document
+   viewport in design pixels. Mirrored by FOLLOW_MAX_ZOOM. */
 const MAX_ZOOM = 16
 const MAX_PAGE_CAMERAS = 64
 // Keep only camera coordinates across tab switches. The editor and room can unmount normally.
@@ -344,11 +345,38 @@ export function Stage({
   /* where the background menu opened, so Paste drops the frame there */
   const bgAt = useRef({ x: 0, y: 0 })
   /* the world's layout zoom (see worldTransform) — caught up with the camera
-     only once the zoom settles, and never below 1, where scaling down a 1×
+     only once the zoom settles, with hysteresis to keep usable scales. It
+     never goes below 1, where scaling down a 1×
      raster stays sharp and nothing needs a relayout; the ref serves the
      per-frame viewport writes */
-  const [layoutZoom, setLayoutZoom] = useState(1)
   const layoutZoomRef = useRef(1)
+  const [frameLayoutQueue] = useState(createFrameLayoutQueue)
+  const framesNearViewport = useCallback((vp: Viewport, size: { width: number; height: number }) => {
+    const { selectedIds, ctxMenu, selectedElement } = useStore.getState()
+    const keep = new Set(selectedIds)
+    if (ctxMenu?.frameId) keep.add(ctxMenu.frameId)
+    if (selectedElement) keep.add(selectedElement.frameId)
+    const page = currentPageSpatialIndex()
+    if (page) {
+      // Keep the viewport and its immediate surroundings live when settling.
+      const margin = 96
+      const rect = {
+        x: (-vp.x - margin) / vp.zoom,
+        y: (-vp.y - margin) / vp.zoom,
+        width: (size.width + margin * 2) / vp.zoom,
+        height: (size.height + margin * 2) / vp.zoom,
+      }
+      for (const frame of page.index.intersect(page.pageId, rect)) keep.add(frame.id)
+    }
+    return keep
+  }, [])
+  const revealNearViewport = useCallback(
+    (vp: Viewport, size: { width: number; height: number }) => {
+      if (!frameLayoutQueue.pending) return
+      for (const id of framesNearViewport(vp, size)) frameLayoutQueue.reveal(id)
+    },
+    [frameLayoutQueue, framesNearViewport],
+  )
   const cameraPage = useRef<string | null>(null)
   const deepLinkHandled = useRef(false)
   const [linkSearch, setLinkSearch] = useState(location.search)
@@ -375,6 +403,7 @@ export function Stage({
       const grid = gridRef.current
       const labels = labelLayerRef.current
       if (!world || !grid) return
+      revealNearViewport(vp, stageSize.current)
       world.style.transform = worldTransform(vp, layoutZoomRef.current)
       /* the camera's offset, for chrome drawn in screen px (FrameLabelLayer) */
       if (labels) labels.style.transform = `translate(${vp.x}px, ${vp.y}px)`
@@ -436,11 +465,65 @@ export function Stage({
         if (zoomLabelRef.current.textContent !== zoomText) zoomLabelRef.current.textContent = zoomText
       }
     }
+    let rezoomRaf = 0
+    /* World zoom and the inherited iframe counter-zoom change together.
+       Deferred wrappers already have the new counter-zoom before they
+       become visible, and no paint sees a mixed scale. */
+    function settleLayout() {
+      const world = worldRef.current
+      if (!world) return
+      const { viewport } = useStore.getState()
+      const previous = layoutZoomRef.current
+      const layoutZoom = settledLayoutZoom(previous, viewport.zoom, MAX_ZOOM)
+      if (layoutZoom === previous) return
+      const size = stageSize.current
+      if (
+        !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY &&
+        size.width &&
+        size.height &&
+        CSS.supports('content-visibility', 'hidden')
+      ) {
+        frameLayoutQueue.defer(
+          world.querySelectorAll<HTMLElement>('[data-frame-layout-root]'),
+          framesNearViewport(viewport, size),
+        )
+      }
+
+      // Keep cursors and other world overlays from transitioning between
+      // two layout coordinate systems.
+      world.dataset.rezoom = ''
+      world.style.zoom = String(layoutZoom)
+      world.style.setProperty('--world-layout-zoom', String(layoutZoom))
+      world.style.setProperty('--frame-counter-zoom', String(counterZoom(layoutZoom)))
+      world.style.setProperty('--frame-grid-line', `${1 / layoutZoom}px`)
+      world.style.transform = worldTransform(viewport, layoutZoom)
+      layoutZoomRef.current = layoutZoom
+      // Let the new coordinates paint with transitions off, avoiding a
+      // synchronous reflow of the world to materialize that style.
+      cancelAnimationFrame(rezoomRaf)
+      rezoomRaf = requestAnimationFrame(() => {
+        rezoomRaf = requestAnimationFrame(() => {
+          rezoomRaf = 0
+          delete world.dataset.rezoom
+        })
+      })
+    }
+
     apply(useStore.getState().viewport)
     let settle = 0
     let cameraIdleTimer = 0
     const stage = ref.current
+    const mountedWorld = worldRef.current
     const unsub = useStore.subscribe((s, prev) => {
+      if (
+        frameLayoutQueue.pending &&
+        (s.canvas?.frames !== prev.canvas?.frames ||
+          s.activePageId !== prev.activePageId ||
+          s.selectedIds !== prev.selectedIds ||
+          s.ctxMenu !== prev.ctxMenu ||
+          s.selectedElement !== prev.selectedElement)
+      )
+        frameLayoutQueue.clear()
       const sameCanvas = s.canvas?.id === prev.canvas?.id
       if (!sameCanvas || s.activePageId !== prev.activePageId) {
         /* The incoming viewport may already be reset; save the outgoing one. */
@@ -474,7 +557,7 @@ export function Stage({
       if (s.viewport.zoom <= 1 && layoutZoomRef.current === 1) return
       settle = window.setTimeout(() => {
         settle = 0
-        setLayoutZoom(layoutZoomFor(useStore.getState().viewport.zoom, MAX_ZOOM))
+        settleLayout()
       }, 250)
     })
     return () => {
@@ -482,26 +565,12 @@ export function Stage({
       unsub()
       window.clearTimeout(settle)
       window.clearTimeout(cameraIdleTimer)
+      cancelAnimationFrame(rezoomRaf)
+      if (mountedWorld) delete mountedWorld.dataset.rezoom
       stage?.removeAttribute('data-frame-camera-moving')
+      frameLayoutQueue.clear()
     }
-  }, [])
-
-  /* a new layout zoom lands in the same commit as the frames' counter-zoom
-     (FrameView), so no paint sees one without the other */
-  useLayoutEffect(() => {
-    layoutZoomRef.current = layoutZoom
-    const world = worldRef.current
-    if (!world) return
-    /* a new zoom recomputes every length inside the world: anything with a
-       transition (a peer's cursor glides between positions) would animate
-       from its old-zoom value while the world itself snaps, so it jumped
-       off its spot and slid back. Transitions are off for this one change. */
-    world.dataset.rezoom = ''
-    world.style.zoom = String(layoutZoom)
-    world.style.transform = worldTransform(useStore.getState().viewport, layoutZoom)
-    void world.offsetWidth
-    delete world.dataset.rezoom
-  }, [layoutZoom])
+  }, [frameLayoutQueue, framesNearViewport, revealNearViewport])
 
   /* following a peer: whenever their camera (or, lacking one, their cursor)
      moves, ease ours toward the same view. Following an agent: whenever the
@@ -582,6 +651,7 @@ export function Stage({
       if (!entry) return
       const { width, height } = entry.contentRect
       stageSize.current = { width, height }
+      revealNearViewport(useStore.getState().viewport, stageSize.current)
       wheelStageRect.current = null
       sendViewport(useStore.getState().viewport, stageSize.current)
       retarget()
@@ -592,7 +662,7 @@ export function Stage({
       ro.disconnect()
       if (raf) cancelAnimationFrame(raf)
     }
-  }, [fitView])
+  }, [fitView, revealNearViewport])
 
   /** where a fly-to lands: a frame fitted with padding, or a bare world
    *  point centred at the zoom we already have (a peer's cursor) */
@@ -1330,7 +1400,8 @@ export function Stage({
         height: Math.abs(cur.y - origin.y),
       }
       setMarquee(rect)
-      const frames = currentPageCanvas()?.frames ?? []
+      const page = currentPageSpatialIndex()
+      const frames = page?.index.intersect(page.pageId, rect) ?? []
       /* a hidden frame is not on the stage to be lassoed, and a locked one is
          not the marquee's to take */
       const hits = frames
@@ -1451,7 +1522,6 @@ export function Stage({
                   <FrameStack
                     key={JSON.stringify([canvas?.id, activePageId])}
                     frames={canvas?.frames ?? []}
-                    layoutZoom={layoutZoom}
                     stage={ref}
                     onFollowLink={followFrameLink}
                     onPresentFrame={onPresentFrame}
@@ -1709,14 +1779,12 @@ function byCreation(a: Frame, b: Frame) {
  *  marquee) stay above every frame. */
 function FrameStack({
   frames,
-  layoutZoom,
   stage,
   onFollowLink,
   onPresentFrame,
   presenting,
 }: {
   frames: Frame[]
-  layoutZoom: number
   onFollowLink: (source: Frame, href: string) => void
   onPresentFrame?: (frameId: string, interaction?: Interaction) => void
   presenting: boolean
@@ -1751,7 +1819,6 @@ function FrameStack({
             key={f.id}
             frame={f}
             stack={rank.get(f.id)}
-            layoutZoom={layoutZoom}
             loadDocument={eager || admitted.has(f.id)}
             snapshots={snapshots}
             compactSectionTitles={compactSectionTitles}

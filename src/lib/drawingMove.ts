@@ -3,7 +3,7 @@ import { framePageId } from '../../shared/pages'
 import { api, ApiError } from './api'
 import { drawingDocument, isCanvasElement, queueDrawingSave, type Point } from './drawing'
 import { recordCreate, recordDrawingTransfer, recordUpdates } from './history'
-import { currentPageCanvas } from './pages'
+import { currentPageSpatialIndex } from './pages'
 import { useStore } from './store'
 import { elementPath, uniqueIdsIn } from './layers'
 import { bodyPlacementOrigin } from './frameBridge'
@@ -54,7 +54,9 @@ export function movableDrawing(frame: Frame, selector?: string): HTMLElement | S
 }
 
 export function drawingDropFrame(point: Point, sourceId?: string): Frame | null {
-  const hit = [...(currentPageCanvas()?.frames ?? [])]
+  const page = currentPageSpatialIndex()
+  const rect = { ...point, width: 0, height: 0 }
+  const hit = (page?.index.intersect(page.pageId, rect) ?? [])
     .reverse()
     .find(
       (f) =>

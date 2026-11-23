@@ -131,8 +131,8 @@ function pairDeltas(series: Series) {
 
 function summary(result: Result) {
   const rows = [
-    '| Движок | Сценарий | Серия | Сторона | Принято | p50, мс | p95, мс | ≥50 мс | Макс., мс | Open, мс | Δ B−A, мс | Порог, мс | Вердикт |',
-    '| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |',
+    '| Движок | Сценарий | Серия | Сторона | Принято | p50, мс | p95, мс | ≥50 мс | Макс., мс | Open, мс | Δ B−A, мс | Порог, мс | Вердикт | Settle max, мс |',
+    '| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |',
   ]
   for (const series of result.series) {
     for (const side of series.kind === 'single' ? (['A'] as const) : (['A', 'B'] as const)) {
@@ -142,7 +142,7 @@ function summary(result: Result) {
       const total = samples.reduce((sum, sample) => sum + sample.frames.intervals, 0)
       const long = samples.reduce((sum, sample) => sum + sample.frames.longFrames, 0)
       rows.push(
-        `| ${series.engine} | ${series.scenario} | ${series.kind} | ${side} | ${samples.length}/${result.config.pairs} | ${column((s) => s.frames.p50)} | ${column((s) => s.frames.p95)} | ${total ? ((100 * long) / total).toFixed(2) + '%' : '—'} | ${column((s) => s.frames.max)} | ${column((s) => s.openMs)} | ${side === 'B' ? number(median(series.deltas)) : '—'} | ${side === 'B' ? number(series.floor) : '—'} | ${side === 'B' ? (series.verdict ?? '—') : '—'} |`,
+        `| ${series.engine} | ${series.scenario} | ${series.kind} | ${side} | ${samples.length}/${result.config.pairs} | ${column((s) => s.frames.p50)} | ${column((s) => s.frames.p95)} | ${total ? ((100 * long) / total).toFixed(2) + '%' : '—'} | ${column((s) => s.frames.max)} | ${column((s) => s.openMs)} | ${side === 'B' ? number(median(series.deltas)) : '—'} | ${side === 'B' ? number(series.floor) : '—'} | ${side === 'B' ? (series.verdict ?? '—') : '—'} | ${column((s) => s.settle?.maxMs ?? null)} |`,
       )
     }
   }

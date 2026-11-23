@@ -34,7 +34,7 @@ import {
   importChromeFrame,
 } from '../lib/canvasFrameChrome'
 import { BrowserSideResize, FrameBrowserChrome } from './FrameBrowserChrome'
-import { counterZoom, FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY } from '../lib/layoutZoom'
+import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY } from '../lib/layoutZoom'
 import { canEditOpenCanvas, useStore } from '../lib/store'
 import { cn } from '../lib/utils'
 import { onFrameMessage } from '../lib/frameBridge'
@@ -78,7 +78,6 @@ function animateBrowserSurface(element: HTMLElement, rect: DOMRect, entering: bo
 export function BrowserFrame({
   frame,
   stack,
-  layoutZoom,
   loadDocument,
   onDrag,
   onResize,
@@ -87,7 +86,6 @@ export function BrowserFrame({
 }: {
   frame: Frame & { browser: NonNullable<Frame['browser']> }
   stack?: number
-  layoutZoom: number
   loadDocument: boolean
   onDrag: (event: ReactPointerEvent<HTMLDivElement>) => void
   onResize: (event: ReactPointerEvent<HTMLDivElement>, handle: ResizeHandle) => void
@@ -424,7 +422,8 @@ export function BrowserFrame({
   const fit = overlay && overlayDevice ? Math.min(1, availableWidth / preset.width, availableHeight / preset.height) : 1
   const size = overlay ? preset : frame
   const viewport = browserViewport(size.width, size.height, zoom)
-  const iframeScale = zoom * fit * (!overlay && !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY ? layoutZoom : 1)
+  const counterScaled = !overlay && !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY
+  const iframeScale = `scale(${zoom * fit})${counterScaled ? ' scale(var(--world-layout-zoom, 1))' : ''}`
   const settledRequest = page.request?.address === address && page.request.reload === reload
   const busy = proxySrc ? proxyPage?.key !== proxyKey : !!address && (!settledRequest || page.status === 'loading')
   const failed = proxySrc ? proxyPage?.key === proxyKey && !resolvedAddress : settledRequest && page.status === 'error'
@@ -638,6 +637,7 @@ export function BrowserFrame({
           style={overlay ? undefined : { borderRadius: browser.cornerRadius ?? 12 }}
         >
           <div
+            data-frame-layout-root={!overlay && page.src && address ? frame.id : undefined}
             className="relative overflow-hidden bg-sub"
             style={{
               width: overlay ? size.width * fit : '100%',
@@ -658,8 +658,8 @@ export function BrowserFrame({
                 tabIndex={(interactions || overlay) && (!design.enabled || design.usingPage) ? 0 : -1}
                 style={{
                   ...viewport,
-                  ...(!overlay && !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY ? { zoom: counterZoom(layoutZoom) } : null),
-                  transform: `scale(${iframeScale})`,
+                  ...(counterScaled ? { zoom: 'var(--frame-counter-zoom, 1)' } : null),
+                  transform: iframeScale,
                   visibility: failed ? 'hidden' : undefined,
                   pointerEvents: interactions || overlay ? 'auto' : 'none',
                 }}
