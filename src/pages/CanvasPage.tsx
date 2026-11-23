@@ -310,6 +310,7 @@ export function CanvasPage({
   const browserSurface = useBrowserUi((s) => s.surface)
   const browserPresenting = browserSurface?.mode === 'present'
   const browserSideWidth = useBrowserUi((s) => s.sideWidth)
+  const activePageId = useStore((s) => s.activePageId)
   const sideBrowserOpen = browserSurface?.mode === 'side'
   const sideFrame =
     sideBrowserOpen && canvas
@@ -324,7 +325,6 @@ export function CanvasPage({
   }, [sideBrowserOpen, sideFrame, browserSurface])
   /* ⌘. acts only over the canvas view, outside PresentMode */
   const hideUiActive = canHideUi({ view: 'canvas', presenting: !!presenting || browserPresenting })
-  const activePageId = useStore((s) => s.activePageId)
   /* Play starts on the selected frame, or on the page's flow start */
   const playFrom = useMemo(
     () => presentStartFrame(canvas, selectedId, activePageId),
