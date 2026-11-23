@@ -27,6 +27,7 @@ export interface DesignNote {
   frameId: string
   frameName: string
   pageUrl: string
+  source?: 'browser'
   number: number
   kind: 'element' | 'region'
   elements: NoteElement[]
@@ -127,7 +128,9 @@ export function formatDesignNotes(notes: DesignNote[]): string {
           for (const element of note.elements) context.push(elementContext(note, element))
           return `${notes.length > 1 ? `${note.number}. ` : ''}${label}${note.comment ? `: ${note.comment}` : ''}`
         })
-      return (byPage.size > 1 ? [`On ${url}:`, ...lines] : lines).join('\n')
+      return (
+        byPage.size > 1 || group.some((note) => note.source === 'browser') ? [`On ${url}:`, ...lines] : lines
+      ).join('\n')
     })
     .join('\n\n')
   return context.length ? `${summary}\n\nElement context:\n${context.join('\n\n')}` : summary

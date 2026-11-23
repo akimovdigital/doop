@@ -55,6 +55,14 @@ describe('public webpage URL validation', () => {
     await expect(assertPublicNetworkUrl('https://rebind.example/')).rejects.toThrow('not reachable')
   })
 
+  it('rejects even a mixed DNS answer containing a private address', async () => {
+    dnsMocks.lookup.mockResolvedValue([
+      { address: '93.184.216.34', family: 4 },
+      { address: 'fd00::1', family: 6 },
+    ])
+    await expect(assertPublicNetworkUrl('https://mixed.example/')).rejects.toThrow('not reachable')
+  })
+
   it('gives the network connector only the exact approved address', async () => {
     const lookup = createPinnedLookup('rebind.example', [{ address: '93.184.216.34', family: 4 }])
     const result = await new Promise<{ address: string; family?: number }>((resolve, reject) => {

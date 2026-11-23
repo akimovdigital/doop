@@ -1,3 +1,4 @@
+import { BrowseProxyError, loadBrowsePage } from './browseProxy.ts'
 import { browserFrameSchema } from '../shared/browserFrame.ts'
 import { env } from './env.ts'
 import {
@@ -1156,6 +1157,28 @@ app.use('/api/webhooks', webhooksRouter)
 app.use('/api/fonts', fontsRouter)
 app.use('/api/agents', customAgentsRouter)
 app.use('/api/skills', skillsRouter)
+
+app.get('/api/browse-proxy', async (req, res, next) => {
+  const { canvasId, url } = req.query
+  res.set('Cache-Control', 'private, no-store')
+  if (typeof canvasId !== 'string' || typeof url !== 'string') {
+    res.status(400).json({ error: 'canvasId and url are required' })
+    return
+  }
+  const fetchSite = req.get('Sec-Fetch-Site')
+  if (req.impersonatedBy || (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none')) {
+    res.status(403).json({ error: 'browser proxy requires a same-origin editor session' })
+    return
+  }
+  if (!requireCanvas(req, res, canvasId, 'edit')) return
+  try {
+    const page = await loadBrowsePage(url, env.BROWSE_PROXY_ALLOW_ORIGINS)
+    res.set(page.headers).send(page.body)
+  } catch (error) {
+    if (!(error instanceof BrowseProxyError)) return next(error)
+    res.status(error.status).json({ error: error.message })
+  }
+})
 
 /* the custom agents a canvas's team has: its workspace's, or its owner's (the
    automation editor asks for a step's canvas) */

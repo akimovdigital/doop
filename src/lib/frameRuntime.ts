@@ -10,8 +10,7 @@ import { CANVAS_MOD_CHORDS, SHORTCUT_KEYS_BY_CODE } from './keys'
  * elements are touched, so updates render in place with no white reload flash.
  * Works inside sandbox="allow-scripts" (no same-origin access needed).
  */
-export const FRAME_BOOTSTRAP = `<!doctype html>
-<html><head></head><body><script data-v-boot>
+export const FRAME_RUNTIME = `
 (function () {
   'use strict'
   ${FRAME_REPLAY_RUNTIME}
@@ -663,6 +662,7 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
      the person pressed into another). */
   var runtimePort = null
   var desktopShell = false
+  var browseMode = false
   var editorWindow = parent
   var readMessageSource = getter(MessageEvent.prototype, 'source')
   var readMessageData = getter(MessageEvent.prototype, 'data')
@@ -717,6 +717,7 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
     if (mod && !k.shiftKey && (letter === 'c' || letter === 'x')) return
     /* ⌫ and Delete are never relayed: the page removes what is selected on them */
     if (k.key === 'Backspace' || k.key === 'Delete') return
+    if (browseMode && type === 'keydown' && mod && k.shiftKey && k.code === 'KeyD') ev.preventDefault()
     var chord = (k.shiftKey ? 'shift+' : '') + letter
     /* Space would scroll this document while the page pans on it */
     if (type === 'keydown' && k.key === ' ' && !mod) ev.preventDefault()
@@ -2027,6 +2028,7 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
     if (d.type === 'doop:runtime-port' && !runtimePort && ev.ports && ev.ports[0]) {
       runtimePort = ev.ports[0]
       desktopShell = d.desktopShell === true
+      browseMode = d.browseMode === true
     }
     if (d.type === 'doop:inspect') {
       parent.postMessage({ type: 'doop:inspect-result', reqId: d.reqId, info: inspect(d.selector) }, '*')
@@ -2269,4 +2271,7 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
   }, true) // consume editor commands before any design listener can modify them
   parent.postMessage({ type: 'doop:frame-ready' }, '*')
 })()
-</script></body></html>`
+`
+
+export const FRAME_BOOTSTRAP = `<!doctype html>
+<html><head></head><body><script data-v-boot>${FRAME_RUNTIME}</script></body></html>`

@@ -46,6 +46,7 @@ for (const [network, prefix] of [
   ['2001::', 23],
   ['2001:db8::', 32],
   ['2002::', 16],
+  ['3fff::', 20],
   ['fc00::', 7],
   ['fe80::', 10],
   ['fec0::', 10],
@@ -54,23 +55,34 @@ for (const [network, prefix] of [
   blockedIpv6.addSubnet(network, prefix, 'ipv6')
 }
 
+const publicIpv6 = new net.BlockList()
+publicIpv6.addSubnet('2000::', 3, 'ipv6')
+
 function isPrivateIp(rawIp: string): boolean {
   const ip = rawIp.replace(/^\[|\]$/g, '')
   const family = net.isIP(ip)
   if (family === 0) return true
-  return family === 4 ? blockedIpv4.check(ip, 'ipv4') : blockedIpv6.check(ip, 'ipv6')
+  return family === 4 ? blockedIpv4.check(ip, 'ipv4') : !publicIpv6.check(ip, 'ipv6') || blockedIpv6.check(ip, 'ipv6')
 }
 
-/** Parse a fully-qualified public HTTP(S) URL without performing network I/O. */
-export function parsePublicHttpUrl(raw: string): URL {
+export class PublicNetworkUrlError extends Error {}
+
+function parseHttpUrl(raw: string): URL {
   let url: URL
   try {
     url = new URL(raw)
   } catch {
-    throw new Error('not a valid URL')
+    throw new PublicNetworkUrlError('not a valid URL')
   }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('only http(s) URLs are allowed')
-  if (url.username || url.password) throw new Error('URLs containing credentials are not allowed')
+  if (url.protocol !== 'http:' && url.protocol !== 'https:')
+    throw new PublicNetworkUrlError('only http(s) URLs are allowed')
+  if (url.username || url.password) throw new PublicNetworkUrlError('URLs containing credentials are not allowed')
+  return url
+}
+
+/** Parse a fully-qualified public HTTP(S) URL without performing network I/O. */
+export function parsePublicHttpUrl(raw: string): URL {
+  const url = parseHttpUrl(raw)
   const host = url.hostname.toLowerCase().replace(/\.$/, '')
   const ipHost = host.replace(/^\[|\]$/g, '')
   const isIp = net.isIP(ipHost) !== 0
@@ -82,7 +94,7 @@ export function parsePublicHttpUrl(raw: string): URL {
     (!isIp && !host.includes('.')) ||
     (isIp && isPrivateIp(ipHost))
   ) {
-    throw new Error('that host is not reachable from here')
+    throw new PublicNetworkUrlError('that host is not reachable from here')
   }
   return url
 }
@@ -101,21 +113,30 @@ export async function assertPublicNetworkUrl(raw: string | URL): Promise<URL> {
 
 /** Resolve and retain the approved addresses so the subsequent connection can
  * use exactly those IPs instead of performing a second, rebindable lookup. */
-async function resolvePublicNetworkUrl(raw: string | URL): Promise<ResolvedPublicUrl> {
-  const url = parsePublicHttpUrl(String(raw))
+async function resolvePublicNetworkUrl(
+  raw: string | URL,
+  allowedOrigins?: ReadonlySet<string>,
+): Promise<ResolvedPublicUrl> {
+  const target = parseHttpUrl(String(raw))
+  const allowPrivate = allowedOrigins?.has(target.origin) ?? false
+  const url = allowPrivate ? target : parsePublicHttpUrl(target.href)
   const host = url.hostname.replace(/^\[|\]$/g, '')
   const literalFamily = net.isIP(host)
   const addresses: PublicAddress[] = literalFamily
     ? [{ address: host, family: literalFamily as 4 | 6 }]
     : ((await dns.lookup(host, { all: true, verbatim: true })) as PublicAddress[])
-  if (addresses.length === 0 || addresses.some(({ address }) => isPrivateIp(address))) {
-    throw new Error('that host is not reachable from here')
+  if (addresses.length === 0 || (!allowPrivate && addresses.some(({ address }) => isPrivateIp(address)))) {
+    throw new PublicNetworkUrlError('that host is not reachable from here')
   }
   return { url, addresses }
 }
 
-export function createPinnedLookup(expectedHost: string, addresses: PublicAddress[]): LookupFunction {
-  if (!addresses.length || addresses.some(({ address }) => isPrivateIp(address))) {
+export function createPinnedLookup(
+  expectedHost: string,
+  addresses: PublicAddress[],
+  allowPrivate = false,
+): LookupFunction {
+  if (!addresses.length || (!allowPrivate && addresses.some(({ address }) => isPrivateIp(address)))) {
     throw new Error('cannot pin a non-public address')
   }
   return (hostname, options, callback) => {
@@ -141,9 +162,13 @@ export function createPinnedLookup(expectedHost: string, addresses: PublicAddres
 async function fetchResolvedPublicUrl(
   resolved: ResolvedPublicUrl,
   init: Omit<UndiciRequestInit, 'dispatcher'> = {},
+  allowPrivate = false,
 ): Promise<Response> {
+  init.signal?.throwIfAborted()
   const dispatcher = new Agent({
-    connect: { lookup: createPinnedLookup(resolved.url.hostname.replace(/^\[|\]$/g, ''), resolved.addresses) },
+    connect: {
+      lookup: createPinnedLookup(resolved.url.hostname.replace(/^\[|\]$/g, ''), resolved.addresses, allowPrivate),
+    },
     connections: 1,
     pipelining: 0,
   })
@@ -164,8 +189,14 @@ async function fetchResolvedPublicUrl(
 export async function fetchPinnedPublicUrl(
   raw: string | URL,
   init: Omit<UndiciRequestInit, 'dispatcher'> = {},
+  allowedOrigins?: ReadonlySet<string>,
 ): Promise<Response> {
-  return fetchResolvedPublicUrl(await resolvePublicNetworkUrl(raw), { ...init, redirect: init.redirect ?? 'manual' })
+  const resolved = await resolvePublicNetworkUrl(raw, allowedOrigins)
+  return fetchResolvedPublicUrl(
+    resolved,
+    { ...init, redirect: init.redirect ?? 'manual' },
+    allowedOrigins?.has(resolved.url.origin),
+  )
 }
 
 const MAX_BROWSER_RESOURCE_BYTES = 10_000_000

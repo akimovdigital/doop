@@ -6,11 +6,28 @@ import { Button } from './ui/button'
 import { Checkbox } from './ui/checkbox'
 import { Switch } from './ui/switch'
 import { IconButton } from './ui/icon-button'
-import { CheckIcon, ChevronDownIcon, MessageSquareIcon, PlusIcon, XIcon } from './ui/icons'
+import { CheckIcon, ChevronDownIcon, HotspotIcon, MessageSquareIcon, PlusIcon, XIcon } from './ui/icons'
 import { Textarea } from './ui/textarea'
 import type { useDesignMode } from './useDesignMode'
 
 type Mode = ReturnType<typeof useDesignMode>
+
+export function DesignModeToggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
+  const t = useT()
+  return (
+    <IconButton
+      size="sm"
+      aria-label={t('panels.designAnnotate')}
+      title={t('panels.designAnnotateShortcut')}
+      aria-pressed={enabled}
+      on={enabled}
+      data-design-toggle=""
+      onClick={onToggle}
+    >
+      <HotspotIcon size="rail" />
+    </IconButton>
+  )
+}
 
 export function DesignModeControls({ mode }: { mode: Mode }) {
   const t = useT()
@@ -105,7 +122,9 @@ function useSurface(viewportRef: RefObject<HTMLDivElement>, screen: number, revi
   const [surface, setSurface] = useState<Surface>()
   useLayoutEffect(() => {
     const viewport = viewportRef.current
-    const iframe = viewport?.querySelector<HTMLIFrameElement>(`[data-proto-entry="${screen}"] iframe`)
+    const iframe = viewport?.querySelector<HTMLIFrameElement>(
+      `[data-proto-entry="${screen}"] iframe, iframe[data-design-screen="${screen}"]`,
+    )
     if (!viewport || !iframe) return
     function measure() {
       const parent = viewport!.getBoundingClientRect()
@@ -152,7 +171,6 @@ const shell = 'rounded-control border border-line bg-surface text-ink shadow-pop
 
 export function DesignModeOverlay({
   mode,
-  frameId,
   screen,
   revision,
   viewportRef,
@@ -283,35 +301,33 @@ export function DesignModeOverlay({
             />
           )}
           {picking &&
-            mode.saved.notes
-              .filter((note) => note.frameId === frameId && note.status !== 'resolved')
-              .map((note) => {
-                const pin = mode.pins[note.id]
-                const rect = pin?.rect ?? note.lastRect ?? note.elements[0]?.rect ?? note.region
-                if (!rect) return null
-                const { left, top, width } = box(rect, surface)
-                const title = t('panels.designPin', { number: note.number })
-                return (
-                  <IconButton
-                    key={note.id}
-                    data-design-pin={note.number}
-                    data-status={note.status}
-                    size="sm"
-                    shape="round"
-                    aria-label={title}
-                    title={pin?.missing ? `${title} · ${t('panels.designMissing')}` : title}
-                    disabled={mode.busy}
-                    className={cn(
-                      'pointer-events-auto absolute z-10 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white bg-brand text-micro font-semibold text-white hover:bg-brand/90 hover:text-white',
-                      (note.status === 'sent' || pin?.missing) && 'opacity-55',
-                    )}
-                    style={{ left: left + width, top }}
-                    onClick={() => mode.openNote(note)}
-                  >
-                    {note.number}
-                  </IconButton>
-                )
-              })}
+            mode.pageNotes.map((note) => {
+              const pin = mode.pins[note.id]
+              const rect = pin?.rect ?? note.lastRect ?? note.elements[0]?.rect ?? note.region
+              if (!rect) return null
+              const { left, top, width } = box(rect, surface)
+              const title = t('panels.designPin', { number: note.number })
+              return (
+                <IconButton
+                  key={note.id}
+                  data-design-pin={note.number}
+                  data-status={note.status}
+                  size="sm"
+                  shape="round"
+                  aria-label={title}
+                  title={pin?.missing ? `${title} · ${t('panels.designMissing')}` : title}
+                  disabled={mode.busy}
+                  className={cn(
+                    'pointer-events-auto absolute z-10 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white bg-brand text-micro font-semibold text-white hover:bg-brand/90 hover:text-white',
+                    (note.status === 'sent' || pin?.missing) && 'opacity-55',
+                  )}
+                  style={{ left: left + width, top }}
+                  onClick={() => mode.openNote(note)}
+                >
+                  {note.number}
+                </IconButton>
+              )
+            })}
         </>
       )}
       {cardOpen && draft && (

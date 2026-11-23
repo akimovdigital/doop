@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CardScope, Frame } from '../../shared/types'
 import type { ComponentDef } from '../../shared/components'
 import { askFrameWindow } from '../lib/frameBridge'
@@ -63,6 +63,7 @@ export function useDesignMode({
   screenKey,
   documentRevision,
   pageUrl,
+  source,
   components,
   getWindow,
   onDraft,
@@ -76,14 +77,19 @@ export function useDesignMode({
   screenKey: number
   documentRevision: number
   pageUrl: string
+  source?: DesignNote['source']
   components?: ComponentDef[]
   getWindow: () => Window | undefined
   onDraft: (target: PreviewComposerTarget) => void
-  onNavigate: (frameId: string) => void
+  onNavigate: (frameId: string, pageUrl: string) => void
   onEnter?: () => void
 }) {
   const allowed = !!canvasId && canEdit
-  const saved = useSyncExternalStore(subscribe, () => (allowed ? savedFor(canvasId) : emptyDesignNotes))
+  const stored = useSyncExternalStore(subscribe, () => (allowed ? savedFor(canvasId) : emptyDesignNotes))
+  const saved = useMemo(
+    () => ({ ...stored, notes: stored.notes.filter((note) => note.source === source) }),
+    [stored, source],
+  )
   const [active, setActive] = useState(false)
   const [usingPage, setUsingPage] = useState(false)
   const [queueOpen, setQueueOpen] = useState(false)
@@ -102,6 +108,14 @@ export function useDesignMode({
   )
   const enabled = allowed && active
   const frameId = frame?.id
+  const pageNotes = useMemo(
+    () =>
+      saved.notes.filter(
+        (note) =>
+          (source === 'browser' ? note.pageUrl === pageUrl : note.frameId === frameId) && note.status !== 'resolved',
+      ),
+    [saved.notes, source, pageUrl, frameId],
+  )
   const pendingCount = saved.notes.filter((note) => note.status === 'pending').length
 
   const dispatch = (action: DesignNotesAction) => {
@@ -207,6 +221,7 @@ export function useDesignMode({
       frameId: frame!.id,
       frameName: frame!.name,
       pageUrl,
+      ...(source ? { source } : {}),
       number: 1,
       status: 'pending',
       createdAt: Date.now(),
@@ -298,7 +313,8 @@ export function useDesignMode({
     if (!allowed || busy) return
     enter()
     setQueueOpen(false)
-    if (note.frameId !== frameId) onNavigate(note.frameId)
+    if (source === 'browser' ? note.pageUrl !== pageUrl : note.frameId !== frameId)
+      onNavigate(note.frameId, note.pageUrl)
     setDraft({ id: note.id, comment: note.comment, elements: note.elements, region: note.region })
   }
 
@@ -349,11 +365,11 @@ export function useDesignMode({
   }
 
   async function sendPending() {
-    const notes = savedFor(canvasId).notes.filter((note) => note.status === 'pending')
+    const notes = saved.notes.filter((note) => note.status === 'pending')
     if (await sendNotes(notes)) exit()
   }
 
-  const watching = allowed && saved.notes.some((note) => note.frameId === frameId && note.status !== 'resolved')
+  const watching = allowed && pageNotes.length > 0
   useEffect(() => {
     const win = getWindow()
     if (!win || !watching) return
@@ -368,9 +384,8 @@ export function useDesignMode({
     if (!win || !watching || !canvasId) return
     let cancelled = false
     let saveTimer: number | undefined
-    const notes = saved.notes.filter((n) => n.frameId === frameId && n.status !== 'resolved')
     void Promise.all(
-      notes.map(async (note) => {
+      pageNotes.map(async (note) => {
         const first = note.elements[0]
         const last = lastRects.current.get(note.id) ?? note.lastRect ?? first?.rect ?? note.region
         if (!first || !last) return [note.id, last && { rect: last, missing: false }] as const
@@ -404,10 +419,39 @@ export function useDesignMode({
       cancelled = true
       window.clearTimeout(saveTimer)
     }
-  }, [screenKey, documentRevision, frameId, watching, saved.notes, windowRevision, getWindow, canvasId])
+  }, [screenKey, documentRevision, watching, pageNotes, windowRevision, getWindow, canvasId])
+
+  function handleKey(event: KeyboardEvent, target: Element | null) {
+    if (!allowed) return false
+    const field = target?.closest('[data-design-note-field]')
+    if (field && draft && !event.isComposing) {
+      if (event.metaKey && !event.shiftKey && event.key.toLowerCase() === 'l') {
+        draftToChat(draft)
+        return true
+      }
+      if (event.key === 'Enter' && !event.shiftKey) {
+        if (!event.repeat) void submit()
+        return true
+      }
+    }
+    if (!enabled) return false
+    if (event.code === 'Space' && !event.isComposing && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      if (target?.closest('input,textarea,select,button,[contenteditable],[role="switch"]')) return false
+      if (!event.repeat) holdPage()
+      return true
+    }
+    if (usingPage || field || target?.closest('[data-preview-toolbar],[data-design-card]')) return false
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      void moveHighlight(event.key === 'ArrowUp' ? 'parent' : 'child')
+      return true
+    }
+    return false
+  }
 
   return {
     enabled,
+    pageNotes,
+    handleKey,
     usingPage: enabled && usingPage,
     holdPage,
     releasePage,
@@ -443,7 +487,8 @@ export function useDesignMode({
     refreshPins,
     setComment: (comment: string) => setDraft((value) => value && { ...value, comment }),
     setBatch: (batch: boolean) => changeSaved(canvasId!, (prev) => ({ ...prev, batch })),
-    clearPending: () => dispatch({ type: 'clear' }),
+    clearPending: () =>
+      dispatch({ type: 'remove', ids: saved.notes.filter((note) => note.status === 'pending').map((note) => note.id) }),
     resolve: (id: string) => dispatch({ type: 'update', id, changes: { status: 'resolved', resolvedAt: Date.now() } }),
   }
 }
