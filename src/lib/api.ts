@@ -821,8 +821,8 @@ export const api = {
     ),
   sendTaskFeedback: (taskId: string, text: string) =>
     req(`/api/tasks/${taskId}/feedback`, { method: 'POST', body: JSON.stringify({ text, from: getIdentity().name }) }),
-  importPage: (canvasId: string, url: string) =>
-    req<Frame>(`/api/canvases/${canvasId}/import`, { method: 'POST', body: JSON.stringify({ url }) }),
+  importPage: (canvasId: string, url: string, placement?: { x: number; y: number; pageId: string }) =>
+    req<Frame>(`/api/canvases/${canvasId}/import`, { method: 'POST', body: JSON.stringify({ url, placement }) }),
   discoverSitePages: (canvasId: string, url: string) =>
     req<DiscoveredSite>(`/api/canvases/${canvasId}/import/discover`, {
       method: 'POST',

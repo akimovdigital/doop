@@ -74,7 +74,7 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
   var cursorRule = ''
   function applyCursor() {
     if (!vCursorSheet) return
-    var on = !!canvasCursor && !editing
+    var on = !!canvasCursor && !editing && !protoCanvas
     /* a rule on every element restyles the whole document, so only when the
        cursor or whether it applies actually changes */
     if (on && cursorRule !== canvasCursor) {
@@ -742,7 +742,7 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
      key event itself, so relay it (present mode closes on it) */
   document.addEventListener('keydown', function (ev) {
     if (ev.key !== 'Escape') return
-    if (protoOn && ev.defaultPrevented) return // the design's own script took it
+    if (protoOn && !protoCanvas && ev.defaultPrevented) return // the design's own script took it
     if (editing) {
       setEdit(false)
       parent.postMessage({ type: 'doop:edit-esc' }, '*')
@@ -2162,6 +2162,13 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
     }
     if (d.type === 'doop:select') {
       parent.postMessage({ type: 'doop:select-result', reqId: d.reqId, hit: describe(d.selector) }, '*')
+    }
+    if (d.type === 'doop:capture-metrics') {
+      parent.postMessage({
+        type: 'doop:capture-metrics-result', reqId: d.reqId,
+        height: document.scrollingElement ? document.scrollingElement.scrollHeight : innerHeight,
+        scrollX: scrollX, scrollY: scrollY
+      }, '*')
     }
     if (d.type === 'doop:snapshot') {
       /* the document as it stands, script-made elements included, for an

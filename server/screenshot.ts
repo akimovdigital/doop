@@ -1,10 +1,12 @@
-import { browserReferenceHtml } from '../shared/browserFrame.ts'
+import { fullFrameRenderScale, MAX_EXPORT_SIDE } from '../shared/exportScale.ts'
+import { navigateWebsitePage } from './websiteAccess.ts'
+import { browserReferenceHtml, browserViewport } from '../shared/browserFrame.ts'
 import { env, windowsBrowserDirectories } from './env.ts'
 import fs from 'node:fs'
 import path from 'node:path'
 import puppeteer, { type Browser, type Page } from 'puppeteer-core'
 import type { Frame } from '../shared/types.ts'
-import { guardPublicPageRequests } from './publicUrl.ts'
+import { assertPublicNetworkUrl, guardPublicPageRequests } from './publicUrl.ts'
 import { withHostedIcons } from './iconProxy.ts'
 import { withHostedPhotos } from './photoProxy.ts'
 import { renderedHeight } from './renderLimits.ts'
@@ -684,6 +686,39 @@ export function renderFrame(
     },
     { priority: opts.priority },
   )
+}
+
+/** Capture the frame viewport, or its scrollable document at the original
+ * viewport size, without changing the ordinary static export of Browser frames. */
+export async function captureFramePng(
+  frame: Frame,
+  area: 'visible' | 'full',
+  scroll: { x: number; y: number },
+): Promise<Buffer> {
+  const source = frame.browser ? await assertPublicNetworkUrl(frame.browser.url) : undefined
+  return renderer.withPage('capturing the frame', RENDER_TIMEOUT_MS, async (page) => {
+    const size = frame.browser ? browserViewport(frame.width, frame.height, frame.browser.zoom) : frame
+    const width = Math.max(1, Math.min(MAX_EXPORT_SIDE, Math.round(size.width)))
+    const height = Math.max(1, Math.min(MAX_EXPORT_SIDE, Math.round(size.height)))
+    const viewport = { width, height }
+    if (source) {
+      await guardPublicPageRequests(page)
+      await page.setViewport(viewport)
+      await navigateWebsitePage(page, source.href, { waitUntil: 'networkidle2', timeout: 25_000 })
+    } else {
+      await loadFrameInto(page, { ...frame, ...viewport }, 1)
+    }
+    await settleCanvasSnapshot(page)
+    if (area === 'visible') {
+      const deviceScaleFactor = fullFrameRenderScale(viewport, 1)
+      if (deviceScaleFactor !== 1) await page.setViewport({ ...viewport, deviceScaleFactor })
+      await page.evaluate(({ x, y }) => window.scrollTo({ left: x, top: y, behavior: 'instant' }), scroll)
+      return Buffer.from(await page.screenshot({ type: 'png' }))
+    }
+    const pageHeight = await page.evaluate(() => Math.max(innerHeight, document.scrollingElement?.scrollHeight ?? 0))
+    const clipHeight = renderedHeight({ width, height: pageHeight }, 1, MAX_EXPORT_SIDE)
+    return Buffer.from(await page.screenshot({ type: 'png', clip: { x: 0, y: 0, width, height: clipHeight } }))
+  })
 }
 
 /** Give images throughout the full viewport a chance to decode. Capture a

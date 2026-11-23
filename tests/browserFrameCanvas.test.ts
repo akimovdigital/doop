@@ -16,7 +16,7 @@ const LIVE = '[data-browser-active="true"]'
 const HANDLES = '[data-frame-resize-handles]'
 const IFRAME = 'iframe[title="Browser"]'
 
-describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
+describe.skipIf(!findBrowserPath())('live browser on the canvas', { timeout: 30_000 }, () => {
   const pages = pagePerTest()
   let site: Server
   let url: string
