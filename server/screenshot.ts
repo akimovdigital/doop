@@ -1,3 +1,4 @@
+import { browserReferenceHtml } from '../shared/browserFrame.ts'
 import { env, windowsBrowserDirectories } from './env.ts'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -187,7 +188,11 @@ async function loadFrameInto(page: Page, frame: Frame, snapshotScale?: number): 
      asset URLs of imported frames resolve nowhere. In the app an iframe
      inherits the page origin; here a <base> stands in for it — unless the
      frame brought its own (website imports do). */
-  let html = withHostedPhotos(withHostedIcons(frame.html || '<!doctype html><html><body></body></html>'))
+  let html = withHostedPhotos(
+    withHostedIcons(
+      (frame.browser ? browserReferenceHtml(frame.browser) : frame.html) || '<!doctype html><html><body></body></html>',
+    ),
+  )
   if (!/<base\s/i.test(html)) {
     const baseTag = `<base href="${assetOrigin.replace(/"/g, '&quot;')}/">`
     html = /<head[^>]*>/i.test(html) ? html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`) : baseTag + html

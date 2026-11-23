@@ -6,7 +6,7 @@ import type { PlainMessageKey } from './i18n'
 import { isTypingTarget, shortcutKey } from './keys'
 
 export type DrawingTool = 'rectangle' | 'circle' | 'path' | 'text' | 'frame'
-export type Tool = 'select' | 'hand' | 'zoom' | 'comment' | 'section' | DrawingTool
+export type Tool = 'select' | 'hand' | 'zoom' | 'comment' | 'section' | 'browser' | DrawingTool
 
 export function isDrawingTool(tool: Tool): tool is DrawingTool {
   return tool === 'rectangle' || tool === 'circle' || tool === 'path' || tool === 'text' || tool === 'frame'
@@ -16,6 +16,7 @@ export function isDrawingTool(tool: Tool): tool is DrawingTool {
 export const TOOLS: { id: Tool; label: PlainMessageKey; key: string }[] = [
   { id: 'select', label: 'canvas.toolSelect', key: 'V' },
   { id: 'hand', label: 'canvas.toolHand', key: 'H' },
+  { id: 'browser', label: 'canvas.toolBrowser', key: 'B' },
   { id: 'frame', label: 'canvas.toolFrame', key: 'F' },
   { id: 'section', label: 'canvas.toolSection', key: '⇧S' },
   { id: 'rectangle', label: 'canvas.toolRectangle', key: 'R' },
@@ -42,6 +43,7 @@ export type PointerAction =
   | 'zoom'
   /** draw an element, on the background or inside a frame */
   | 'draw'
+  | 'browser-place'
   /** nothing — the press is not ours */
   | 'none'
 
@@ -63,6 +65,7 @@ export function resolvePointerAction({ tool, target, button, pointerType, spaceH
   if (tool === 'zoom') return 'zoom'
   if (isDrawingTool(tool)) return 'draw'
   if (tool === 'section') return 'none'
+  if (tool === 'browser') return 'browser-place'
   /* a finger on the background pans: touch has no space bar, and one-finger
      pan is how phones move around. The Comment tool is the exception — a tap
      is how a phone places a comment; the stage still pans a finger that

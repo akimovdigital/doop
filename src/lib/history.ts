@@ -15,11 +15,26 @@ import { posthog } from './posthog'
  *  remote actors' work is never undone from here. */
 
 type Patch = Partial<
-  Pick<Frame, 'name' | 'pageId' | 'html' | 'x' | 'y' | 'width' | 'height' | 'hidden' | 'locked' | 'z' | 'rotation'>
+  Pick<
+    Frame,
+    'name' | 'pageId' | 'html' | 'x' | 'y' | 'width' | 'height' | 'hidden' | 'locked' | 'z' | 'rotation' | 'browser'
+  >
 >
 type Snapshot = Pick<
   Frame,
-  'canvasId' | 'pageId' | 'name' | 'html' | 'x' | 'y' | 'width' | 'height' | 'hidden' | 'locked' | 'z' | 'rotation'
+  | 'canvasId'
+  | 'pageId'
+  | 'name'
+  | 'html'
+  | 'x'
+  | 'y'
+  | 'width'
+  | 'height'
+  | 'hidden'
+  | 'locked'
+  | 'z'
+  | 'rotation'
+  | 'browser'
 >
 
 type Entry =
@@ -117,6 +132,7 @@ function snapshot(f: Frame): Snapshot {
     hidden: f.hidden,
     locked: f.locked,
     rotation: f.rotation,
+    browser: f.browser,
     /* and back to its place in the stack */
     z: stackOf(f),
   }

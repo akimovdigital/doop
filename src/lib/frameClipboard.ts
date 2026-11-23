@@ -19,6 +19,7 @@ interface ClipFrame {
   height: number
   /** degrees clockwise about the centre, when the copied frame was turned */
   rotation?: number
+  browser?: Frame['browser']
 }
 
 interface FrameClip {
@@ -38,6 +39,7 @@ export function copyFrames(frames: Frame[]) {
       width: f.width,
       height: f.height,
       ...(f.rotation ? { rotation: f.rotation } : {}),
+      ...(f.browser ? { browser: f.browser } : {}),
     })),
   }
   localStorage.setItem(CLIP_KEY, JSON.stringify(clip))
@@ -101,6 +103,7 @@ function createFromClip(canvasId: string, x: number, y: number) {
         x: Math.round(x + f.x),
         y: Math.round(y + f.y),
         ...(f.rotation ? { rotation: f.rotation } : {}),
+        ...(f.browser ? { browser: f.browser } : {}),
       },
     })),
   ).then((created) => {
@@ -423,6 +426,7 @@ export function duplicateFrames(frames: Frame[]) {
         width: frame.width,
         height: frame.height,
         ...(frame.rotation ? { rotation: frame.rotation } : {}),
+        ...(frame.browser ? { browser: frame.browser } : {}),
       },
     })),
   ).then((created) => {
@@ -472,6 +476,7 @@ export function replaceFramesWithClip(canvasId: string, targets: Frame[]): boole
             x: Math.round(target.x + f.x),
             y: Math.round(target.y + f.y),
             ...(f.rotation ? { rotation: f.rotation } : {}),
+            ...(f.browser ? { browser: f.browser } : {}),
           }),
         ),
       )

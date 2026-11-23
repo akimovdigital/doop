@@ -1280,3 +1280,154 @@ body[data-panel-resizing] * {
     animation: none !important;
   }
 }
+
+/* Live browser frames keep one iframe in the frame stack. A manual popover
+   or modal promotes the same surface to the top layer. */
+:root {
+  --browser-side-width: clamp(min(180px, 100vw), 42vw, 560px);
+}
+
+.browser-chrome {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+  padding-inline: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.browser-canvas-bar {
+  position: absolute;
+  inset: auto 0 calc(100% + 3px);
+}
+
+.browser-address:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--brand) 40%, transparent);
+  outline-offset: -1px;
+}
+
+.browser-surface {
+  /* Override the UA display:none for closed popovers. The inline surface is
+     the same node and browsing context as the promoted surface. */
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background: transparent;
+  color: var(--ink);
+}
+
+.browser-surface:is(:popover-open, :modal) {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+  background: var(--paper);
+  transform-origin: top left;
+}
+
+.browser-surface[data-browser-surface='side']:popover-open {
+  inset: 0 0 0 auto;
+  width: var(--browser-side-width);
+  min-width: min(180px, 100vw);
+  border-left: 1px solid var(--line);
+}
+
+.browser-surface:modal {
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+}
+
+.browser-overlay-bar {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--paper);
+}
+
+.browser-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.browser-surface:is(:popover-open, :modal) .browser-viewport {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  place-items: center;
+  background: var(--paper-deep);
+}
+
+.browser-hover:hover {
+  box-shadow: 0 0 0 calc(1px / var(--zoom, 1)) color-mix(in srgb, var(--brand) 55%, transparent);
+}
+
+.browser-selected {
+  box-shadow: 0 0 0 calc(1px / var(--zoom, 1)) var(--brand);
+}
+
+.browser-live {
+  box-shadow:
+    0 0 0 calc(2px / var(--zoom, 1)) var(--brand),
+    0 0 0 calc(5px / var(--zoom, 1)) color-mix(in srgb, var(--brand) 22%, transparent);
+}
+
+.browser-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--ink-soft);
+  font-size: var(--text-body);
+  text-align: center;
+  pointer-events: none;
+}
+
+.browser-progress {
+  position: absolute;
+  inset: auto 12px -1px;
+  height: 1px;
+  background: var(--brand);
+  transform-origin: left;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .browser-progress {
+    animation: browser-progress 1.2s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes browser-progress {
+  from {
+    transform: scaleX(0.1);
+    opacity: 0.5;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+.browser-surface::backdrop {
+  background: var(--paper);
+}

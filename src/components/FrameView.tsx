@@ -1,3 +1,4 @@
+import { BrowserFrame } from './BrowserFrame'
 import {
   memo,
   useCallback,
@@ -440,7 +441,7 @@ export const FrameView = memo(function FrameView({
   /* after exiting edit mode, hold renders until the final serialized HTML
      lands in the store — otherwise a stale post would morph the edit away */
   const [suspendPost, setSuspendPost] = useState(false)
-  const mountRuntime = loadDocument || standalone || !!stream
+  const mountRuntime = !frame.browser && (loadDocument || standalone || !!stream)
 
   /* one throttle per frame, so a group drag broadcasts every member —
      a single throttle would keep only the last frame written each tick */
@@ -663,6 +664,7 @@ export const FrameView = memo(function FrameView({
         return
       }
       if (Math.abs(ev.clientX - start.x) + Math.abs(ev.clientY - start.y) > 4) moved = true
+      if (frame.browser && mode === 'move' && !moved) return
       if (standaloneMove && moved) setShapeMoving(true)
       last = { x: ev.clientX, y: ev.clientY }
       if (duplicating && moved && !dupDropped) {
@@ -671,7 +673,13 @@ export const FrameView = memo(function FrameView({
           const src = frames.find((f) => f.id === g.id)
           if (!src) continue
           api
-            .createFrame(src.canvasId, { name: src.name, html: src.html, rotation: src.rotation, ...g.orig })
+            .createFrame(src.canvasId, {
+              name: src.name,
+              html: src.html,
+              rotation: src.rotation,
+              browser: src.browser,
+              ...g.orig,
+            })
             .then((f) => {
               /* a gesture called off takes its copy back, however late the
                  copy arrives; one that finished keeps it, as an undo step */
@@ -1832,6 +1840,20 @@ export const FrameView = memo(function FrameView({
     watch.observe(stage, { attributes: true, attributeFilter: ['class'] })
     return () => watch.disconnect()
   }, [runtimeReady])
+
+  if (frame.browser) {
+    return (
+      <BrowserFrame
+        frame={{ ...frame, browser: frame.browser }}
+        stack={stack}
+        layoutZoom={layoutZoom}
+        loadDocument={loadDocument}
+        onDrag={(event) => startDrag(event, 'move')}
+        onResize={(event, handle) => startDrag(event, 'resize', false, false, false, handle)}
+        onRotate={startRotate}
+      />
+    )
+  }
 
   return (
     <ContextMenu

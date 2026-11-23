@@ -1,3 +1,5 @@
+import { Globe } from 'lucide-react'
+import { createBrowserFrame, useBrowserUi } from '../lib/browserFrames'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { roleOf, toolAllowed, useStore, type Viewport } from '../lib/store'
 import { usePaper, type Paper } from '../lib/paper'
@@ -197,6 +199,7 @@ const TOOL_ICONS: Record<Tool, React.ReactNode> = {
   path: <VectorIcon />,
   text: <TextIcon />,
   frame: <FrameIcon />,
+  browser: <Globe size={16} />,
   section: <SectionIcon />,
 }
 
@@ -845,7 +848,11 @@ export function Stage({
 
     function onWheel(e: WheelEvent) {
       /* let overlays with their own scrollbar scroll instead of panning */
-      if ((e.target as Element | null)?.closest('[data-stage-scroll]')) return
+      if (
+        useBrowserUi.getState().surface?.mode === 'present' ||
+        (e.target as Element | null)?.closest('[data-stage-scroll]')
+      )
+        return
       e.preventDefault()
       if (e.ctrlKey || e.metaKey) {
         const now = performance.now()
@@ -1056,6 +1063,7 @@ export function Stage({
       if (shortcutKey(e) === 'z') release()
     }
     function onKey(e: KeyboardEvent) {
+      if (useBrowserUi.getState().surface?.mode === 'present') return
       if (e.key === 'Escape') {
         if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return
         if (isTypingTarget(e.target) && !e.target.closest('[data-comment-ui], [data-drawing-input]')) return
@@ -1063,7 +1071,7 @@ export function Stage({
         return
       }
       const next = toolForShortcut(e)
-      if (!next) return
+      if (!next || !toolAllowed(next, roleOf(useStore.getState()))) return
       e.preventDefault()
       const previous = useStore.getState().tool
       if (next === 'zoom') zoomHeld.current ??= { previous }
@@ -1112,6 +1120,14 @@ export function Stage({
     })
     /* a press on a frame only reaches the stage when the frame let it through
        (Hand, space held) — anything but a pan on it is the frame's own business */
+    if (action === 'browser-place') {
+      e.preventDefault()
+      e.stopPropagation()
+      const { x, y } = toWorld(e.clientX, e.clientY)
+      s.setTool('select')
+      void createBrowserFrame({ x: Math.round(x), y: Math.round(y) })
+      return
+    }
     if (action === 'pan') return startPan(e, isBackground)
     if (action === 'marquee') startMarquee(e)
     if (action === 'zoom') startZoom(e)
@@ -1349,7 +1365,7 @@ export function Stage({
                     ? ZOOM_CURSOR[altHeld ? 'out' : 'in']
                     : tool === 'comment'
                       ? COMMENT_CURSOR
-                      : tool === 'section'
+                      : tool === 'section' || tool === 'browser'
                         ? 'cursor-crosshair! [&_*]:cursor-crosshair!'
                         : isDrawingTool(tool)
                           ? tool === 'text'
@@ -1489,9 +1505,9 @@ export function Stage({
               /* same 36px pill as the title and Import/Export bar, not the
                  38px toolbar that came from 5px padding and a 12px radius */
               'h-9 rounded-[10px] px-1 py-0',
-              /* the Section tool is one more phone button; a 1px gap keeps the
-                 whole strip inside a 390px screen, where 2px gaps spill 1.5px */
-              'max-sm:gap-px',
+              /* Nine tools plus Comment share the mobile strip. Keep the
+                 touch height and give each button a share of the width. */
+              'max-sm:gap-px max-sm:[&_[data-slot=toolbar-button]]:min-w-[clamp(26px,calc((100vw_-_30px)/10),40px)]',
             )}
           >
             {/* one fill slides between tools; the buttons themselves stay
@@ -1682,7 +1698,7 @@ function FrameStack({
   return (
     <div ref={layer} className="absolute top-0 left-0 isolate">
       {mounted.map((f) =>
-        f.hidden ? (
+        f.hidden && !f.browser ? (
           <HiddenFrameView key={f.id} frame={f} stack={rank.get(f.id)} />
         ) : (
           <FrameView

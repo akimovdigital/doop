@@ -6,6 +6,8 @@ import type { AgentRole } from './agents.ts'
 import type { DesignToken } from './designTokens.ts'
 import type { RunnerPick } from './agentRunner.ts'
 
+import type { BrowserFrameData } from './browserFrame.ts'
+
 export interface Frame {
   id: string
   canvasId: string
@@ -17,6 +19,7 @@ export interface Frame {
   width: number
   height: number
   html: string
+  browser?: BrowserFrameData
   createdAt: number
   updatedAt: number
   updatedBy: string

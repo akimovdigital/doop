@@ -104,7 +104,7 @@ const notice = (text: string) => useStore.getState().pushNotice(text)
 
 /* ---- frames: moved, turned, rounded as one undo step ---- */
 
-type FramePatch = Partial<Pick<Frame, 'x' | 'y' | 'width' | 'height' | 'rotation'>>
+type FramePatch = Partial<Pick<Frame, 'x' | 'y' | 'width' | 'height' | 'rotation' | 'browser'>>
 
 /** Patch several frames as one undo step and one save each. */
 export function patchFrames(changes: { frame: Frame; patch: FramePatch }[]) {

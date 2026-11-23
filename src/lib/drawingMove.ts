@@ -60,6 +60,7 @@ export function drawingDropFrame(point: Point, sourceId?: string): Frame | null 
       (f) =>
         f.id !== sourceId &&
         !f.hidden &&
+        !f.browser &&
         !isCanvasElement(f.html) &&
         point.x >= f.x &&
         point.y >= f.y &&
@@ -155,6 +156,7 @@ export function moveDrawing(
       (!target ||
         target.locked ||
         target.hidden ||
+        target.browser ||
         isCanvasElement(target.html) ||
         framePageId(canvas, target) !== pageId)
     ) {

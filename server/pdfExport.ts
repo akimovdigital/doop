@@ -1,3 +1,4 @@
+import { browserReferenceHtml } from '../shared/browserFrame.ts'
 import { PDFDocument } from 'pdf-lib'
 import type { Canvas, Frame } from '../shared/types.ts'
 import { readingOrder } from '../shared/frameOrder.ts'
@@ -65,10 +66,11 @@ function escapeAttribute(value: string): string {
  * units at the frame's size. Relative URLs resolve against the shell's
  * `<base>`, which a srcdoc document inherits.
  */
-function printShell(frame: Pick<Frame, 'width' | 'height' | 'html'>): string {
+function printShell(frame: Pick<Frame, 'width' | 'height' | 'html' | 'browser'>): string {
   const width = Math.max(1, Math.round(frame.width))
   const height = Math.max(1, Math.round(frame.height))
-  const html = frame.html || '<!doctype html><html><body></body></html>'
+  const html =
+    (frame.browser ? browserReferenceHtml(frame.browser) : frame.html) || '<!doctype html><html><body></body></html>'
   return (
     '<!doctype html><html><head><style>html,body{margin:0;overflow:hidden}' +
     `iframe{display:block;border:0;width:${width}px;height:${height}px}</style></head>` +

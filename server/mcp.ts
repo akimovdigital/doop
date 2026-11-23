@@ -356,6 +356,7 @@ function frameSummary(
     hidden?: boolean
     locked?: boolean
     rotation?: number
+    browser?: Frame['browser']
     approval?: FrameApproval | null
   },
   images?: FrameImage[],
@@ -378,6 +379,7 @@ function frameSummary(
     updatedBy: f.updatedBy,
     ...(images?.length ? { images } : {}),
     htmlBytes: f.html.length,
+    ...(f.browser ? { browser: f.browser } : {}),
     /* public render of the CURRENT design — downloadable/hotlinkable
        (append &download, or .jpg?quality=90 for JPEG) */
     image_url: `${env.BETTER_AUTH_URL}/i/${f.id}.png?scale=2`,
@@ -2575,6 +2577,10 @@ export function buildMcpServer(owner?: string, ownerId?: string, clientName?: st
         "Update frame metadata in one call: rename it (name), move it on its page (x, y), resize it (width, height), turn it (rotation: degrees clockwise about its centre; 0 straightens it), or move it to another page (pageId from get_canvas; it keeps its x/y unless you pass new ones and lands in front of that page's frames). Set locked to true to lock the frame on the canvas (humans cannot select, move, resize or delete it from the stage until it is unlocked) or false to unlock it.",
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: {
+        browser: z
+          .object({ url: z.string().max(8192) })
+          .optional()
+          .describe('Navigate a Browser frame'),
         frame_id: z.string(),
         pageId: z.string().optional(),
         name: z.string().optional(),

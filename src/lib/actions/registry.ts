@@ -1,3 +1,4 @@
+import { createBrowserFrame, openBrowserSurface, reloadBrowser, selectedBrowser } from '../browserFrames'
 /* Every command the canvas editor offers, in one list: the keyboard handler,
    the ⌘K palette, the main menu and the shortcuts sheet all read it, so a
    command, its name and its chord are written once. The canvas page lends
@@ -659,6 +660,49 @@ export const ACTIONS: readonly CanvasAction[] = [
     section: 4,
     keys: [mod('Enter', { alt: true })],
     run: () => h()?.present(),
+  },
+
+  {
+    id: 'new-browser',
+    menu: 'view',
+    section: 4,
+    label: 'canvas.browserNew',
+    edit: true,
+    run: () => void createBrowserFrame(),
+  },
+  {
+    id: 'present-browser',
+    menu: 'view',
+    section: 4,
+    label: 'canvas.browserPresent',
+    keys: [mod('p', { code: 'KeyP' })],
+    enabled: () => !!selectedBrowser(),
+    run: () => {
+      const frame = selectedBrowser()
+      if (frame) openBrowserSurface(frame, 'present')
+    },
+  },
+  {
+    id: 'reload-browser',
+    menu: 'view',
+    section: 4,
+    label: 'canvas.browserReload',
+    enabled: () => !!selectedBrowser()?.browser?.url,
+    run: () => {
+      const frame = selectedBrowser()
+      if (frame) reloadBrowser(frame.id)
+    },
+  },
+  {
+    id: 'side-browser',
+    menu: 'view',
+    section: 4,
+    label: 'canvas.browserSidePanel',
+    enabled: () => !!selectedBrowser(),
+    run: () => {
+      const frame = selectedBrowser()
+      if (frame) openBrowserSurface(frame, 'side')
+    },
   },
 
   /* ---- Object ---- */
