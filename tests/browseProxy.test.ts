@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { loadBrowsePage } from '../server/browseProxy'
+import { browseSessionToken, loadBrowsePage } from '../server/browseProxy'
 
 describe('browser frame proxy', () => {
   it.each(['file:///etc/passwd', 'http://127.0.0.1:4400/', 'http://169.254.169.254/', 'http://[::ffff:7f00:1]/'])(
@@ -21,7 +21,9 @@ describe('browser frame proxy', () => {
       }),
     )
     const page = await loadBrowsePage('http://127.0.0.1:8747/docs/', '', request)
-    expect(page.headers['content-security-policy']).toContain('sandbox allow-scripts')
+    expect(page.headers['content-security-policy']).toContain('sandbox allow-scripts allow-forms allow-popups')
+    expect(page.headers['content-security-policy']).not.toContain('allow-same-origin')
+    expect(page.headers['content-security-policy']).toMatch(/script-src 'nonce-[^']+' http:\/\/127\.0\.0\.1:8747/)
     expect(page.headers['content-security-policy']).toContain("frame-ancestors 'self'")
     expect(page.headers).not.toHaveProperty('x-frame-options')
     expect(page.headers).not.toHaveProperty('set-cookie')
@@ -29,9 +31,24 @@ describe('browser frame proxy', () => {
     expect(html).toContain('<base href="http://127.0.0.1:8747/docs/">')
     expect(html).toContain('doop:hover-result')
     expect(html).toContain('<h1>Hello</h1>')
-    expect(html).not.toContain('foreignScript()')
+    expect(html).toContain('foreignScript()')
+    expect(html.indexOf('doop:browse-ready')).toBeLessThan(html.indexOf('foreignScript()'))
+    const nonce = /'nonce-([^']+)'/.exec(page.headers['content-security-policy']!)?.[1]
+    expect(nonce).toBeTruthy()
+    expect(html).toContain(`<script nonce="${nonce}">foreignScript()</script>`)
     expect(html).not.toContain('https://wrong.example/')
     expect(request.mock.calls[0]?.[1]).not.toHaveProperty('headers.cookie')
+  })
+
+  it('binds the message proof to user, canvas, URL and browser session', () => {
+    const scope = ['user', 'canvas', 'https://site.example/', 'session'] as const
+    const token = browseSessionToken(...scope)
+    expect(browseSessionToken(...scope)).toBe(token)
+    for (const index of scope.keys()) {
+      const other: [string, string, string, string] = [...scope]
+      other[index] += '-other'
+      expect(browseSessionToken(...other)).not.toBe(token)
+    }
   })
 
   it('rejects a streamed response above 10 MB without relying on Content-Length', async () => {

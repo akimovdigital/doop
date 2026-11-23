@@ -273,7 +273,7 @@ export function useDesignMode({
     if (!busy) drag.current = { start: at, pointerId }
   }
 
-  function pointerMove(at: DesignPoint, shift: boolean, alt: boolean) {
+  function pointerMove(at: DesignPoint, shift: boolean, alt: boolean, scale: number) {
     const current = drag.current
     if (!current) {
       void probe(at)
@@ -281,7 +281,7 @@ export function useDesignMode({
     }
     const dx = at.x - current.start.x
     const dy = at.y - current.start.y
-    if (!current.rect && Math.hypot(dx, dy) < 6) return
+    if (!current.rect && Math.hypot(dx, dy) * scale <= 4) return
     const width = Math.max(1, shift && Math.abs(dy) > Math.abs(dx) ? 1 : Math.abs(dx))
     const height = Math.max(1, shift && Math.abs(dx) >= Math.abs(dy) ? 1 : Math.abs(dy))
     current.rect = {
@@ -299,9 +299,10 @@ export function useDesignMode({
     setRegion(undefined)
   }
 
-  function pointerUp(at: DesignPoint, pointerId: number, shift: boolean, alt: boolean) {
+  function pointerUp(at: DesignPoint, pointerId: number, shift: boolean, alt: boolean, scale: number) {
     const current = drag.current
     if (!current || current.pointerId !== pointerId) return
+    pointerMove(at, shift, alt, scale)
     cancelDrag()
     if (current.rect) {
       pickSequence.current++

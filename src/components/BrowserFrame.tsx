@@ -38,6 +38,7 @@ import { counterZoom, FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY } from '../lib/layout
 import { canEditOpenCanvas, useStore } from '../lib/store'
 import { cn } from '../lib/utils'
 import { onFrameMessage } from '../lib/frameBridge'
+import { desktopPlatform } from '../lib/shell'
 import { DesignModeControls, DesignModeHint, DesignModeOverlay, DesignModeToggle } from './DesignModeOverlay'
 import { PreviewChatCapsule, usePreviewChat } from './PreviewChatCapsule'
 import { useAllowance } from './TeamAllowance'
@@ -114,6 +115,8 @@ export function BrowserFrame({
   const annotationWindow = useRef<Window>()
   const getAnnotationWindow = useCallback(() => annotationWindow.current, [])
   const [documentRevision, documentChanged] = useState(0)
+  const [lastProxyKey, setLastProxyKey] = useState('')
+  const [proxySession, setProxySession] = useState<{ key: string; src: string; token: string }>()
   const [proxyPage, setProxyPage] = useState<{ key: string; url?: string }>()
   const canvasId = useStore((s) => s.canvas?.id)
   const components = useStore((s) => s.canvas?.components)
@@ -159,63 +162,108 @@ export function BrowserFrame({
     onDraft: chat.expand,
     onEnter: chat.collapse,
   })
-  const proxySrc = design.enabled
-    ? `/api/browse-proxy?${new URLSearchParams({ canvasId: frame.canvasId, url: address })}`
-    : ''
-  const designHandlers = useRef({ design, frame })
+  // Wry passes subframe navigations to the shell's URL-only callback,
+  // which cancels external hosts. Load them through Doop in macOS WKWebView.
+  const desktopProxy =
+    desktopPlatform() === 'macos' &&
+    !/Chrom(?:e|ium)\//.test(navigator.userAgent) &&
+    !!address &&
+    !['localhost', '127.0.0.1', window.location.hostname.replace(/^www\./, '')].includes(
+      new URL(address).hostname.replace(/^www\./, ''),
+    )
+  const proxyEnabled = design.enabled || (desktopProxy && !readOnly && shouldLoad)
+  const directBlocked = desktopProxy && readOnly
+  const requestedProxyKey = proxyEnabled ? proxyKey : ''
+  if (lastProxyKey !== requestedProxyKey) {
+    setLastProxyKey(requestedProxyKey)
+    setProxySession(undefined)
+    setProxyPage(undefined)
+  }
+  const session = proxyEnabled && proxySession?.key === proxyKey ? proxySession : undefined
+  const proxySrc = session?.src
+  useEffect(() => {
+    if (!proxyEnabled) return
+    const controller = new AbortController()
+    const id = crypto.randomUUID()
+    const src = `/api/browse-proxy?${new URLSearchParams({ canvasId: frame.canvasId, url: address, session: id })}`
+    const timeout = window.setTimeout(() => {
+      controller.abort()
+      setProxyPage({ key: proxyKey })
+    }, 5000)
+    void fetch(src, { signal: controller.signal, headers: { 'X-Doop-Browse-Session': id } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Browser session failed')
+        const { token } = (await response.json()) as { token: string }
+        if (!controller.signal.aborted) setProxySession({ key: proxyKey, src, token })
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setProxyPage({ key: proxyKey })
+      })
+      .finally(() => window.clearTimeout(timeout))
+    return () => {
+      controller.abort()
+      window.clearTimeout(timeout)
+    }
+  }, [proxyEnabled, proxyKey, address, frame.canvasId])
+  const designHandlers = useRef({ design, frame, mode })
   useLayoutEffect(() => {
-    designHandlers.current = { design, frame }
+    designHandlers.current = { design, frame, mode }
   })
   useEffect(() => {
     if (!canAnnotate) designHandlers.current.design.exit()
   }, [canAnnotate])
   useLayoutEffect(() => {
-    const win = proxySrc && iframe.current?.contentWindow
-    if (!win) return
+    const win = iframe.current?.contentWindow
+    if (!session || !win) return
     let port: MessagePort | undefined
-    setProxyPage(undefined)
     const timer = window.setTimeout(() => setProxyPage({ key: proxyKey }), 17_000)
-    const unsubscribe = onFrameMessage(win, (event) => {
-      if (event.origin !== 'null' || !event.data) return
-      const { type, url } = event.data as { type?: string; url?: unknown }
-      const { design, frame } = designHandlers.current
-      if (type === 'doop:browse-ready' && !port && isAbsoluteBrowserUrl(url) && url) {
-        window.clearTimeout(timer)
-        annotationWindow.current = win
-        setProxyPage({ key: proxyKey, url })
-        documentChanged((value) => value + 1)
-        const channel = new MessageChannel()
-        port = channel.port1
-        port.onmessage = ({ data }) => {
-          if (data?.event !== 'keydown' || data.repeat || document.activeElement !== iframe.current) return
-          if ((data.metaKey || data.ctrlKey) && data.shiftKey && !data.altKey && data.code === 'KeyD') {
-            designHandlers.current.design.toggle()
+    const unsubscribe = onFrameMessage(
+      win,
+      (event) => {
+        const { type, url } = event.data as { type?: string; url?: unknown }
+        const { design, frame, mode } = designHandlers.current
+        if (type === 'doop:browse-ready' && !port && isAbsoluteBrowserUrl(url) && url) {
+          window.clearTimeout(timer)
+          annotationWindow.current = win
+          setProxyPage({ key: proxyKey, url })
+          documentChanged((value) => value + 1)
+          const channel = new MessageChannel()
+          port = channel.port1
+          port.onmessage = ({ data }) => {
+            if (data?.event !== 'keydown' || data.repeat || document.activeElement !== iframe.current) return
+            if ((data.metaKey || data.ctrlKey) && data.shiftKey && !data.altKey && data.code === 'KeyD') {
+              designHandlers.current.design.toggle()
+              viewportRef.current?.focus({ preventScroll: true })
+            }
+          }
+          win.postMessage({ type: 'doop:runtime-port' }, '*', [channel.port2])
+        } else if (annotationWindow.current === win) {
+          if (type === 'doop:annotation-layout') design.refreshPins()
+          if (type === 'doop:proto-space-up') design.releasePage()
+          if (type === 'doop:esc' && document.activeElement === iframe.current) {
+            if (!design.escape() && !design.enabled) {
+              if (mode) closeBrowserSurface(frame.id)
+              else setActive(false)
+            }
+            viewportRef.current?.focus({ preventScroll: true })
+          }
+          if (type === 'doop:browse-navigate' && isAbsoluteBrowserUrl(url) && url) {
+            design.clearInteraction()
+            design.releasePage()
+            navigateBrowser(frame, url)
             viewportRef.current?.focus({ preventScroll: true })
           }
         }
-        win.postMessage({ type: 'doop:runtime-port', browseMode: true }, '*', [channel.port2])
-      } else if (annotationWindow.current === win) {
-        if (type === 'doop:annotation-layout') design.refreshPins()
-        if (type === 'doop:proto-space-up') design.releasePage()
-        if (type === 'doop:esc' && document.activeElement === iframe.current) {
-          design.escape()
-          viewportRef.current?.focus({ preventScroll: true })
-        }
-        if (type === 'doop:browse-navigate' && isAbsoluteBrowserUrl(url) && url) {
-          design.clearInteraction()
-          design.releasePage()
-          navigateBrowser(frame, url)
-          viewportRef.current?.focus({ preventScroll: true })
-        }
-      }
-    })
+      },
+      session.token,
+    )
     return () => {
       unsubscribe()
       port?.close()
       window.clearTimeout(timer)
       annotationWindow.current = undefined
     }
-  }, [proxySrc, proxyKey])
+  }, [session, proxyKey])
   if (active && (!canInteract || !address)) setActive(false)
   if (editing && !canInteract) setEditing(false)
   if (mode && mode !== topMode) setTopMode(mode)
@@ -248,9 +296,10 @@ export function BrowserFrame({
   }, [address])
 
   useEffect(() => {
-    if (!shouldLoad || !address || proxySrc) return
+    if (!shouldLoad || !address || proxyEnabled || directBlocked) return
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), 5000)
+    let loadTimeout: number | undefined
     let current = true
     awaitingLoad.current = false
     // Check reachability in the viewer's browser. A server fetch would probe
@@ -267,6 +316,11 @@ export function BrowserFrame({
         const previous = pageRequest.current
         pageRequest.current = address
         awaitingLoad.current = true
+        loadTimeout = window.setTimeout(() => {
+          if (!awaitingLoad.current) return
+          awaitingLoad.current = false
+          setPage((previous) => ({ ...previous, status: 'error' }))
+        }, 15_000)
         if (previous === address && iframe.current) {
           // Assigning the same src explicitly navigates even after an in-page link.
           iframe.current.src = address
@@ -281,8 +335,9 @@ export function BrowserFrame({
       current = false
       controller.abort()
       clearTimeout(timeout)
+      clearTimeout(loadTimeout)
     }
-  }, [address, reload, shouldLoad, proxySrc])
+  }, [address, reload, shouldLoad, proxyEnabled, directBlocked])
 
   useLayoutEffect(() => {
     const element = surface.current
@@ -426,8 +481,12 @@ export function BrowserFrame({
   const viewport = browserViewport(size.width, size.height, zoom)
   const iframeScale = zoom * fit * (!overlay && !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY ? layoutZoom : 1)
   const settledRequest = page.request?.address === address && page.request.reload === reload
-  const busy = proxySrc ? proxyPage?.key !== proxyKey : !!address && (!settledRequest || page.status === 'loading')
-  const failed = proxySrc ? proxyPage?.key === proxyKey && !resolvedAddress : settledRequest && page.status === 'error'
+  const busy = proxyEnabled
+    ? proxyPage?.key !== proxyKey
+    : !!address && !directBlocked && (!settledRequest || page.status === 'loading')
+  const failed = proxyEnabled
+    ? proxyPage?.key === proxyKey && !resolvedAddress
+    : directBlocked || (settledRequest && page.status === 'error')
   const ReloadIcon = busy ? LoaderCircle : RotateCw
   const reloadControl = (
     <IconButton
@@ -630,7 +689,7 @@ export function BrowserFrame({
           ref={viewportRef}
           data-browser-viewport=""
           tabIndex={overlay ? -1 : undefined}
-          aria-busy={proxySrc ? busy : undefined}
+          aria-busy={proxyEnabled ? busy : undefined}
           className={cn(
             'browser-viewport',
             !overlay && (interactions ? 'browser-live' : selected ? 'browser-selected' : 'browser-hover'),
@@ -645,15 +704,19 @@ export function BrowserFrame({
               opacity: overlay ? 1 : (browser.opacity ?? 1),
             }}
           >
-            {(proxySrc || page.src) && address && (
+            {(proxyEnabled ? proxySrc : !directBlocked && page.src) && address && (
               <iframe
-                key={proxySrc ? proxyKey : 'direct'}
+                key={proxySrc ?? 'direct'}
                 ref={iframe}
-                data-design-screen={proxySrc ? 0 : undefined}
+                data-design-screen={proxySrc && design.enabled ? 0 : undefined}
                 src={proxySrc || page.src}
                 title={frame.name}
                 // An external URL can redirect back to the editor's origin.
-                sandbox={proxySrc ? 'allow-scripts' : 'allow-scripts allow-forms allow-popups allow-modals'}
+                sandbox={
+                  proxySrc
+                    ? 'allow-scripts allow-forms allow-popups'
+                    : 'allow-scripts allow-forms allow-popups allow-modals'
+                }
                 referrerPolicy="no-referrer"
                 tabIndex={(interactions || overlay) && (!design.enabled || design.usingPage) ? 0 : -1}
                 style={{
@@ -661,7 +724,7 @@ export function BrowserFrame({
                   ...(!overlay && !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY ? { zoom: counterZoom(layoutZoom) } : null),
                   transform: `scale(${iframeScale})`,
                   visibility: failed ? 'hidden' : undefined,
-                  pointerEvents: interactions || overlay ? 'auto' : 'none',
+                  pointerEvents: (interactions || overlay) && (!design.enabled || design.usingPage) ? 'auto' : 'none',
                 }}
                 className="absolute top-0 left-0 origin-top-left border-0 bg-surface"
                 onLoad={() => {

@@ -10,9 +10,18 @@ import { CANVAS_MOD_CHORDS, SHORTCUT_KEYS_BY_CODE } from './keys'
  * elements are touched, so updates render in place with no white reload flash.
  * Works inside sandbox="allow-scripts" (no same-origin access needed).
  */
-export const FRAME_RUNTIME = `
-(function () {
+export function frameRuntime(browse?: { token: string; url: string }) {
+  return `
+(function (browse) {
   'use strict'
+  if (browse) {
+    document.currentScript.remove()
+    if (parent === window) return
+  }
+  var sendToParent = parent.postMessage.bind(parent)
+  function postToEditor(data) {
+    sendToParent(browse ? { ...data, browseToken: browse.token } : data, '*')
+  }
   ${FRAME_REPLAY_RUNTIME}
   ${FRAME_DROP_RUNTIME}
   ${FRAME_PROTO_RUNTIME}
@@ -662,10 +671,12 @@ export const FRAME_RUNTIME = `
      the person pressed into another). */
   var runtimePort = null
   var desktopShell = false
-  var browseMode = false
+  var browseMode = !!browse
   var editorWindow = parent
   var readMessageSource = getter(MessageEvent.prototype, 'source')
   var readMessageData = getter(MessageEvent.prototype, 'data')
+  var readMessagePorts = getter(MessageEvent.prototype, 'ports')
+  var stopMessage = Event.prototype.stopImmediatePropagation
   var portSend = MessagePort.prototype.postMessage
   var apply = Reflect.apply
   function getter(proto, name) {
@@ -748,7 +759,7 @@ export const FRAME_RUNTIME = `
       setEdit(false)
       parent.postMessage({ type: 'doop:edit-esc' }, '*')
     } else {
-      parent.postMessage({ type: 'doop:esc' }, '*')
+      if (!browse || ev.isTrusted) postToEditor({ type: 'doop:esc' })
     }
   })
 
@@ -1177,7 +1188,7 @@ export const FRAME_RUNTIME = `
     if (!annotationWatching || annotationChangeFrame) return
     annotationChangeFrame = requestAnimationFrame(function () {
       annotationChangeFrame = 0
-      if (annotationWatching) parent.postMessage({ type: 'doop:annotation-layout' }, '*')
+      if (annotationWatching) postToEditor({ type: 'doop:annotation-layout' })
     })
   }
   window.addEventListener('scroll', annotationChanged, true)
@@ -2025,10 +2036,15 @@ export const FRAME_RUNTIME = `
     var d = { ...data }
     /* the first port offered is the one for life: a later message carrying
        one could be answering a design script's forged ready signal */
-    if (d.type === 'doop:runtime-port' && !runtimePort && ev.ports && ev.ports[0]) {
-      runtimePort = ev.ports[0]
-      desktopShell = d.desktopShell === true
-      browseMode = d.browseMode === true
+    if (d.type === 'doop:runtime-port') {
+      // The bootstrap listener runs before page listeners. Keep the transferred
+      // endpoint private even when the site installs its own message handlers.
+      if (browse) apply(stopMessage, ev, [])
+      if (!runtimePort) {
+        runtimePort = (browse ? apply(readMessagePorts, ev, []) : ev.ports)?.[0] || null
+        desktopShell = d.desktopShell === true
+      }
+      return
     }
     if (d.type === 'doop:inspect') {
       parent.postMessage({ type: 'doop:inspect-result', reqId: d.reqId, info: inspect(d.selector) }, '*')
@@ -2222,13 +2238,13 @@ export const FRAME_RUNTIME = `
       parent.postMessage({ type: 'doop:drawing-moving-result', reqId: d.reqId }, '*')
     }
     if (d.type === 'doop:hover') {
-      parent.postMessage({ type: 'doop:hover-result', reqId: d.reqId, hit: d.annotation ? annotationTarget(document.elementFromPoint(viewX(d.x), viewX(d.y)), d.x, d.y) : hoverProbe(d.x, d.y, d.selected) }, '*')
+      postToEditor({ type: 'doop:hover-result', reqId: d.reqId, hit: d.annotation ? annotationTarget(document.elementFromPoint(viewX(d.x), viewX(d.y)), d.x, d.y) : hoverProbe(d.x, d.y, d.selected) })
     }
     if (d.type === 'doop:measure') {
       parent.postMessage({ type: 'doop:measure-result', reqId: d.reqId, measure: measure(d.selector, d.x, d.y, d.selected) }, '*')
     }
     if (d.type === 'doop:select') {
-      parent.postMessage({ type: 'doop:select-result', reqId: d.reqId, hit: d.annotation ? annotationDetails(styleTarget(d.selector), d.x, d.y) : describe(d.selector) }, '*')
+      postToEditor({ type: 'doop:select-result', reqId: d.reqId, hit: d.annotation ? annotationDetails(styleTarget(d.selector), d.x, d.y) : describe(d.selector) })
     }
     if (d.type === 'doop:capture-metrics') {
       parent.postMessage({
@@ -2261,17 +2277,43 @@ export const FRAME_RUNTIME = `
         if (target) found = designRect(target)
       } catch (e) { /* bad selector -> null */ }
       var canSize = !!target && sizable(target)
-      parent.postMessage({
+      postToEditor({
         type: 'doop:located', reqId: d.reqId, selector: d.selector, rect: found,
         sizable: canSize,
         rotation: canSize ? ownRotation(target) || 0 : 0,
         box: target && found ? renderedBox(target, found) : null,
-      }, '*')
+      })
     }
   }, true) // consume editor commands before any design listener can modify them
-  parent.postMessage({ type: 'doop:frame-ready' }, '*')
-})()
+  if (browse) {
+    var currentUrl = browse.url
+    document.addEventListener('click', function (event) {
+      if (!event.isTrusted) return
+      var link = event.target instanceof Element && event.target.closest('a, area')
+      if (!link) return
+      var href = link.getAttribute('href') ?? link.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
+      if (href === null) return
+      event.preventDefault()
+      var next = URL.parse(href, currentUrl)
+      if (!next || !/^https?:$/.test(next.protocol) || next.username || next.password) return
+      postToEditor({ type: 'doop:browse-navigate', url: next.href })
+    }, true)
+    document.addEventListener('auxclick', function (event) {
+      if (event.target instanceof Element && event.target.closest('a, area')) event.preventDefault()
+    }, true)
+    document.addEventListener('DOMContentLoaded', function () {
+      var hash = new URL(currentUrl).hash.slice(1)
+      if (hash) {
+        try { document.getElementById(decodeURIComponent(hash))?.scrollIntoView() } catch {}
+      }
+    }, { once: true })
+    postToEditor({ type: 'doop:browse-ready', url: currentUrl })
+  } else parent.postMessage({ type: 'doop:frame-ready' }, '*')
+})(${JSON.stringify(browse ?? null).replaceAll('<', '\\u003c')})
 `
+}
+
+export const FRAME_RUNTIME = frameRuntime()
 
 export const FRAME_BOOTSTRAP = `<!doctype html>
 <html><head></head><body><script data-v-boot>${FRAME_RUNTIME}</script></body></html>`

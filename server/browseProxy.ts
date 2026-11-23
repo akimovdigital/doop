@@ -1,11 +1,20 @@
-import { randomBytes } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import { defaultTreeAdapter as tree, html, parse, serialize, type DefaultTreeAdapterTypes as Node } from 'parse5'
-import { FRAME_RUNTIME } from '../src/lib/frameRuntime'
+import { frameRuntime } from '../src/lib/frameRuntime'
 import { fetchPinnedPublicUrl, PublicNetworkUrlError } from './publicUrl'
 
 const LIMIT = 10_000_000
 const TIMEOUT = 15_000
 const REDIRECTS = [301, 302, 303, 307, 308]
+const sessionKey = randomBytes(32)
+
+// The iframe URL carries a public session ID. Only the authenticated editor
+// obtains the corresponding proof, which the bootstrap keeps in its closure.
+export function browseSessionToken(userId: string, canvasId: string, url: string, session: string) {
+  return createHmac('sha256', sessionKey)
+    .update(JSON.stringify([userId, canvasId, url, session]))
+    .digest('base64url')
+}
 
 export class BrowseProxyError extends Error {
   constructor(
@@ -57,7 +66,7 @@ async function boundedBody(response: Response, signal: AbortSignal) {
   return Buffer.concat(chunks, size)
 }
 
-function injectedHtml(source: string, url: URL, nonce: string) {
+function injectedHtml(source: string, url: URL, nonce: string, token: string) {
   const doc = parse(source)
   const root = doc.childNodes.find((node): node is Node.Element => tree.isElementNode(node) && node.tagName === 'html')!
   const [head, body] = root.childNodes.filter(tree.isElementNode) as [Node.Element, Node.Element]
@@ -66,7 +75,7 @@ function injectedHtml(source: string, url: URL, nonce: string) {
     for (const node of [...parent.childNodes]) {
       if (!tree.isElementNode(node)) continue
       if (
-        ['base', 'script', 'frame', 'iframe', 'object', 'embed', 'portal'].includes(node.tagName) ||
+        ['base', 'frame', 'iframe', 'object', 'embed', 'portal'].includes(node.tagName) ||
         (node.tagName === 'meta' &&
           node.attrs.some(
             ({ name, value }) =>
@@ -79,8 +88,11 @@ function injectedHtml(source: string, url: URL, nonce: string) {
         continue
       }
       node.attrs = node.attrs.filter(
-        ({ name }) => !name.startsWith('on') && !['ping', 'referrerpolicy', 'data-v-boot'].includes(name),
+        ({ name }) => !name.startsWith('on') && !['ping', 'referrerpolicy', 'data-v-boot', 'nonce'].includes(name),
       )
+      if (node.tagName === 'script' && !node.attrs.some(({ name }) => name === 'src' || name === 'href')) {
+        node.attrs.push({ name: 'nonce', value: nonce })
+      }
       if (node.tagName === 'template' && node.namespaceURI === html.NS.HTML)
         stack.push(tree.getTemplateContent(node as Node.Template))
       else stack.push(node)
@@ -98,39 +110,19 @@ function injectedHtml(source: string, url: URL, nonce: string) {
     { name: 'nonce', value: nonce },
     { name: 'data-v-boot', value: '' },
   ])
-  // Encode the URL before embedding it in a raw-text element.
-  const currentUrl = JSON.stringify(url.href).replaceAll('<', '\\u003c')
-  tree.insertText(
-    script,
-    `${FRAME_RUNTIME}
-;(function () {
-  const currentUrl = ${currentUrl}
-  document.addEventListener('click', (event) => {
-    const link = event.target instanceof Element && event.target.closest('a, area')
-    if (!link) return
-    const href = link.getAttribute('href') ?? link.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
-    if (href === null) return
-    event.preventDefault()
-    const next = URL.parse(href, currentUrl)
-    if (!next || !/^https?:$/.test(next.protocol) || next.username || next.password) return
-    parent.postMessage({ type: 'doop:browse-navigate', url: next.href }, '*')
-  }, true)
-  document.addEventListener('auxclick', (event) => {
-    if (event.target instanceof Element && event.target.closest('a, area')) event.preventDefault()
-  }, true)
-  const hash = new URL(currentUrl).hash.slice(1)
-  if (hash) {
-    try { document.getElementById(decodeURIComponent(hash))?.scrollIntoView() } catch {}
-  }
-  parent.postMessage({ type: 'doop:browse-ready', url: currentUrl }, '*')
-})()
-`,
-  )
-  tree.appendChild(body, script)
+  tree.insertText(script, frameRuntime({ token, url: url.href }))
+  if (head.childNodes[1]) tree.insertBefore(head, script, head.childNodes[1])
+  else tree.appendChild(head, script)
   return Buffer.from(serialize(doc))
 }
 
-async function load(rawUrl: string, allowList: string, signal: AbortSignal, request: typeof fetchPinnedPublicUrl) {
+async function load(
+  rawUrl: string,
+  allowList: string,
+  signal: AbortSignal,
+  request: typeof fetchPinnedPublicUrl,
+  token: string,
+) {
   const origins = originAllowList(allowList)
   let url = httpUrl(rawUrl)
   for (let count = 0; ; count++) {
@@ -174,16 +166,17 @@ async function load(rawUrl: string, allowList: string, signal: AbortSignal, requ
     } catch {
       decoder = new TextDecoder()
     }
-    const body = injectedHtml(decoder.decode(bytes), url, nonce)
+    const body = injectedHtml(decoder.decode(bytes), url, nonce, token)
     if (body.length > LIMIT) throw new BrowseProxyError(413, 'Remote page exceeds 10 MB')
     headers['content-type'] = 'text/html; charset=utf-8'
     headers['content-security-policy'] = [
-      'sandbox allow-scripts',
+      'sandbox allow-scripts allow-forms allow-popups',
       "frame-ancestors 'self'",
       "default-src 'none'",
-      `script-src 'nonce-${nonce}'`,
+      `script-src 'nonce-${nonce}' ${origin}`,
       `base-uri ${origin}`,
-      "form-action 'none'",
+      `form-action ${origin}`,
+      `connect-src ${origin}`,
       `style-src 'unsafe-inline' ${origin}`,
       `img-src data: ${origin}`,
       `font-src data: ${origin}`,
@@ -193,12 +186,17 @@ async function load(rawUrl: string, allowList: string, signal: AbortSignal, requ
   }
 }
 
-export async function loadBrowsePage(rawUrl: string, allowList: string, request = fetchPinnedPublicUrl) {
+export async function loadBrowsePage(
+  rawUrl: string,
+  allowList: string,
+  request = fetchPinnedPublicUrl,
+  token = randomBytes(32).toString('base64url'),
+) {
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
-      load(rawUrl, allowList, controller.signal, request),
+      load(rawUrl, allowList, controller.signal, request, token),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
           reject(new BrowseProxyError(504, 'Remote page timed out'))

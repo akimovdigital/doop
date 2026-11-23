@@ -883,7 +883,13 @@ function ProtoScreen({
         data-doop-proto-frame={frame.id}
         sandbox="allow-scripts"
         srcDoc={FRAME_BOOTSTRAP}
-        style={{ width, height, transform: `scale(${scale})`, transformOrigin: '0 0' }}
+        style={{
+          width,
+          height,
+          transform: `scale(${scale})`,
+          transformOrigin: '0 0',
+          pointerEvents: annotating ? 'none' : undefined,
+        }}
       />
     </div>
   )
