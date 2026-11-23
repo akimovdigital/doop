@@ -23,23 +23,24 @@ export function browserAddress(url: string): string {
   return url.replace(/^https?:\/\//i, '').replace(/^(\S+?)\/$/, '$1')
 }
 
-const absoluteBrowserUrl = z
-  .string()
-  .max(8192)
-  .refine(
-    (url) => url === '' || (/^https?:\/\//i.test(url) && !!normalizeBrowserUrl(url)),
-    'Enter an HTTP or HTTPS URL',
-  )
+export function isAbsoluteBrowserUrl(url: unknown): url is string {
+  return typeof url === 'string' && url.length <= 8192 && hasAbsoluteBrowserUrl(url)
+}
 
-export const browserFrameSchema = z.object({
-  url: absoluteBrowserUrl,
-  deviceId: z.enum(BROWSER_DEVICES).optional(),
-  zoom: z.number().min(0.5).max(1.5).optional(),
-  scrollX: z.number().finite().optional(),
-  scrollY: z.number().finite().optional(),
-  cornerRadius: z.number().min(0).max(1000).optional(),
-  opacity: z.number().min(0).max(1).optional(),
-})
+function hasAbsoluteBrowserUrl(url: string): boolean {
+  return url === '' || (/^https?:\/\//i.test(url) && !!normalizeBrowserUrl(url))
+}
+
+export const browserFrameSchema = /* @__PURE__ */ (() =>
+  z.object({
+    url: z.string().max(8192).refine(hasAbsoluteBrowserUrl, 'Enter an HTTP or HTTPS URL'),
+    deviceId: z.enum(BROWSER_DEVICES).optional(),
+    zoom: z.number().min(0.5).max(1.5).optional(),
+    scrollX: z.number().finite().optional(),
+    scrollY: z.number().finite().optional(),
+    cornerRadius: z.number().min(0).max(1000).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  }))()
 
 export type BrowserFrameData = z.infer<typeof browserFrameSchema>
 
@@ -59,12 +60,12 @@ export function browserViewport(width: number, height: number, zoom = 1) {
 
 /** Static exports describe the live reference without contacting its host. */
 export function browserReferenceHtml(browser: BrowserFrameData): string {
-  const url = browserFrameSchema.shape.url.safeParse(browser.url)
+  const { url } = browser
   const escape = (value: string) =>
     value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
   const link =
-    url.success && url.data
-      ? `<a href="${escape(url.data)}" rel="noreferrer">${escape(browserAddress(url.data))}</a>`
+    url && isAbsoluteBrowserUrl(url)
+      ? `<a href="${escape(url)}" rel="noreferrer">${escape(browserAddress(url))}</a>`
       : ''
   return `<!doctype html><html><head><meta charset="utf-8"><title>Browser</title></head><body><p>Browser</p>${link}</body></html>`
 }

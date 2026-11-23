@@ -4,10 +4,10 @@ import { isCanvasClipboard, writeCanvasClipboard } from '../src/lib/canvasClipbo
 import { useStore } from '../src/lib/store'
 import { setLocale } from '../src/lib/i18n'
 
-beforeEach(() => {
+beforeEach(async () => {
   localStorage.clear()
   useStore.setState({ notice: null })
-  setLocale('en')
+  await setLocale('en')
 })
 
 afterEach(() => vi.restoreAllMocks())
@@ -18,7 +18,7 @@ it.each([
 ] as const)(
   'reports a refused clipboard write in %s without replacing the saved selection',
   async (locale, message) => {
-    setLocale(locale)
+    await setLocale(locale)
     const write = vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('NotAllowedError'))
     const copy = vi.fn()
     writeCanvasClipboard(copy)

@@ -1,6 +1,6 @@
 import { openBrowserSurface, useBrowserUi } from '../lib/browserFrames'
 import { CAPTURE_PREFIX, pasteWebCapture } from '../lib/webCapture'
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { canEditOpenCanvas, pickedSelectors, roleOf, useStore } from '../lib/store'
 import { followPageInUrl } from '../lib/pageUrl'
 import { MOD_KEY, PRESENT_SHORTCUT_HINT, isControlTarget, isTypingTarget, shortcutKey } from '../lib/keys'
@@ -66,7 +66,6 @@ import { flowStartFrame } from '../../shared/prototype'
 import type { Frame } from '../../shared/types'
 import { ImportStepFooter, ImportStepHeader, SourcePicker } from '../components/ImportSources'
 import { importSources } from '../components/importSourceList'
-import { PresentMode } from '../components/PresentMode'
 import { CommandPalette } from '../components/CommandPalette'
 import { MainMenu } from '../components/MainMenu'
 import { ShortcutsSheet } from '../components/ShortcutsSheet'
@@ -140,6 +139,8 @@ import { loadCanvasFonts } from '../lib/customFonts'
 import { t as translate, useT } from '../lib/i18n'
 import { NO_INSETS, type StageInsets } from '../lib/viewFit'
 import { usePanelLayout } from '../lib/panelLayout'
+
+const PresentMode = lazy(() => import('../components/PresentMode').then((module) => ({ default: module.PresentMode })))
 
 /* The floating chrome's geometry, in px from the canvas area's edges. The
    panels sit 14px in from the edge; on the right the resizable Agents panel
@@ -1381,7 +1382,11 @@ export function CanvasPage({
       {renaming && <RenameSelfModal current={me.name} onClose={() => setRenaming(false)} />}
       {/* ?connect=1 and ?import=1 can ask for these on any link; only an editor gets them */}
       {showConnect && editorReady && <ConnectModal canvasId={canvasId} onClose={() => setShowConnect(false)} />}
-      {presenting && <PresentMode frameId={presenting} onClose={() => setPresenting(null)} />}
+      {presenting && (
+        <Suspense fallback={null}>
+          <PresentMode frameId={presenting} onClose={() => setPresenting(null)} />
+        </Suspense>
+      )}
       {paletteOpen && (
         <CommandPalette
           onClose={() => setPaletteOpen(false)}

@@ -9,14 +9,14 @@ vi.mock('../src/lib/frameReplay', () => ({ installFrameReplay: vi.fn() }))
 vi.mock('posthog-js/dist/module.no-external', () => ({
   default: {
     init: vi.fn(),
-    conversations: { isAvailable: () => true, show: vi.fn(), hide: vi.fn() },
+    conversations: { isAvailable: () => true, getUnavailableReason: () => null, show: vi.fn(), hide: vi.fn() },
   },
 }))
 
 const containerId = 'ph-conversations-widget-container'
 const launcher = () => document.querySelector<HTMLButtonElement>('button[aria-label="Open chat"]')
 const closeButton = () => document.querySelector<HTMLButtonElement>('button[aria-label="Close"]')
-let support: typeof import('../src/lib/posthog')
+let support: typeof import('../src/lib/posthogClient')
 let savedOpen = false
 
 // The SDK mounts on show(), removes on hide(), and restores the saved panel state.
@@ -38,8 +38,7 @@ function mountWidget() {
 }
 
 beforeEach(async () => {
-  vi.stubEnv('VITE_POSTHOG_KEY', 'test-key')
-  support ??= await import('../src/lib/posthog')
+  support ??= await import('../src/lib/posthogClient')
   savedOpen = false
   vi.mocked(support.posthog.conversations.show).mockImplementation(mountWidget)
   vi.mocked(support.posthog.conversations.hide).mockImplementation(() => {
@@ -52,7 +51,6 @@ afterEach(() => {
   support.setSupportWidgetVisible(true)
   document.body.replaceChildren()
   vi.restoreAllMocks()
-  vi.unstubAllEnvs()
 })
 
 it('opens from the canvas, hides on close, and can be opened again', async () => {
@@ -111,4 +109,14 @@ it('cancels a pending open when the route changes', async () => {
   await new Promise(requestAnimationFrame)
   expect(launcher()).not.toBeNull()
   expect(closeButton()).toBeNull()
+})
+
+it('waits for the remote configuration when support is requested during analytics startup', async () => {
+  let available = false
+  vi.spyOn(support.posthog.conversations, 'isAvailable').mockImplementation(() => available)
+  vi.spyOn(support.posthog.conversations, 'getUnavailableReason').mockReturnValue('remote_config_pending')
+  expect(support.openSupportChat()).toBe(true)
+  expect(launcher()).toBeNull()
+  available = true
+  await vi.waitFor(() => expect(closeButton()).not.toBeNull())
 })

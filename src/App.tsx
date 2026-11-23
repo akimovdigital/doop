@@ -1,25 +1,12 @@
 import { startLocalAgent } from './lib/localAgent'
 import { navigate } from './lib/navigate'
-import { useEffect, useRef, useState } from 'react'
+import { lazy, startTransition, Suspense, useEffect, useRef, useState } from 'react'
 import { Home } from './pages/Home'
-import { Community } from './pages/Community'
-import { Settings } from './pages/Settings'
 import { CanvasPage } from './pages/CanvasPage'
-import { PrototypePage } from './pages/PrototypePage'
 import { AuthPage } from './pages/AuthPage'
-import { DesktopHandoff } from './pages/DesktopHandoff'
-import { DesktopSignIn } from './pages/DesktopSignIn'
-import { DesktopConnect } from './pages/DesktopConnect'
 import { DESKTOP_CONNECT_PATH } from '../shared/desktopConnect'
-import { DesktopCodexSetup } from './pages/DesktopCodexSetup'
 import { CODEX_SETUP_PATH } from './lib/codexConnection'
-import { OAuthConsent } from './pages/OAuthConsent'
 import { DESKTOP_HANDOFF_PATH, DESKTOP_SIGNIN_PATH } from './lib/desktopAuth'
-import { Admin } from './pages/Admin'
-import { Automations } from './pages/Automations'
-import { AutomationEditor } from './pages/AutomationEditor'
-import { Integrations } from './pages/Integrations'
-import { Workspace } from './pages/Workspace'
 import { UpgradeHost } from './components/UpgradeHost'
 import { authClient } from './lib/auth'
 import { useStore } from './lib/store'
@@ -37,6 +24,28 @@ import { cn } from './lib/utils'
 import { supportsCanvasTabs } from './lib/shell'
 import { SIGNUP_PARAM, parseSignupMethod } from '../shared/firstCanvas'
 import { useT } from './lib/i18n'
+
+const Community = lazy(() => import('./pages/Community').then((module) => ({ default: module.Community })))
+const Settings = lazy(() => import('./pages/Settings').then((module) => ({ default: module.Settings })))
+const PrototypePage = lazy(() => import('./pages/PrototypePage').then((module) => ({ default: module.PrototypePage })))
+const Admin = lazy(() => import('./pages/Admin').then((module) => ({ default: module.Admin })))
+const Automations = lazy(() => import('./pages/Automations').then((module) => ({ default: module.Automations })))
+const AutomationEditor = lazy(() =>
+  import('./pages/AutomationEditor').then((module) => ({ default: module.AutomationEditor })),
+)
+const Integrations = lazy(() => import('./pages/Integrations').then((module) => ({ default: module.Integrations })))
+const Workspace = lazy(() => import('./pages/Workspace').then((module) => ({ default: module.Workspace })))
+const DesktopHandoff = lazy(() =>
+  import('./pages/DesktopHandoff').then((module) => ({ default: module.DesktopHandoff })),
+)
+const DesktopSignIn = lazy(() => import('./pages/DesktopSignIn').then((module) => ({ default: module.DesktopSignIn })))
+const DesktopConnect = lazy(() =>
+  import('./pages/DesktopConnect').then((module) => ({ default: module.DesktopConnect })),
+)
+const DesktopCodexSetup = lazy(() =>
+  import('./pages/DesktopCodexSetup').then((module) => ({ default: module.DesktopCodexSetup })),
+)
+const OAuthConsent = lazy(() => import('./pages/OAuthConsent').then((module) => ({ default: module.OAuthConsent })))
 
 export { navigate }
 
@@ -70,7 +79,10 @@ export function App() {
   const identifiedUserId = useRef<string | null>(null)
 
   useEffect(() => {
-    const onPop = () => setRoute(location.pathname + location.search)
+    const onPop = () => {
+      const next = location.pathname + location.search
+      startTransition(() => setRoute(next))
+    }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
@@ -154,7 +166,9 @@ export function App() {
     return (
       <>
         <ShellDragBar />
-        <DesktopSignIn signedIn={!!session} />
+        <Suspense fallback={<AuthScreen />}>
+          <DesktopSignIn signedIn={!!session} />
+        </Suspense>
       </>
     )
 
@@ -165,7 +179,9 @@ export function App() {
     return (
       <>
         <ShellDragBar />
-        <DesktopConnect />
+        <Suspense fallback={<AuthScreen />}>
+          <DesktopConnect />
+        </Suspense>
       </>
     )
 
@@ -235,7 +251,7 @@ export function App() {
   )
   const page = (
     <>
-      {screen}
+      <Suspense fallback={<AuthScreen />}>{screen}</Suspense>
       <UpgradeHost />
     </>
   )

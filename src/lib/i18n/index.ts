@@ -1,5 +1,5 @@
 import { en } from './en'
-import { ptBR } from './pt-BR'
+import { catalogs } from './catalogs'
 import { getLocale, useLocale, type Locale } from './locale'
 
 export {
@@ -61,8 +61,6 @@ export type PlainMessageKey = { [K in MessageKey]: [ParamsOf<MessageOf<K>>] exte
 
 export type Translate = <K extends MessageKey>(key: K, ...vars: VarsArg<K>) => string
 
-const catalogs: Record<Locale, Catalog> = { en, 'pt-BR': ptBR }
-
 type Vars = Record<string, string | number>
 
 function lookup(catalog: Catalog, key: string): Message | undefined {
@@ -85,7 +83,8 @@ function fill(text: string, vars: Vars | undefined): string {
 /** The message for `key` in `locale`, falling back to English and then to the
  *  key itself, so a gap shows up as readable text rather than a blank. */
 export function translateIn(locale: Locale, key: MessageKey, vars?: Vars): string {
-  const message = lookup(catalogs[locale], key) ?? lookup(en, key)
+  const catalog = catalogs[locale]
+  const message = (catalog && lookup(catalog, key)) ?? lookup(en, key)
   if (message === undefined) return key
   return fill(pick(message, locale, vars), vars)
 }

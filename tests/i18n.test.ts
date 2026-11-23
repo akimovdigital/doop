@@ -65,9 +65,10 @@ describe('catalogs', () => {
 })
 
 describe('translateIn', () => {
-  it('fills placeholders and picks the plural form for the count', () => {
+  it('fills placeholders and picks the plural form for the count', async () => {
     expect(i18n.translateIn('en', 'settings.meterLeft', { left: 2, count: 5 })).toBe('2 of 5 free tasks left.')
     expect(i18n.translateIn('en', 'settings.meterLeft', { left: 1, count: 1 })).toBe('1 of 1 free task left.')
+    await i18n.setLocale('pt-BR')
     expect(i18n.translateIn('pt-BR', 'settings.meterLeft', { left: 1, count: 1 })).toBe(
       '1 de 1 tarefa gratuita restante.',
     )
@@ -87,7 +88,7 @@ describe('locale', () => {
     expect(document.documentElement.lang).toBe('pt-BR')
     expect(i18n.t('shell.logOut')).toBe('Sair')
 
-    i18n.setLocale('en')
+    await i18n.setLocale('en')
     expect(i18n.getLocale()).toBe('en')
     expect(store.get('doop-locale')).toBe('en')
     expect(document.documentElement.lang).toBe('en')
@@ -113,4 +114,30 @@ describe('locale', () => {
     await i18n.initLocale()
     expect(i18n.getLocale()).toBe('en')
   })
+})
+
+it('loads a new pick before notifying and preserves a newer pick', async () => {
+  const changed = vi.fn()
+  i18n.onLocaleChange(changed)
+  const portuguese = i18n.setLocale('pt-BR')
+  expect(i18n.t('shell.logOut')).toBe(en.shell.logOut)
+  expect(changed).not.toHaveBeenCalled()
+  await i18n.setLocale('en')
+  await portuguese
+  expect(i18n.getLocale()).toBe('en')
+  expect(changed).toHaveBeenCalledOnce()
+  await i18n.setLocale('pt-BR')
+  expect(i18n.t('shell.logOut')).toBe('Sair')
+  expect(document.documentElement.lang).toBe('pt-BR')
+})
+
+it('loads a language selected in another tab before notifying', async () => {
+  serverSays({ defaultLocale: 'en' })
+  await i18n.initLocale()
+  const seen: string[] = []
+  i18n.onLocaleChange(() => seen.push(i18n.t('shell.logOut')))
+  store.set('doop-locale', 'pt-BR')
+  window.dispatchEvent(new StorageEvent('storage', { key: 'doop-locale' }))
+  expect(seen).toEqual([])
+  await vi.waitFor(() => expect(seen).toEqual(['Sair']))
 })

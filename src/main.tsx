@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import './lib/posthog'
+import { schedulePostHog } from './lib/posthog'
 import { App } from './App'
 import { initDesktopShell } from './lib/desktop'
 import { TooltipProvider } from './components/ui/tooltip'
@@ -14,6 +14,16 @@ import { loadPerfHud } from './perf/hudFlag'
 installTranslateGuard()
 initDesktopShell()
 initTheme()
+
+function Root() {
+  React.useEffect(schedulePostHog, [])
+  return (
+    <TooltipProvider>
+      <App />
+      <UpdateCard />
+    </TooltipProvider>
+  )
+}
 
 /* the language is settled first, so the first paint already speaks it */
 void initLocale().then(() => {
@@ -36,10 +46,7 @@ void initLocale().then(() => {
   }
   return ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
-      <TooltipProvider>
-        <App />
-        <UpdateCard />
-      </TooltipProvider>
+      <Root />
     </React.StrictMode>,
   )
 })

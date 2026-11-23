@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
-import { attributeStyles, importSvgMarkup, looksLikeSvg, type StyleReader } from '../src/lib/svgImport'
+import { attributeStyles, importSvgMarkup, type StyleReader } from '../src/lib/svgImport'
+import { looksLikeSvg } from '../src/lib/frameClipboard'
 import { parseEditablePath, shapePath } from '../src/lib/pathEditing'
 import { isCanvasElement } from '../src/lib/drawing'
 import { buildLayerTree } from '../src/lib/layers'

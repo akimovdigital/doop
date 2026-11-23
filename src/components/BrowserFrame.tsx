@@ -18,7 +18,7 @@ import {
   BROWSER_DEVICES,
   browserAddress,
   browserDeviceSize,
-  browserFrameSchema,
+  isAbsoluteBrowserUrl,
   browserViewport,
   type BrowserDevice,
 } from '../../shared/browserFrame'
@@ -121,7 +121,7 @@ export function BrowserFrame({
   const targetIndex = useRef<number | null>(null)
   const pageRequest = useRef<string>()
   const awaitingLoad = useRef(false)
-  const address = browserFrameSchema.shape.url.safeParse(browser.url).success ? browser.url : ''
+  const address = isAbsoluteBrowserUrl(browser.url) ? browser.url : ''
   const canInteract = soleSelected && canvasInput && !mode
   const interactions = active && canInteract && !!address
   const overlay = mode ?? topMode
