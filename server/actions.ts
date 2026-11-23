@@ -1,3 +1,4 @@
+import { readContextPrompt } from '../shared/uiElementContext.ts'
 import type { ResolvedMentions } from '../shared/personMentions.ts'
 import { nanoid } from 'nanoid'
 import { indexOfAscii, lastIndexOfAscii } from '../shared/asciiSearch.ts'
@@ -1689,7 +1690,11 @@ export function advanceCard(canvasId: string, cardId: string, by: Actor): AgentT
   delete card.failureReason
   stored.saveTask(canvasId, card)
   broadcast(canvasId, { type: 'task', task: card })
-  logActivity(canvasId, by, `handed “${card.status}” to ${roleName(pipeline[next], canvasRoster(canvasId))}`)
+  logActivity(
+    canvasId,
+    by,
+    `handed “${readContextPrompt(card.status).text}” to ${roleName(pipeline[next], canvasRoster(canvasId))}`,
+  )
   kickResident(canvasId)
   return card
 }
@@ -1726,7 +1731,11 @@ export function stopCard(canvasId: string, cardId: string, by: string): AgentTas
   const card = (taskLog.get(canvasId) ?? []).find((t) => t.id === cardId && t.queuedBy)
   if (!card || card.endedAt || card.failedAt) return card
   failCard(canvasId, cardId, `Stopped by ${by}.`)
-  logActivity(canvasId, resolveActor({ name: by, kind: 'user' }), `stopped a card: “${card.status}”`)
+  logActivity(
+    canvasId,
+    resolveActor({ name: by, kind: 'user' }),
+    `stopped a card: “${readContextPrompt(card.status).text}”`,
+  )
   return card
 }
 
@@ -1740,7 +1749,11 @@ export function retryCard(canvasId: string, cardId: string, by: string): AgentTa
   delete card.failureReason
   stored.saveTask(canvasId, card)
   broadcast(canvasId, { type: 'task', task: card })
-  logActivity(canvasId, resolveActor({ name: by, kind: 'user' }), `retried a card: “${card.status}”`)
+  logActivity(
+    canvasId,
+    resolveActor({ name: by, kind: 'user' }),
+    `retried a card: “${readContextPrompt(card.status).text}”`,
+  )
   kickResident(canvasId)
   return card
 }

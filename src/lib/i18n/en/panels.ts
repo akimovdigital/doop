@@ -377,6 +377,7 @@ export const panels = {
   designResend: 'Send again',
   designShowResolved: 'Show resolved',
   designEmpty: 'No annotations yet',
+  contextChipRemove: 'Remove {name}',
   previewChatAsk: 'Ask Doop…',
   previewChatPlaceholder: 'Create, plan or research… @ to attach, / for skills',
   previewChatShortcut: 'Ask Doop… (⌘L or ⌘/)',

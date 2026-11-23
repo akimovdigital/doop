@@ -1,3 +1,4 @@
+import { readContextPrompt, type UiElementContext } from '../../shared/uiElementContext'
 import type { AgentTask, TaskFeedback } from '../../shared/types'
 
 /** One exchange in the chat: what a person asked and how the agent answered. */
@@ -8,6 +9,7 @@ export interface ChatTurn {
   from: string
   mine: boolean
   text: string
+  contexts?: UiElementContext[]
   /** the agent that answered or is answering; empty while nobody has it */
   agentName: string
   reply?: string
@@ -29,12 +31,14 @@ export function chatTurns(tasks: AgentTask[], feedback: TaskFeedback[], userId: 
   for (const task of tasks) {
     if (!isChatCard(task)) continue
     cards.add(task.id)
+    const prompt = readContextPrompt(task.status)
     turns.push({
       id: task.id,
       at: task.startedAt,
       from: task.queuedBy ?? '',
       mine: !!userId && task.queuedByUserId === userId,
-      text: task.status,
+      text: prompt.text,
+      ...(prompt.contexts.length ? { contexts: prompt.contexts } : {}),
       agentName: task.agentName,
       ...(task.reply ? { reply: task.reply } : {}),
       state: task.failedAt ? 'failed' : task.endedAt ? 'done' : task.agentName ? 'working' : 'queued',

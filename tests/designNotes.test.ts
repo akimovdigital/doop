@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { agentPromptText, readContextPrompt, serializeContextPrompt } from '../shared/uiElementContext'
 import {
   designEscape,
+  designNotePrompt,
   designNotesReducer,
   formatDesignNotes,
   readDesignNotes,
@@ -200,5 +202,18 @@ describe('design notes', () => {
     expect(designEscape({ ...state, dragging: false, editingText: false })).toBe('note')
     expect(designEscape({ ...state, dragging: false, editingText: false, noteOpen: false })).toBe('mode')
     expect(designEscape({ ...state, active: false })).toBe('player')
+  })
+})
+
+it('round-trips a note separately from the original agent brief and preserves legacy prompts', () => {
+  const { contexts } = designNotePrompt([note])
+  const original = formatDesignNotes([note])
+  const wire = serializeContextPrompt(original, 'Move this', contexts)
+  expect(wire).toContain('DOM Path: #go')
+  expect(agentPromptText(wire)).toBe(original)
+  expect(readContextPrompt(wire)).toEqual({ text: 'Move this', contexts })
+  expect(readContextPrompt('Plain note\n\n<doop-context>bad</doop-context>')).toEqual({
+    text: 'Plain note\n\n<doop-context>bad</doop-context>',
+    contexts: [],
   })
 })

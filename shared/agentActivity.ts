@@ -1,3 +1,4 @@
+import { readContextPrompt } from './uiElementContext.ts'
 import type { AgentTask } from './types.ts'
 import { taskAgentKey } from './agentIdentity.ts'
 
@@ -19,10 +20,11 @@ export function agentActivityState(canvasName: string, tasks: AgentTask[]) {
   const count = task.pipeline?.length ?? 0
   const step = task.stage ?? 0
   const pipeline = count > 0 && step >= 0 && step < count
+  const text = readContextPrompt(task.status).text
   return {
     canvasName: [...canvasName].slice(0, 80).join(''),
     agentName: [...(task.agentName || 'Doop')].slice(0, 60).join(''),
-    status: [...(phase === 'failed' ? (task.failureReason ?? task.status) : task.status)].slice(0, 200).join(''),
+    status: [...(phase === 'failed' ? (task.failureReason ?? text) : text)].slice(0, 200).join(''),
     phase,
     activeCount: running.length,
     startedAt: (task.runStartedAt ?? run[run.length - 1]!.startedAt) / 1000,

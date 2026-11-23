@@ -1,3 +1,4 @@
+import { readContextPrompt } from '../shared/uiElementContext'
 import { mkdir } from 'node:fs/promises'
 import { createServer, type Server as SiteServer } from 'node:http'
 import { homedir } from 'node:os'
@@ -226,6 +227,13 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
         attachments: [],
       }),
     ])
+
+    const title = (posts[0] as { title: string }).title
+    expect(readContextPrompt(title).contexts[0]).toMatchObject({
+      source: 'browser',
+      url: siteOrigin + '/second',
+      selector: '#title',
+    })
 
     await annotate(page)
     const editFrame = await (await iframe())!.contentFrame()

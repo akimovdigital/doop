@@ -19,6 +19,7 @@
       import { createRoot } from 'react-dom/client'
       import { flushSync } from 'react-dom'
       import { PrototypePlayer } from '/src/components/PrototypePlayer.tsx'
+      import { AgentChat } from '/src/components/AgentChat.tsx'
       import { DesktopTabs } from '/src/components/DesktopTabs.tsx'
       import { ensureTab } from '/src/lib/desktop.ts'
       import { Stage } from '/src/components/Stage.tsx'
@@ -42,11 +43,17 @@
         useStore.getState().upsertFrame({ ...frame, html, updatedAt: frame.updatedAt + 1 })
       }
       window.playerClosed = false
-      /* synchronous, so the previous test's player is gone before a test looks
-         for the new one's screens */
+      /* Match the app root's tooltip context for the player's context chips.
+         Mount synchronously so tests cannot find screens from the previous player. */
       const mountPlayer = (props) =>
         flushSync(() =>
-          root.render(React.createElement(PrototypePlayer, { key: `${props.startFrameId}:${Date.now()}`, ...props })),
+          root.render(
+            React.createElement(
+              TooltipProvider,
+              null,
+              React.createElement(PrototypePlayer, { key: `${props.startFrameId}:${Date.now()}`, ...props }),
+            ),
+          ),
         )
       window.play = (startFrameId) =>
         mountPlayer({
@@ -105,11 +112,31 @@
           window.designSends.push(args)
           if (window.designSendDelay) await new Promise((resolve) => setTimeout(resolve, window.designSendDelay))
           if (window.designSendError) throw new Error(window.designSendError)
+          const store = useStore.getState()
+          store.setTasks([
+            ...store.tasks,
+            {
+              id: 'annotation-card',
+              agentName: '',
+              color: '',
+              status: args[1],
+              queuedBy: 'Test',
+              startedAt: Date.now(),
+            },
+          ])
           return { id: 'annotation-card' }
         }
       }
       window.setDesignTasks = (tasks) => useStore.getState().setTasks(tasks)
-      window.readDesignDraft = (canvasId) => useStore.getState().composerDrafts[canvasId]
+      window.showDesignChat = () =>
+        root.render(
+          React.createElement(
+            TooltipProvider,
+            null,
+            React.createElement(AgentChat, { className: 'dark ml-auto h-full max-w-sm bg-surface' }),
+          ),
+        )
+      window.readDesignDraft = (canvasId) => useStore.getState().composerDrafts[canvasId]?.text ?? ''
       window.writeDesignDraft = (canvasId, draft) => useStore.getState().setComposerDraft(canvasId, draft)
       window.fixtureReady = true
     </script>
