@@ -122,3 +122,7 @@ Editors get a 36 px capsule centred 12 px above the preview’s bottom edge. It 
 ## Prototype annotations
 
 Design Mode replaces the address and navigation cluster in the 36 px preview toolbar with an Exit icon and a brand-tinted hint. Holding Space over the preview restores page interaction until release. Hover and selection use 1 px brand outlines with tag badges at their top-right corners. A compact note pill sits below the selection and shows the Batch edits controls after typing. Numbered pins use 16 px brand circles at the top-right corners of their anchors and appear during Design Mode. The split Send pill stays in the toolbar while notes are pending. Its chevron anchors the queue popover.
+
+## Prototype chat capsule
+
+At the bottom center of the preview, an 80 × 16 px button presents a textless 70 × 5 px grabber. The pending count and working indicator sit beside it. A short hover or click opens the shared draft composer, up to 560 px wide, with the latest reply and selected element when available.

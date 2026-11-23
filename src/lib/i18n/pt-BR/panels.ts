@@ -367,6 +367,7 @@ export const panels: Catalog['panels'] = {
   designShowResolved: 'Mostrar resolvidas',
   designEmpty: 'Nenhuma anotação ainda',
   previewChatAsk: 'Pergunte ao Doop…',
+  previewChatPlaceholder: 'Crie, planeje ou pesquise… @ para anexar, / para habilidades',
   previewChatShortcut: 'Pergunte ao Doop… (⌘L ou ⌘/)',
   previewChatOpen: 'Abrir conversa',
   previewChatCollapse: 'Recolher conversa',

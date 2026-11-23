@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useT } from '@/lib/i18n'
 import type { Allowance } from '../lib/api'
 import { chatTurns } from '../lib/agentChat'
@@ -90,6 +90,14 @@ export function PreviewChatCapsule({
 }) {
   const field = useRef<HTMLTextAreaElement>(null)
   const pill = useRef<HTMLButtonElement>(null)
+  const hoverTimer = useRef<number>()
+
+  function cancelHover() {
+    window.clearTimeout(hoverTimer.current)
+    hoverTimer.current = undefined
+  }
+
+  useEffect(() => cancelHover, [chat.open])
   useLayoutEffect(() => {
     const target = chat.focusRequest?.target
     if (target === 'field' && chat.open) field.current?.focus({ preventScroll: true })
@@ -112,6 +120,7 @@ export function PreviewChatCapsule({
   )
   const working = tasks.some((task) => task.agentName && !task.endedAt && !task.failedAt)
   const hint = t('panels.previewChatAsk')
+  const placeholder = t('panels.previewChatPlaceholder')
   const openLabel = t('panels.previewChatOpen')
   const collapseLabel = t('panels.previewChatCollapse')
   const badge = t('panels.previewChatPending', { count: pending })
@@ -126,12 +135,12 @@ export function PreviewChatCapsule({
     <div
       data-preview-chat=""
       data-chat-state={chat.open ? 'expanded' : 'collapsed'}
-      className="pointer-events-none absolute inset-x-0 bottom-3 z-[7] flex justify-center px-2"
+      className="pointer-events-none absolute inset-x-0 bottom-0 z-[7] flex justify-center px-2"
     >
       {chat.open ? (
         <section
           aria-label={hint}
-          className="pointer-events-auto w-full max-w-[560px] rounded-panel border-2 border-line bg-surface p-2.5 text-ink shadow-pop motion-safe:animate-[preview-chat-in_150ms_ease-out]"
+          className="pointer-events-auto mb-2 w-full max-w-[560px] rounded-panel border-2 border-line bg-surface p-2.5 text-ink shadow-pop motion-safe:animate-[preview-chat-in_150ms_ease-out]"
         >
           <div className="flex items-center justify-between gap-2">
             <span className="flex min-w-0 items-center gap-1.5 text-caption font-semibold">
@@ -189,7 +198,7 @@ export function PreviewChatCapsule({
               data-preview-chat-field=""
               className="max-h-32 min-h-14 resize-y"
               rows={2}
-              placeholder={hint}
+              placeholder={placeholder}
               aria-label={hint}
               value={draft}
               onChange={(event) => useStore.getState().setComposerDraft(canvasId, event.target.value)}
@@ -229,40 +238,59 @@ export function PreviewChatCapsule({
           )}
         </section>
       ) : (
-        <div className="pointer-events-auto flex h-9 max-w-full items-center gap-1 rounded-pill border-2 border-line bg-surface px-1 text-ink shadow-pop motion-safe:animate-[preview-chat-in_150ms_ease-out]">
+        <div className="relative flex h-4 shrink-0 items-center">
           <Button
             ref={pill}
+            data-preview-chat-handle=""
             variant="bare"
             size="pill"
-            className="h-7 gap-2 px-2.5 text-ink-soft"
+            className="pointer-events-auto h-4 w-20 p-0 hover:bg-transparent"
             aria-label={hint}
             title={t('panels.previewChatShortcut')}
             aria-expanded={false}
-            onClick={() => chat.expand()}
+            onPointerMove={(event) => {
+              if (event.pointerType !== 'mouse' || hoverTimer.current !== undefined) return
+              hoverTimer.current = window.setTimeout(() => {
+                hoverTimer.current = undefined
+                chat.expand()
+              }, 140)
+            }}
+            onPointerLeave={cancelHover}
+            onClick={() => {
+              cancelHover()
+              chat.expand()
+            }}
           >
-            <AgentIcon name="Doop" size={15} />
-            {hint}
-            {working && <Working />}
+            <span aria-hidden="true" className="h-[5px] w-[70px] rounded-pill bg-ink-faint ring-1 ring-surface/70" />
           </Button>
-          {pending > 0 && <PendingBadge label={badge} onClick={onShowQueue} />}
+          {(pending > 0 || working) && (
+            <div className="absolute left-full ml-1 flex items-center gap-1">
+              {pending > 0 && <PendingBadge label={badge} count={pending} onClick={onShowQueue} />}
+              {working && <Working />}
+            </div>
+          )}
         </div>
       )}
     </div>
   )
 }
 
-function PendingBadge({ label, onClick }: { label: string; onClick: () => void }) {
+function PendingBadge({ label, count, onClick }: { label: string; count?: number; onClick: () => void }) {
   return (
     <Button
       data-preview-chat-pending=""
       variant="bare"
       size="pill"
-      className="bg-brand/10 text-brand hover:bg-brand/15 hover:text-brand"
+      className={
+        count === undefined
+          ? 'bg-brand/10 text-brand hover:bg-brand/15 hover:text-brand'
+          : 'pointer-events-auto h-4 min-w-4 bg-brand px-1 text-micro text-white hover:bg-brand/90 hover:text-white'
+      }
       aria-label={label}
       title={label}
       onClick={onClick}
     >
-      {label}
+      {count ?? label}
     </Button>
   )
 }

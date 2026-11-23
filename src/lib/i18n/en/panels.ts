@@ -363,6 +363,7 @@ export const panels = {
   designShowResolved: 'Show resolved',
   designEmpty: 'No annotations yet',
   previewChatAsk: 'Ask Doop…',
+  previewChatPlaceholder: 'Create, plan or research… @ to attach, / for skills',
   previewChatShortcut: 'Ask Doop… (⌘L or ⌘/)',
   previewChatOpen: 'Open chat',
   previewChatCollapse: 'Collapse chat',

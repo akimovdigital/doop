@@ -402,8 +402,16 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
   it('expands and collapses the capsule, keeping the side-panel draft, pending count and per-canvas state', async () => {
     const frame = await mount()
     await page.waitForSelector(`${capsule}[data-chat-state="collapsed"]`)
+    const grabber = await page.$eval('[data-preview-chat-handle]', (el) => {
+      const { width, height } = el.querySelector('span')!.getBoundingClientRect()
+      return { width, height, text: el.textContent }
+    })
+    expect(grabber).toEqual({ width: 70, height: 5, text: '' })
     await page.click(`${capsule} ${control('Ask Doop…')}`)
     await page.waitForSelector(chatField)
+    expect(await page.$eval(chatField, (el) => el.getAttribute('placeholder'))).toBe(
+      'Create, plan or research… @ to attach, / for skills',
+    )
     await page.keyboard.type('Keep this draft')
     expect(await draft()).toBe('Keep this draft')
     await page.keyboard.press('Escape')
@@ -414,6 +422,10 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await page.waitForSelector(chatField)
     expect(await page.$eval(chatField, (el) => (el as HTMLTextAreaElement).value)).toBe('Keep this draft')
     const outside = await location(frame, '#title')
+    await page.mouse.click(outside.x, outside.y)
+    await page.waitForSelector(chatField, { hidden: true })
+    await page.hover('[data-preview-chat-handle]')
+    await page.waitForSelector(chatField)
     await page.mouse.click(outside.x, outside.y)
     await page.waitForSelector(chatField, { hidden: true })
     await chord('l')
@@ -500,6 +512,8 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
       await frame.evaluate(() => document.fonts.ready.then(() => true))
       await shot('dm-01-off-annotate-button')
       await shot('chat-01-capsule-collapsed')
+      await page.waitForSelector('[data-preview-chat-handle]', { visible: true })
+      await shot('chat-05-capsule-handle')
       await enter()
       await shot('dm-02-on-hint-row')
       await shot('dm-11-hint-row-in-address')
