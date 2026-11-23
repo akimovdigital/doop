@@ -68,10 +68,12 @@ export function PrototypePlayer({
   startFrameId,
   onClose,
   syncUrl = false,
+  initialInteraction,
 }: {
   startFrameId: string
   onClose?: () => void
   syncUrl?: boolean
+  initialInteraction?: Interaction
 }) {
   const canvas = useStore((s) => s.canvas)
   const frames = canvas?.frames
@@ -292,6 +294,18 @@ export function PrototypePlayer({
         return // the frame scrolls itself
     }
   }
+
+  // The canvas can hand off a navigation or overlay to the same player
+  // used by Present, with the original source screen in the history.
+  const handoff = useRef(initialInteraction)
+  const performHandoff = useRef(perform)
+  performHandoff.current = perform
+  useEffect(() => {
+    const interaction = handoff.current
+    if (!interaction) return
+    handoff.current = undefined
+    performHandoff.current(interaction)
+  }, [])
 
   function release() {
     const revert = pressRevert.current

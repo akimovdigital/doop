@@ -1,6 +1,6 @@
-import { openBrowserSurface, useBrowserUi } from '../lib/browserFrames'
+import { closeBrowserSurface, openBrowserSurface, useBrowserUi } from '../lib/browserFrames'
 import { CAPTURE_PREFIX, pasteWebCapture } from '../lib/webCapture'
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { canEditOpenCanvas, pickedSelectors, roleOf, useStore } from '../lib/store'
 import { followPageInUrl } from '../lib/pageUrl'
 import { MOD_KEY, PRESENT_SHORTCUT_HINT, isControlTarget, isTypingTarget, shortcutKey } from '../lib/keys'
@@ -60,12 +60,13 @@ import { AccessBanner } from '../components/AccessBanner'
 import { ShareModal } from '../components/ShareModal'
 import { ExportModal } from '../components/ExportModal'
 import { AppIcon } from '../components/ui/brand-mark'
-import { pageFrames } from '../../shared/pages'
+import { framePageId, pageFrames } from '../../shared/pages'
 import { defaultPageId } from '../lib/pageLink'
-import { flowStartFrame } from '../../shared/prototype'
+import { flowStartFrame, type Interaction } from '../../shared/prototype'
 import type { Frame } from '../../shared/types'
 import { ImportStepFooter, ImportStepHeader, SourcePicker } from '../components/ImportSources'
 import { importSources } from '../components/importSourceList'
+import { HtmlFrameBrowserPanel } from '../components/HtmlFrameBrowserPanel'
 import { CommandPalette } from '../components/CommandPalette'
 import { MainMenu } from '../components/MainMenu'
 import { ShortcutsSheet } from '../components/ShortcutsSheet'
@@ -305,11 +306,22 @@ export function CanvasPage({
   }, [])
   const [showShare, setShowShare] = useState(false)
   /* the frame the player was launched on, while presenting */
-  const [presenting, setPresenting] = useState<string | null>(null)
-  const browserSurface = useBrowserUi((s) => s.surface?.mode)
-  const browserPresenting = browserSurface === 'present'
+  const [presenting, setPresenting] = useState<{ frameId: string; interaction?: Interaction } | null>(null)
+  const browserSurface = useBrowserUi((s) => s.surface)
+  const browserPresenting = browserSurface?.mode === 'present'
   const browserSideWidth = useBrowserUi((s) => s.sideWidth)
-  const sideBrowserOpen = browserSurface === 'side'
+  const sideBrowserOpen = browserSurface?.mode === 'side'
+  const sideFrame =
+    sideBrowserOpen && canvas
+      ? canvas.frames.find(
+          (frame) =>
+            frame.id === browserSurface.frameId && !frame.hidden && framePageId(canvas, frame) === activePageId,
+        )
+      : undefined
+  const htmlSideFrame = sideFrame && !sideFrame.browser ? sideFrame : undefined
+  useEffect(() => {
+    if (sideBrowserOpen && !sideFrame) closeBrowserSurface(browserSurface.frameId)
+  }, [sideBrowserOpen, sideFrame, browserSurface])
   /* ⌘. acts only over the canvas view, outside PresentMode */
   const hideUiActive = canHideUi({ view: 'canvas', presenting: !!presenting || browserPresenting })
   const activePageId = useStore((s) => s.activePageId)
@@ -666,12 +678,12 @@ export function CanvasPage({
     state.requestComposerFocus()
   }
 
-  function openPresent(frameId: string | null) {
+  const openPresent = useCallback((frameId: string | null, interaction?: Interaction) => {
     if (!frameId) return
     const frame = useStore.getState().canvas?.frames.find((item) => item.id === frameId)
     if (frame?.browser && !frame.hidden) openBrowserSurface(frame, 'present')
-    else setPresenting(frameId)
-  }
+    else setPresenting({ frameId, interaction })
+  }, [])
 
   /* lend the action registry what only this page holds, fresh every render */
   useEffect(() => {
@@ -1092,7 +1104,14 @@ export function CanvasPage({
         style={{ ...chromeVars, right: sideBrowserOpen ? 'var(--browser-side-width)' : undefined }}
       >
         {find && !presenting && !uiHidden && <FindBar mode={find} step={findStep} onClose={() => setFind(null)} />}
-        <Stage onAddFrame={addFrame} insets={stageInsets} bounds={stageBounds} />
+        <Stage
+          onAddFrame={addFrame}
+          insets={stageInsets}
+          bounds={stageBounds}
+          onPresentFrame={openPresent}
+          presenting={!!presenting || browserPresenting}
+        />
+        {htmlSideFrame && <HtmlFrameBrowserPanel key={htmlSideFrame.id} frame={htmlSideFrame} />}
         <div
           className={cn(
             'pointer-events-none absolute inset-x-0 bottom-0 top-[50px] max-md:top-14 max-xs:top-[100px]',
@@ -1384,7 +1403,11 @@ export function CanvasPage({
       {showConnect && editorReady && <ConnectModal canvasId={canvasId} onClose={() => setShowConnect(false)} />}
       {presenting && (
         <Suspense fallback={null}>
-          <PresentMode frameId={presenting} onClose={() => setPresenting(null)} />
+          <PresentMode
+            frameId={presenting.frameId}
+            interaction={presenting.interaction}
+            onClose={() => setPresenting(null)}
+          />
         </Suspense>
       )}
       {paletteOpen && (

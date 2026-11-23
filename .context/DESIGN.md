@@ -214,14 +214,20 @@ density="rail"` (the group caption with its chevron) and `DashNavItem density="r
 - `--breakpoint-xs`: `30rem`, `--breakpoint-md`: `56.25rem` - custom additions on top of
   Tailwind's defaults.
 
-## Live Browser frame
+## Browser chrome on the canvas
 
-A globe identifies Browser in the tool rail, Layers and the Inspector. On the canvas, a
-28 px pill uses the surface and line tokens, small quiet IconButtons and the label text scale.
-It follows the frame's layout scale. The brand outline distinguishes selection and the wider
-brand halo marks interaction. The active Esc keycap is also a button. The browser page is
-clipped to its corner radius. The selected frame uses the normal canvas grips.
+A globe identifies the Browser tool. Browser references and regular HTML frames share a
+28 px pill built from `--surface`, `--line`, `text-label` and quiet small IconButtons. It
+follows the frame's screen bounds and keeps its type and controls at the same size through
+canvas zoom. At small widths the pill has a minimum width and the address truncates.
 
-Present uses a full-window page with a navigation pill and a separate exit pill. The side panel
-uses the same navigation controls where applicable and the standard panel resize handle. Both use the editor's paper and surface
-tokens. Present animates from the frame rect and respects reduced motion.
+HTML frames reveal it on hover, with a 150 ms grace period between the frame and its
+controls. The pill stays on a single selection. While it is visible, the frame name sits
+above the pill and remains a separate drag target. The lower pill is centred below the
+frame and clears the normal size badge. Browser references retain their address bar and use
+the same lower pill. The thin brand outline marks hover or selection. Interaction adds a
+brand halo, fills the lower controls with the brand colour and shows a clickable Esc keycap.
+
+Present uses a full-window player, which has its own toolbar. The side surface uses the
+editor's paper and surface tokens and the standard resize handle. Browser Present animates
+from the frame rect and respects reduced motion.

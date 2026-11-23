@@ -5,8 +5,7 @@ import { protoShortcut } from './prototypePlayer'
  * Prototype triggers, inside the sandboxed frame (spliced into
  * FRAME_BOOTSTRAP's scope, so `editing`, `cssPath` and `designRect` are the
  * runtime's own). Inert until the parent turns prototype mode on with
- * `doop:proto` — the canvas never does, so a click while editing still only
- * selects. Once on, a trigger posts `doop:proto-action` with the parsed
+ * `doop:proto` — on the canvas that happens only during explicit interaction. Once on, a trigger posts `doop:proto-action` with the parsed
  * interaction and the player does the navigation; only scroll-to runs here.
  *
  * The parser is shared/prototype.ts's own, inlined by source: one definition
@@ -17,6 +16,7 @@ export const FRAME_PROTO_RUNTIME = `
   var protoShortcut = (${protoShortcut.toString()});
   var PROTO_SEL = '${PROTO_SELECTOR}'
   var protoOn = false
+  var protoCanvas = false
   var protoHints = true
   var protoTimers = []
   var protoHoverEl = null
@@ -56,6 +56,7 @@ export const FRAME_PROTO_RUNTIME = `
       if (target) target.scrollIntoView({ behavior: interaction.transition === 'instant' ? 'auto' : 'smooth', block: 'start' })
       return
     }
+    if (protoCanvas && press) return
     if (press) protoPressing = true
     parent.postMessage({ type: 'doop:proto-action', interaction: interaction, press: !!press }, '*')
   }
@@ -159,10 +160,21 @@ export const FRAME_PROTO_RUNTIME = `
     } else if (protoHints && !protoNative(ev.target)) protoFlash()
   }, true)
 
+  // After the design's own handlers: they may implement routing themselves.
+  window.addEventListener('click', function (ev) {
+    if (!protoCanvas || !protoActive() || ev.defaultPrevented || !ev.target || !ev.target.closest) return
+    var link = ev.target.closest('a[href]')
+    if (!link) return
+    var href = link.getAttribute('href')
+    if (!href || /^\\s*javascript:/i.test(href)) return
+    ev.preventDefault()
+    parent.postMessage({ type: 'doop:canvas-link', href: href }, '*')
+  })
+
   document.addEventListener('pointerdown', function (ev) {
     if (!protoActive()) return
     var hit = protoFind(ev.target, 'press')
-    if (!hit) return
+    if (!hit || (protoCanvas && hit.interaction.action !== 'scroll-to')) return
     ev.preventDefault()
     protoFire(hit.interaction, true)
   }, true)
@@ -197,7 +209,7 @@ export const FRAME_PROTO_RUNTIME = `
      back through doop:proto-key, wherever the focus is. */
   document.addEventListener('keydown', function (ev) {
     if (!protoActive() || ev.repeat || ev.key === 'Escape') return
-    var command = protoShortcut(ev)
+    var command = protoCanvas ? null : protoShortcut(ev)
     if (command) {
       ev.preventDefault()
       parent.postMessage({ type: 'doop:proto-shortcut', command: command }, '*')
@@ -221,7 +233,9 @@ export const FRAME_PROTO_RUNTIME = `
     var d = ev.data
     if (!d) return
     if (d.type === 'doop:proto') {
+      protoCanvas = !!d.on && d.canvas === true
       setProto(!!d.on, d.hints !== false)
+      applyCursor()
       /* answered once the switch has taken: a key the player lets through
          after this reply meets a runtime that is listening */
       if (d.reqId) parent.postMessage({ type: 'doop:proto-result', reqId: d.reqId, on: protoOn }, '*')

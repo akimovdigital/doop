@@ -1,3 +1,4 @@
+import type { Interaction } from '../../shared/prototype'
 import { Globe } from 'lucide-react'
 import { createBrowserFrame, useBrowserUi } from '../lib/browserFrames'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
@@ -241,6 +242,8 @@ export function Stage({
   onAddFrame,
   insets = NO_INSETS,
   bounds,
+  onPresentFrame,
+  presenting = false,
 }: {
   onAddFrame: () => void
   /** px the top bar, floating panels and islands cover at each of the
@@ -250,6 +253,8 @@ export function Stage({
   /** where the stage sits inside the page when it is not the whole of it:
    *  docked panels leave it the gap between their columns */
   bounds?: StageInsets
+  presenting?: boolean
+  onPresentFrame?: (frameId: string, interaction?: Interaction) => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
   /* read by the fit callbacks, which outlive a render */
@@ -428,6 +433,8 @@ export function Stage({
     }
     apply(useStore.getState().viewport)
     let settle = 0
+    let revealChrome = 0
+    const stage = ref.current
     const unsub = useStore.subscribe((s, prev) => {
       const sameCanvas = s.canvas?.id === prev.canvas?.id
       if (!sameCanvas || s.activePageId !== prev.activePageId) {
@@ -442,6 +449,14 @@ export function Stage({
       if (s.viewOptions.pixelGrid !== prev.viewOptions.pixelGrid) apply(s.viewport)
       if (s.viewport === prev.viewport) return
       apply(s.viewport)
+      if (s.viewport.zoom !== prev.viewport.zoom && stage) {
+        if (!revealChrome) stage.setAttribute('data-frame-camera-moving', '')
+        window.clearTimeout(revealChrome)
+        revealChrome = window.setTimeout(() => {
+          revealChrome = 0
+          stage.removeAttribute('data-frame-camera-moving')
+        }, 150)
+      }
       if (ref.current) sendViewport(s.viewport, stageSize.current)
       // Every zoom at or below 100% uses the same layout. Keep the timeout
       // through a pan only when a previous zoom still needs to settle.
@@ -458,6 +473,8 @@ export function Stage({
       rememberPageCamera(useStore.getState(), cameraPage.current)
       unsub()
       window.clearTimeout(settle)
+      window.clearTimeout(revealChrome)
+      stage?.removeAttribute('data-frame-camera-moving')
     }
   }, [])
 
@@ -1352,6 +1369,7 @@ export function Stage({
         <ContextMenuTrigger asChild>
           <div
             ref={ref}
+            data-frame-panning={panning || panMode || undefined}
             /* `stage` is a behaviour hook, not a style: frameClipboard.ts queries
            `.stage` to map screen coordinates into the canvas. No CSS is
            attached to it — everything visual is in the utilities beside it. */
@@ -1428,6 +1446,8 @@ export function Stage({
                     layoutZoom={layoutZoom}
                     stage={ref}
                     onFollowLink={followFrameLink}
+                    onPresentFrame={onPresentFrame}
+                    presenting={presenting || uiHidden}
                   />
                 </FrameLabelLayer.Provider>
                 <GhostFrames />
@@ -1447,8 +1467,8 @@ export function Stage({
                 )}
               </CommentThreadLayer.Provider>
             </div>
-            {/* the selected frame's size badge, in screen px (FrameLabelLayer); after
-                the world so no frame, however it stacks, covers it */}
+            {/* screen-space badges and browser controls (FrameLabelLayer),
+                above the canvas world and below open comment threads */}
             <div className="pointer-events-none absolute inset-0" ref={attachLabelLayer} />
             {/* an open comment thread, in screen px above the badges, so no
                 badge covers it; CommentPin keeps it on its pin */}
@@ -1684,10 +1704,14 @@ function FrameStack({
   layoutZoom,
   stage,
   onFollowLink,
+  onPresentFrame,
+  presenting,
 }: {
   frames: Frame[]
   layoutZoom: number
   onFollowLink: (source: Frame, href: string) => void
+  onPresentFrame?: (frameId: string, interaction?: Interaction) => void
+  presenting: boolean
   stage: React.RefObject<HTMLDivElement | null>
 }) {
   const mounted = useMemo(() => [...frames].sort(byCreation), [frames])
@@ -1710,6 +1734,8 @@ function FrameStack({
             compactSectionTitles={compactSectionTitles}
             requestDocument={request}
             onFollowLink={onFollowLink}
+            onPresentFrame={onPresentFrame}
+            presenting={presenting}
           />
         ),
       )}

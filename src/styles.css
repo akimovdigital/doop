@@ -1436,3 +1436,70 @@ body[data-panel-resizing] * {
 .browser-surface::backdrop {
   background: var(--paper);
 }
+
+/* Screen-space furniture shares the frame label layer's camera offset. */
+.canvas-browser-chrome {
+  position: absolute;
+  pointer-events: none;
+}
+
+.canvas-browser-chrome .browser-canvas-bar,
+.browser-under-bar {
+  pointer-events: auto;
+  width: max-content;
+}
+
+.canvas-browser-chrome .browser-canvas-bar {
+  width: max(100%, var(--browser-bar-min, 220px));
+  left: 50%;
+  right: auto;
+  translate: -50% 0;
+}
+
+.browser-under-bar {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 50%;
+  translate: -50% 0;
+}
+
+[data-chrome-size-badge] > .browser-under-bar {
+  top: calc(100% + 35px);
+}
+
+.canvas-browser-outline {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  translate: -50% -50%;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 55%, transparent);
+}
+
+[data-chrome-selected] > .canvas-browser-outline {
+  box-shadow: 0 0 0 1px var(--brand);
+}
+
+[data-chrome-active] > .canvas-browser-outline {
+  box-shadow:
+    0 0 0 2px var(--brand),
+    0 0 0 5px color-mix(in srgb, var(--brand) 22%, transparent);
+}
+
+[data-chrome-active] > .browser-under-bar button {
+  background-color: var(--brand);
+  color: var(--paper);
+}
+
+[data-doop-frame-shell][data-frame-browser-visible] > [data-frame-title] {
+  margin-bottom: calc(31px / var(--zoom, 1));
+}
+
+[data-html-browser-chrome] {
+  --browser-bar-min: 244px;
+}
+
+.stage[data-frame-camera-moving] [data-canvas-browser-chrome],
+.stage[data-frame-panning] [data-canvas-browser-chrome] {
+  visibility: hidden;
+}

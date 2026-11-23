@@ -3326,12 +3326,23 @@ app.post('/api/canvases/:id/import', async (req, res) => {
     const url = String(req.body?.url ?? '')
     /* Validate before consuming a rate-limit slot — typos shouldn't burn quota. */
     assertPublicHttpUrl(url)
+    const placement = z
+      .object({ x: z.number().finite(), y: z.number().finite(), pageId: z.string().min(1) })
+      .optional()
+      .safeParse(req.body?.placement)
+    if (!placement.success) return res.status(400).json({ error: 'invalid import placement' })
     if (!takeImportSlot(req.user!.id)) return res.status(429).json({ error: 'too many imports — wait a minute' })
     const imported = await importPage(url)
     const actor = userActor(req)
     const frame = actions.createFrame(
       canvas.id,
-      { name: imported.title.slice(0, 80), width: imported.width, height: imported.height, html: imported.html },
+      {
+        ...placement.data,
+        name: imported.title.slice(0, 80),
+        width: imported.width,
+        height: imported.height,
+        html: imported.html,
+      },
       actor,
     )
     if (!frame) return res.status(404).json({ error: 'canvas not found' })
@@ -3415,10 +3426,20 @@ app.post('/api/feedback/:id/retry', async (req, res) => {
 })
 
 app.get('/api/frames/:id/screenshot.png', async (req, res) => {
-  const frame = requireFrame(req, res, req.params.id, 'view')
+  const capture = req.query.capture === 'visible' || req.query.capture === 'full' ? req.query.capture : null
+  const frame = requireFrame(req, res, req.params.id, capture ? 'edit' : 'view')
   if (!frame) return
   try {
-    const { renderFrame } = await import('./screenshot.ts')
+    const { captureFramePng, renderFrame } = await import('./screenshot.ts')
+    if (capture) {
+      if (frame.browser && !takeImportSlot(req.user!.id)) {
+        return res.status(429).json({ error: 'too many captures — wait a minute' })
+      }
+      const coordinate = (value: unknown) => Math.max(0, Math.min(1_000_000, Number(value) || 0))
+      const png = await captureFramePng(frame, capture, { x: coordinate(req.query.x), y: coordinate(req.query.y) })
+      res.set('Cache-Control', 'no-store')
+      return res.type('png').send(png)
+    }
     const scale = fitExportScale(frame, parseExportScale(req.query.scale) ?? 1)
     const png = await renderFrame(frame, fullFrameRenderScale(frame, scale))
     res.type('png').send(png)

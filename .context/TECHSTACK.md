@@ -1372,3 +1372,36 @@ Framing restrictions (CSP and X-Frame-Options) and browser network policy still 
 The iframe handles its own links, form input and scrolling. Editor navigation controls
 track addresses entered in Doop. Events focused inside an external document are isolated
 from the editor, including shortcuts and gesture events intercepted by the child.
+
+### Shared canvas browser chrome
+
+`FrameBrowserChrome` portals its controls into `FrameLabelLayer` outside the zoomed
+world. The Stage already writes camera coordinates and `--zoom` to that layer. An
+HTML frame mounts the controls only for the current hover or a single selection. The
+hover lease expires after 150 ms and notifies only the frames involved. The Stage
+suppresses the layer during camera gestures with DOM attributes. No frame iframe moves
+when its controls mount, disappear or follow the camera. Browser frames keep the
+persistent address bar from the Browser tool.
+
+An HTML address copies the importer source marker when present, or the standard
+`/c/:canvasId/proto?frame=:frameId` link. The side panel opens that prototype route.
+Present uses the existing player. Reload flushes pending iframe edits and reposts the
+current document using `doop:html`. Explicit interaction lifts the shield and enables
+prototype triggers in the existing sandbox. Native page input and scroll-to stay in that
+document. Navigate and overlay actions hand off to Present with the source in its
+history. Hold-to-revert transitions are available in Present. Pick element uses the
+editor's hover and probe messages with the shield in place.
+
+Capture creates the same image layer as clipboard paste, backed by a canvas asset. The
+client rasterizer handles a visible HTML viewport when it can. Full-page suffices with
+the local path when the document fits the frame. An overflowing or scrolled document,
+unsupported local raster, or public Browser reference uses the guarded server renderer.
+The server capture of a Browser reference starts from its configured address and stored
+viewport; the opaque iframe does not expose its live session or scroll offset. Public
+Browser references can be imported through the website import endpoint, with an optional
+position and page. Both actions create an undoable layer beside the source and select it.
+
+Pick is HTML-only. An HTML frame gets Import only where it has an original URL. Browser
+Capture and Import use Doop's existing public-network policy. Loopback remains available
+for live Browser playback on the viewer's device. Read-only viewers get non-mutating
+controls, including local element picks.

@@ -1,19 +1,6 @@
 import { MOBILE_QUERY } from '../hooks/use-mobile'
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import {
-  ArrowLeft,
-  ArrowRight,
-  ExternalLink,
-  GripVertical,
-  Laptop,
-  LoaderCircle,
-  Minimize2,
-  PanelRight,
-  RotateCw,
-  Smartphone,
-  Tablet,
-  X,
-} from 'lucide-react'
+import { ArrowLeft, ArrowRight, Laptop, LoaderCircle, Minimize2, RotateCw, Smartphone, Tablet, X } from 'lucide-react'
 import {
   BROWSER_DEVICES,
   browserAddress,
@@ -33,6 +20,13 @@ import {
   useBrowserUi,
 } from '../lib/browserFrames'
 import { useT } from '../lib/i18n'
+import {
+  canAcquireFrameSource,
+  captureChromeFrame,
+  copyFrameAddress,
+  importChromeFrame,
+} from '../lib/canvasFrameChrome'
+import { BrowserSideResize, FrameBrowserChrome } from './FrameBrowserChrome'
 import { counterZoom, FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY } from '../lib/layoutZoom'
 import { canEditOpenCanvas, useStore } from '../lib/store'
 import { cn } from '../lib/utils'
@@ -40,8 +34,6 @@ import { BrowserAddressField } from './BrowserAddressField'
 import { FrameResizeHandles } from './FrameResizeHandles'
 import { Button } from './ui/button'
 import { IconButton } from './ui/icon-button'
-import { Panel } from './ui/panel'
-import { useIsMobile } from '../hooks/use-mobile'
 import type { ResizeHandle } from '../lib/elementResize'
 
 type WebPage = { src: string; request?: { address: string; reload: number }; status: 'loading' | 'ready' | 'error' }
@@ -79,6 +71,7 @@ export function BrowserFrame({
   onDrag,
   onResize,
   onRotate,
+  chromeHidden,
 }: {
   frame: Frame & { browser: NonNullable<Frame['browser']> }
   stack?: number
@@ -86,13 +79,14 @@ export function BrowserFrame({
   loadDocument: boolean
   onDrag: (event: ReactPointerEvent<HTMLDivElement>) => void
   onResize: (event: ReactPointerEvent<HTMLDivElement>, handle: ResizeHandle) => void
+  chromeHidden: boolean
   onRotate: (event: ReactPointerEvent<HTMLDivElement>) => void
 }) {
   const t = useT()
-  const mobile = useIsMobile()
   const { browser } = frame
   const selected = useStore((s) => s.selectedIds.includes(frame.id))
   const soleSelected = useStore((s) => s.selectedIds.length === 1 && s.selectedId === frame.id)
+  const multiSelected = useStore((s) => s.selectedIds.length > 1)
   const tool = useStore((s) => s.tool)
   const panMode = useStore((s) => s.panMode)
   const readOnly = useStore((s) => !canEditOpenCanvas(s))
@@ -122,6 +116,7 @@ export function BrowserFrame({
   const pageRequest = useRef<string>()
   const awaitingLoad = useRef(false)
   const address = isAbsoluteBrowserUrl(browser.url) ? browser.url : ''
+  const canAcquire = soleSelected && editable && !!address && canAcquireFrameSource(address)
   const canInteract = soleSelected && canvasInput && !mode
   const interactions = active && canInteract && !!address
   const overlay = mode ?? topMode
@@ -359,86 +354,59 @@ export function BrowserFrame({
         transform: frame.rotation ? `rotate(${frame.rotation}deg)` : undefined,
       }}
     >
-      <div
-        className="browser-canvas-bar browser-chrome"
-        data-browser-controls=""
-        onPointerDown={(event) => {
-          // Let Hand pan from the grip, while a control keeps its own click.
-          if (event.target instanceof Element && event.target.closest('button, input')) event.stopPropagation()
-        }}
-        onClickCapture={() => {
-          // Keep the Esc button mounted until the click, including from an iframe.
-          cancelActivation()
-          setActive(false)
-        }}
-        onDoubleClick={(event) => event.stopPropagation()}
-      >
-        <div
-          className="grid size-6 flex-none cursor-grab place-items-center text-ink-faint"
-          aria-label={t('canvas.browserDrag')}
-          title={t('canvas.browserDrag')}
-          onPointerDown={onDrag}
-        >
-          <GripVertical size={14} />
-        </div>
-        {reloadControl}
-        {editing && !overlay ? (
-          <BrowserAddressField
-            url={address}
-            autoFocus
-            className="h-5 flex-1"
-            onCommit={commit}
-            onCancel={() => setEditing(false)}
-            onReveal={revealBrowserControl}
-          />
-        ) : (
-          <Button
-            variant="bare"
-            type="button"
-            title={address || t('canvas.browserUrl')}
-            aria-label={t('canvas.browserUrl')}
-            className="h-6 min-w-0 flex-1 justify-start overflow-hidden rounded-row px-1 text-label focus-visible:ring-2 focus-visible:ring-ring/40"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={() => {
-              if (!editable) return
-              const state = useStore.getState()
-              state.select(frame.id)
-              if (!window.matchMedia(MOBILE_QUERY).matches) state.setInspectorOpen(true)
-              if (soleSelected) setEditing(true)
-            }}
-          >
-            <span className="truncate">{browserAddress(address) || t('canvas.browserUrl')}</span>
-          </Button>
-        )}
-        {deviceControl}
-        <IconButton
-          size="sm"
-          aria-label={t('canvas.browserSidePanel')}
-          onClick={() => openBrowserSurface(frame, 'side')}
-        >
-          <PanelRight size={14} />
-        </IconButton>
-        <IconButton
-          size="sm"
-          aria-label={t('canvas.browserPresent')}
-          onClick={() => openBrowserSurface(frame, 'present')}
-        >
-          <ExternalLink size={14} />
-        </IconButton>
-        {interactions && (
-          <Button
-            variant="bare"
-            type="button"
-            className="h-4 rounded-row border border-line bg-paper-deep px-1 font-mono text-micro text-ink-soft"
-            title={t('canvas.browserDeactivate')}
-            aria-label={t('canvas.browserDeactivate')}
-            onClick={() => shell.current?.focus({ preventScroll: true })}
-          >
-            Esc
-          </Button>
-        )}
-        {busy && <div className="browser-progress" aria-hidden="true" />}
-      </div>
+      {!overlay && !frame.hidden && !frame.locked && !chromeHidden && !multiSelected && (
+        <FrameBrowserChrome
+          frame={frame}
+          selected={soleSelected}
+          busy={busy}
+          onDrag={editable ? onDrag : undefined}
+          reload={reloadControl}
+          device={editable ? deviceControl : undefined}
+          onSide={() => openBrowserSurface(frame, 'side')}
+          onPresent={() => openBrowserSurface(frame, 'present')}
+          onBarClick={() => {
+            cancelActivation()
+            setActive(false)
+          }}
+          onExit={interactions ? () => shell.current?.focus({ preventScroll: true }) : undefined}
+          onCapture={canAcquire ? (area) => void captureChromeFrame(frame, area) : undefined}
+          onImport={canAcquire ? () => void importChromeFrame(frame, address) : undefined}
+          address={
+            editing && !overlay ? (
+              <BrowserAddressField
+                url={address}
+                autoFocus
+                className="h-5 flex-1"
+                onCommit={commit}
+                onCancel={() => setEditing(false)}
+                onReveal={revealBrowserControl}
+              />
+            ) : (
+              <Button
+                variant="bare"
+                type="button"
+                title={address || t('canvas.browserUrl')}
+                aria-label={t('canvas.browserUrl')}
+                disabled={!editable && !address}
+                className="h-6 min-w-0 flex-1 justify-start overflow-hidden rounded-row px-1 text-label focus-visible:ring-2 focus-visible:ring-ring/40"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => {
+                  if (!editable) {
+                    if (address) void copyFrameAddress(address)
+                    return
+                  }
+                  const state = useStore.getState()
+                  state.select(frame.id)
+                  if (!window.matchMedia(MOBILE_QUERY).matches) state.setInspectorOpen(true)
+                  if (soleSelected) setEditing(true)
+                }}
+              >
+                <span className="truncate">{browserAddress(address) || t('canvas.browserUrl')}</span>
+              </Button>
+            )
+          }
+        />
+      )}
       <dialog
         ref={surface}
         {...{ popover: 'manual' }}
@@ -625,20 +593,7 @@ export function BrowserFrame({
             )}
           </div>
         </div>
-        {overlay === 'side' && !mobile && overlayWidth !== undefined && (
-          <Panel
-            surface="docked"
-            className="pointer-events-none left-0 bg-transparent"
-            resize={{
-              label: t('canvas.browserResizeSide'),
-              edge: 'left',
-              width: overlayWidth + 1,
-              min: 180,
-              max: Math.floor(Math.min(900, window.innerWidth * 0.7)),
-              onResize: (sideWidth) => useBrowserUi.setState({ sideWidth }),
-            }}
-          />
-        )}
+        {overlay === 'side' && overlayWidth !== undefined && <BrowserSideResize width={overlayWidth} />}
       </dialog>
       {selected && canvasInput && editable && !overlay && !interactions && (
         <FrameResizeHandles rotation={frame.rotation ?? 0} onStart={onResize} onRotateStart={onRotate} />

@@ -1,3 +1,8 @@
+import type { Interaction } from '../../shared/prototype'
+import { sanitizeInteraction } from '../lib/prototypePlayer'
+import { HtmlFrameBrowserBar } from './HtmlFrameBrowserBar'
+import { useFrameChromeHover } from './FrameBrowserChrome'
+import { openBrowserSurface } from '../lib/browserFrames'
 import { BrowserFrame } from './BrowserFrame'
 import {
   memo,
@@ -347,6 +352,8 @@ export const FrameView = memo(function FrameView({
   compactSectionTitles = false,
   requestDocument,
   onFollowLink,
+  onPresentFrame,
+  presenting = false,
 }: {
   frame: Frame
   /** its place in the page's paint order (the Stage's z-index), front highest */
@@ -356,6 +363,8 @@ export const FrameView = memo(function FrameView({
   compactSectionTitles?: boolean
   requestDocument?: (frameId: string) => void
   onFollowLink?: (source: Frame, href: string) => void
+  onPresentFrame?: (frameId: string, interaction?: Interaction) => void
+  presenting?: boolean
 }) {
   const t = useT()
   const { standalone, synced, github, githubPlaceholder } = useMemo(() => {
@@ -402,7 +411,15 @@ export const FrameView = memo(function FrameView({
     editRequest.current++
     setPathEdit(null)
   }, [])
-  const selected = useStore((s) => s.selectedIds.includes(frame.id))
+  const chromeHover = useFrameChromeHover()
+  const selection = useStore((s) => {
+    if (s.selectedIds.length <= 1) return s.selectedId === frame.id ? 'sole' : 'other'
+    if (s.selectedIds.includes(frame.id)) return 'group'
+    return chromeHover.hovered ? 'multi' : 'other'
+  })
+  const selected = selection === 'sole' || selection === 'group'
+  const [pageMode, setPageMode] = useState<'interact' | 'pick' | null>(null)
+  const [reloadRequest, setReloadRequest] = useState(0)
   const contextMenuOpen = useStore((s) => s.ctxMenu?.frameId === frame.id)
   /* space held: the shield stays up even in edit mode, so the press reaches
      the Stage and pans instead of vanishing into the editable iframe */
@@ -440,6 +457,23 @@ export const FrameView = memo(function FrameView({
   /* after exiting edit mode, hold renders until the final serialized HTML
      lands in the store — otherwise a stale post would morph the edit away */
   const [suspendPost, setSuspendPost] = useState(false)
+  const browserChromeAllowed =
+    !standalone && !frame.hidden && !frame.locked && !presenting && selection !== 'multi' && selection !== 'group'
+  const pageInputAllowed = browserChromeAllowed && selection === 'sole' && tool === 'select' && !panMode
+  const interacting = pageMode === 'interact' && pageInputAllowed && !editing
+  const picking = pageMode === 'pick' && pageInputAllowed && !editing
+  const showBrowserChrome =
+    !!onPresentFrame &&
+    browserChromeAllowed &&
+    !panMode &&
+    !fileDragging &&
+    tool !== 'zoom' &&
+    !dragging &&
+    !resizing &&
+    !elementMove.moving &&
+    !pathEdit &&
+    (selection === 'sole' || chromeHover.hovered)
+  if (pageMode && !pageInputAllowed) setPageMode(null)
   const mountRuntime = !frame.browser && (loadDocument || standalone || !!stream)
 
   /* one throttle per frame, so a group drag broadcasts every member —
@@ -1088,7 +1122,7 @@ export const FrameView = memo(function FrameView({
     return () => {
       cancelled = true
     }
-  }, [runtimeReady, html, frame.html, frame.id, editing, suspendPost])
+  }, [runtimeReady, html, frame.html, frame.id, editing, suspendPost, reloadRequest])
 
   /* ---- element comments ---- */
   const frameComments = useStore(useShallow((s) => s.comments.filter((c) => c.frameId === frame.id)))
@@ -1842,6 +1876,84 @@ export const FrameView = memo(function FrameView({
     onFollowLink?.(frame, href)
   }
 
+  function enterPageMode(mode: 'interact' | 'pick') {
+    if (editing) exitEdit()
+    useStore.getState().setTool('select')
+    select(frame.id)
+    closePopovers()
+    clearHover()
+    requestDocument?.(frame.id)
+    setPageMode(mode)
+  }
+
+  async function reloadDocument() {
+    if (editing) exitEdit()
+    requestDocument?.(frame.id)
+    // Flush debounced iframe edits over the same port used to settle Undo.
+    await requestFrame(frame.id, 'doop:settle', {})
+    localHtml.current = null
+    setReloadRequest((value) => value + 1)
+  }
+
+  const pageLink = useRef(followLink)
+  pageLink.current = followLink
+  useLayoutEffect(() => {
+    const iframe = iframeRef.current
+    const win = iframe?.contentWindow
+    if (!interacting || !runtimeReady || !iframe || !win) return
+    win.postMessage({ type: 'doop:proto', on: true, hints: false, canvas: true }, '*')
+    iframe.focus({ preventScroll: true })
+    const off = onFrameMessage(win, (event) => {
+      if (event.data?.type === 'doop:esc') setPageMode(null)
+      if (event.data?.type === 'doop:canvas-link' && typeof event.data.href === 'string') {
+        pageLink.current(event.data.href)
+      }
+      if (event.data?.type === 'doop:proto-action') {
+        const action = sanitizeInteraction(event.data.interaction)
+        if (action?.action === 'url' && action.target) pageLink.current(action.target)
+        if ((action?.action === 'navigate' || action?.action === 'overlay') && !event.data.press) {
+          setPageMode(null)
+          onPresentFrame?.(frame.id, action)
+        }
+      }
+    })
+    return () => {
+      off()
+      win.postMessage({ type: 'doop:proto', on: false }, '*')
+      if (document.activeElement === iframe) iframe.blur()
+    }
+  }, [interacting, runtimeReady, frame.id, onPresentFrame])
+
+  useEffect(() => {
+    if (!interacting && !picking) return
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      setPageMode(null)
+    }
+    function onPointer(event: PointerEvent) {
+      const target = event.target
+      if (!(target instanceof Element)) return
+      const owner = target.closest<HTMLElement>('[data-doop-frame-shell], [data-canvas-browser-chrome]')
+      if (owner?.dataset.doopFrameShell === frame.id || owner?.dataset.canvasBrowserChrome === frame.id) return
+      if (target.closest('[data-browser-controls]')) return
+      setPageMode(null)
+      // An outside press on the canvas first exits interaction and leaves
+      // the same selection in place. The next press edits the canvas again.
+      if (interacting && event.button === 0 && target.closest('.stage')) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('pointerdown', onPointer, true)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('pointerdown', onPointer, true)
+    }
+  }, [frame.id, interacting, picking])
+
   const surfaceCursor = duping || (dupKeyHeld && !editing) ? DUP_CURSOR : linkHovered ? 'pointer' : undefined
   /* The browser may show the frame document's cursor rather than the
      surface's (a link's hand under the shield), so the document wears the
@@ -1873,6 +1985,7 @@ export const FrameView = memo(function FrameView({
         onDrag={(event) => startDrag(event, 'move')}
         onResize={(event, handle) => startDrag(event, 'resize', false, false, false, handle)}
         onRotate={startRotate}
+        chromeHidden={presenting || dragging || panMode}
       />
     )
   }
@@ -1900,6 +2013,9 @@ export const FrameView = memo(function FrameView({
       <ContextMenuTrigger asChild>
         <div
           data-doop-frame-shell={frame.id}
+          data-frame-browser-visible={showBrowserChrome || undefined}
+          data-html-frame-active={interacting || undefined}
+          data-html-frame-picking={picking || undefined}
           /* the Stage reads this: a press on a locked frame is a press on the canvas */
           data-frame-locked={frame.locked ? '' : undefined}
           className={cn(
@@ -1956,6 +2072,33 @@ export const FrameView = memo(function FrameView({
             })
           }}
         >
+          {showBrowserChrome && (
+            <HtmlFrameBrowserBar
+              frame={frame}
+              readOnly={readOnly}
+              selected={selection === 'sole'}
+              onDrag={!readOnly && tool === 'select' ? (event) => startDrag(event, 'move', false, true) : undefined}
+              onReload={() => void reloadDocument()}
+              onSide={() => {
+                if (editing) exitEdit()
+                setPageMode(null)
+                openBrowserSurface(frame, 'side')
+              }}
+              onPresent={() => {
+                if (editing) exitEdit()
+                setPageMode(null)
+                select(frame.id)
+                onPresentFrame?.(frame.id)
+              }}
+              onActivate={!interacting && frame.html ? () => enterPageMode('interact') : undefined}
+              onExit={interacting ? () => setPageMode(null) : undefined}
+              onPick={frame.html ? () => (picking ? setPageMode(null) : enterPageMode('pick')) : undefined}
+              sizeBadge={!editing && !composing && (!wantedSel || shellPicked)}
+              picking={picking}
+              onEnter={chromeHover.enter}
+              onLeave={chromeHover.leave}
+            />
+          )}
           {labelLayer &&
             selected &&
             !shapeMoving &&
@@ -2008,8 +2151,14 @@ export const FrameView = memo(function FrameView({
                 zIndex: lifted ? stack : undefined,
               }}
               onPointerDown={(e) => startDrag(e, 'move', false, true)}
-              onPointerEnter={() => setNameHovered(true)}
-              onPointerLeave={() => setNameHovered(false)}
+              onPointerEnter={() => {
+                setNameHovered(true)
+                if (showBrowserChrome) chromeHover.enter()
+              }}
+              onPointerLeave={() => {
+                setNameHovered(false)
+                chromeHover.leave()
+              }}
             >
               {frame.locked && (
                 <Tooltip label={t('stage.lockedTip')} side="top" align="start">
@@ -2092,6 +2241,8 @@ export const FrameView = memo(function FrameView({
             className={cn(
               /* a standalone shape's stroke spills past its box */
               'absolute inset-0',
+              showBrowserChrome && 'rounded-[calc(8px/var(--zoom,1))]',
+              picking && 'cursor-crosshair!',
               !standalone && 'overflow-hidden',
               /* the white a design without a background sits on, one screen
                  pixel in from the edge: painted to the edge, it showed past the
@@ -2112,6 +2263,7 @@ export const FrameView = memo(function FrameView({
                 (dragging
                   ? 'shadow-pop'
                   : !selected &&
+                    !showBrowserChrome &&
                     'hover:shadow-[0_0_0_calc(1px/var(--zoom,1))_color-mix(in_srgb,var(--brand)_55%,transparent)]'),
               editing && 'cursor-text',
               !stream &&
@@ -2130,7 +2282,26 @@ export const FrameView = memo(function FrameView({
                  cover the frame's pins and hover outlines */
               zIndex: lifted ? stack : undefined,
             }}
+            onPointerEnter={() => {
+              if (
+                !standalone &&
+                !frame.locked &&
+                !frame.hidden &&
+                onPresentFrame &&
+                useStore.getState().selectedIds.length <= 1
+              )
+                chromeHover.enter()
+            }}
             onPointerDown={(e) => {
+              if (picking && e.button === 0) {
+                e.stopPropagation()
+                e.preventDefault()
+                const point = designPoint(e, e.currentTarget, frame.rotation)
+                setPageMode(null)
+                clearHover()
+                probeAt(point.x, point.y)
+                return
+              }
               linkPress.current = null
               if (
                 onFollowLink &&
@@ -2183,14 +2354,14 @@ export const FrameView = memo(function FrameView({
               })
             }}
             onDoubleClick={(e) => {
-              if (onFollowLink && linkModifier(e)) return
+              if (picking || (onFollowLink && linkModifier(e))) return
               void enterElementEdit(designPoint(e, e.currentTarget, frame.rotation))
             }}
             onPointerMove={(e) => {
               /* where the pointer is stays current through a drag or a resize
                  too: once the gesture's save lands, the hover is probed again
                  at the pointer's spot, which the gesture has moved */
-              if (tool === 'hand' || tool === 'zoom' || panMode) return
+              if (interacting || tool === 'hand' || tool === 'zoom' || panMode) return
               const at = designPoint(e, e.currentTarget, frame.rotation)
               hoverAt.current = at
               /* the Hand only pans, the Zoom only zooms, and a locked frame has nothing to pick: no
@@ -2209,6 +2380,7 @@ export const FrameView = memo(function FrameView({
               sendHover(at.x, at.y)
             }}
             onPointerLeave={() => {
+              chromeHover.leave()
               linkPress.current = null
               leaveHover()
             }}
@@ -2228,6 +2400,7 @@ export const FrameView = memo(function FrameView({
                   data-bleed={bleed || undefined}
                   title={frame.name}
                   data-doop-frame=""
+                  tabIndex={editing || interacting ? 0 : -1}
                   sandbox="allow-scripts"
                   srcDoc={FRAME_BOOTSTRAP}
                   /* The world is laid out at CSS zoom k (Stage), which an iframe
@@ -2247,7 +2420,7 @@ export const FrameView = memo(function FrameView({
                       ? null
                       : { zoom: counterZoom(layoutZoom), transform: `scale(${layoutZoom})` }),
                     transformOrigin: '0 0',
-                    contentVisibility: editing || selected ? 'visible' : 'auto',
+                    contentVisibility: editing || interacting || selected ? 'visible' : 'auto',
                     /* Chromium paints an opaque backdrop behind an iframe whose
                    colour scheme differs from its document's; the page's dark
                    scheme reaches this element by inheritance while a
@@ -2268,7 +2441,9 @@ export const FrameView = memo(function FrameView({
             {/* shield keeps pointer events on the canvas, not the iframe;
             lifted while editing so clicks land in the editable document,
             but not under a file drag, whose drop belongs to the canvas */}
-            {(!editing || panMode || fileDragging || tool !== 'select') && <div className="absolute inset-0" />}
+            {((!editing && !interacting) || panMode || fileDragging || tool !== 'select') && (
+              <div className="absolute inset-0" />
+            )}
           </div>
           {/* everything drawn over the frame rather than in it: selection ring,
               element outlines, grips, comments and the text formatting bar. While
@@ -2287,7 +2462,10 @@ export const FrameView = memo(function FrameView({
             {selected && (!wantedSel || shellPicked) && !pathEdit && !stream && !shapeMoving && (
               <div
                 data-frame-selection=""
-                className="pointer-events-none absolute inset-0 outline-solid outline-brand"
+                className={cn(
+                  'pointer-events-none absolute inset-0 outline-solid',
+                  showBrowserChrome ? 'outline-transparent' : 'outline-brand',
+                )}
                 style={{ outlineWidth: 'calc(2px / var(--zoom, 1))', outlineOffset: 'calc(-1px / var(--zoom, 1))' }}
               />
             )}
@@ -2590,6 +2768,7 @@ export const FrameView = memo(function FrameView({
               !shellLocked &&
               !readOnly &&
               !pathEdit &&
+              !interacting &&
               !editing && (
                 <FrameResizeHandles
                   rotation={frame.rotation ?? 0}

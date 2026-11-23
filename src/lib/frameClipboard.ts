@@ -146,7 +146,7 @@ const MAX_PASTE_DIM = 900
  *  shape is: a transparent shell the size of its one image, which the Layers
  *  panel lists at the root under its name, moves into frames and back out of,
  *  and scales with when resized. */
-function imageElementHtml(url: string, name: string): string {
+export function imageElementHtml(url: string, name: string): string {
   const doc = new DOMParser().parseFromString('<!doctype html><html><head></head><body></body></html>', 'text/html')
   doc.documentElement.style.cssText = 'width:100%;height:100%;margin:0;'
   doc.body.style.cssText = 'width:100%;height:100%;margin:0;'
