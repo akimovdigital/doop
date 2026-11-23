@@ -219,6 +219,14 @@ export const FRAME_PROTO_RUNTIME = `
     if (protoKey(ev.key)) ev.preventDefault()
   }, true)
 
+  // A pointer click can move focus into this document while Space is held.
+  document.addEventListener('keyup', function (ev) {
+    if (ev.code === 'Space') parent.postMessage({ type: 'doop:proto-space-up' }, '*')
+  }, true)
+  window.addEventListener('blur', function () {
+    if (protoActive()) parent.postMessage({ type: 'doop:proto-blur' }, '*')
+  })
+
   function protoScan() {
     var els = document.querySelectorAll(PROTO_SEL)
     var out = []

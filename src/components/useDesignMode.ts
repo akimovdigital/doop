@@ -85,6 +85,7 @@ export function useDesignMode({
   const allowed = !!canvasId && canEdit
   const saved = useSyncExternalStore(subscribe, () => (allowed ? savedFor(canvasId) : emptyDesignNotes))
   const [active, setActive] = useState(false)
+  const [usingPage, setUsingPage] = useState(false)
   const [queueOpen, setQueueOpen] = useState(false)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [hover, setHover] = useState<Target | null>(null)
@@ -121,7 +122,19 @@ export function useDesignMode({
     setDraft(null)
   }
 
+  function holdPage() {
+    clearHover()
+    cancelDrag()
+    pickSequence.current++
+    setUsingPage(true)
+  }
+
+  function releasePage() {
+    setUsingPage(false)
+  }
+
   function exit() {
+    releasePage()
     clearInteraction()
     setActive(false)
     setQueueOpen(false)
@@ -395,10 +408,12 @@ export function useDesignMode({
 
   return {
     enabled,
+    usingPage: enabled && usingPage,
+    holdPage,
+    releasePage,
     allowed,
     busy,
     hover,
-    label,
     draft,
     region,
     pins,

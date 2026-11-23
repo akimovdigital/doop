@@ -61,6 +61,7 @@ type Fixture = {
   setDesignTasks: (tasks: AgentTask[]) => void
 }
 
+const address = '[data-preview-toolbar] input[role=combobox]'
 const field = '[data-design-note-field]'
 const capsule = '[data-preview-chat]'
 const chatField = '[data-preview-chat-field]'
@@ -157,15 +158,16 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
   async function pick(frame: BrowserFrame, selector: string) {
     await clickAt(frame, selector)
     await page.waitForSelector(field, { visible: true })
+    expect(await page.$('[role="switch"]')).toBeNull()
   }
 
   async function addBatch(frame: BrowserFrame, selector: string, comment: string, first = false) {
     await pick(frame, selector)
+    await page.keyboard.type(comment)
     if (first) {
       await page.click('[role="switch"]')
       await page.focus(field)
     }
-    await page.keyboard.type(comment)
     await page.keyboard.press('Enter')
     await page.waitForSelector(field, { hidden: true })
   }
@@ -177,10 +179,15 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     const frame = await mount()
     await frame.focus('#go')
     await chord('D', true)
-    await page.waitForSelector('[data-design-hint]')
+    expect(await page.$(address)).toBeNull()
+    await page.waitForSelector('[data-preview-toolbar] [data-design-hint]')
+    expect(await page.$eval('[data-design-hint]', (el) => el.textContent)).toBe(
+      'Click or drag to select · Hold Space to use page · ↑↓ to adjust',
+    )
     const at = await location(frame, '#go')
     await page.mouse.move(at.x, at.y)
     await page.waitForSelector('[data-design-hover="#go"]')
+    expect(await page.$eval('[data-design-hover="#go"]', (el) => el.textContent)).toBe('button')
     await page.keyboard.press('ArrowUp')
     await page.waitForSelector('[data-design-hover="#wrap"]')
     await page.keyboard.press('ArrowDown')
@@ -199,7 +206,31 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await page.waitForSelector('[data-design-region]', { hidden: true })
     expect(await page.$('[data-design-hint]')).not.toBeNull()
     await page.keyboard.press('Escape')
-    await page.waitForSelector('[data-design-hint]', { hidden: true })
+    await page.waitForSelector(address)
+  })
+
+  it('temporarily re-enables page clicks while Space is held and resumes picking after iframe keyup', async () => {
+    const frame = await mount()
+    await enter()
+    await page.keyboard.down('Space')
+    await page.waitForSelector('[data-design-shield]', { hidden: true })
+    await page.waitForFunction(
+      () =>
+        (window as unknown as { messages: { type: string; on?: boolean }[] }).messages
+          .filter((message) => message.type === 'doop:proto-result')
+          .at(-1)?.on === true,
+    )
+    await clickAt(frame, '#go')
+    const next = await screen('next')
+    await next.$eval('h1', (el) => {
+      el.tabIndex = -1
+      el.focus()
+    })
+    await page.keyboard.up('Space')
+    await page.waitForSelector('[data-design-shield]', { visible: true })
+    await pick(next, 'h1')
+    await page.keyboard.type('Keep this')
+    expect(await page.$eval(field, (el) => (el as HTMLTextAreaElement).value)).toBe('Keep this')
   })
 
   it('sends the exact note and element scope, intercepting the hotspot until exit', async () => {
@@ -235,8 +266,14 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await page.waitForSelector(pin(2))
     expect(await sent()).toHaveLength(0)
     await page.click(control('Exit Design Mode'))
+    await page.waitForSelector(address)
+    expect(await page.$(pin(1))).toBeNull()
     await page.waitForSelector(control('Send 2 to agent'))
+    expect(await page.$eval(control('2 pending; show details'), (el) => el.getAttribute('title'))).toBe(
+      'Show pending annotations',
+    )
     frame = await mount()
+    await chord('D', true)
     await page.waitForSelector(pin(1))
     await page.click(pin(1))
     await page.waitForSelector(field)
@@ -246,8 +283,8 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await page.keyboard.press('Enter')
     await page.waitForSelector(field, { hidden: true })
     await page.click(control('Send 2 to agent'))
-    await page.waitForSelector('[data-design-pin][data-status="sent"]')
-    await page.waitForSelector('[data-design-hint]', { hidden: true })
+    await page.waitForSelector(address)
+    expect(await page.$('[data-design-pin]')).toBeNull()
     expect(await sent()).toHaveLength(1)
     expect((await sent())[0]?.[1]).toMatch(
       /^1\. <button> — “Open now”: Move button left\n2\. <h1> — “A sample heading”: Change heading\n\nElement context:/,
@@ -259,6 +296,8 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     expect(persisted).toEqual(
       expect.arrayContaining([expect.objectContaining({ cardId: 'annotation-card', status: 'sent' })]),
     )
+    await enter()
+    await page.waitForSelector('[data-design-pin][data-status="sent"]')
     await page.click(control('Annotation queue'))
     const queue = '[data-design-queue]'
     await page.click(`${queue} [data-design-queue-note="sent"]:first-child ${control('Resolve')}`)
@@ -268,6 +307,28 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await page.click(`${queue} ${control('Remove annotation 2')}`)
     await page.waitForSelector(pin(2), { hidden: true })
     expect(await frame.$('#go')).not.toBeNull()
+  })
+
+  it('summarizes a multi-element edit in the split Send popover and clears it', async () => {
+    const frame = await mount()
+    await enter()
+    await pick(frame, '#go')
+    await clickAt(frame, '#title', 'Shift')
+    await page.waitForFunction(() => document.querySelectorAll('[data-design-selection]').length === 2)
+    await page.keyboard.type('Align both')
+    await page.click('[role="switch"]')
+    await page.click(control('Add to stack'))
+    await page.waitForSelector(pin(1))
+    await page.click(control('1 pending; show details'))
+    const queue = '[data-preview-toolbar] [data-design-queue]'
+    await page.waitForSelector(queue)
+    expect(await page.$eval(queue, (el) => el.textContent)).toContain('1 edits')
+    expect(await page.$eval(`${queue} li`, (el) => el.textContent)).toContain('button“Open now”Align both+1')
+    await page.click(`${queue} ${control('Clear All')}`)
+    await page.waitForSelector(queue, { hidden: true })
+    expect(await page.$(pin(1))).toBeNull()
+    expect(await page.$(control('Send 1 to agent'))).toBeNull()
+    expect(await page.$('[data-design-hint]')).not.toBeNull()
   })
 
   it('follows scroll and preserves the last location of a missing anchor', async () => {
@@ -301,7 +362,13 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await pick(frame, '#go')
     await clickAt(frame, '#title', 'Shift')
     await page.waitForFunction(() => document.querySelectorAll('[data-design-selection]').length === 2)
-    expect(await page.$eval('[data-design-token]', (el) => el.textContent)).toBe('Selected <button>, plus 1 more')
+    expect(await page.$$eval('[data-design-token] span', (els) => els.map((el) => el.textContent))).toEqual([
+      'button',
+      'h1',
+    ])
+    expect(await page.$eval('[data-design-hint] span', (el) => el.textContent)).toBe(
+      'Hold Space to use page · Esc to cancel',
+    )
     await page.keyboard.type('Match both')
     await chord('l')
     await page.waitForSelector(field, { hidden: true })
@@ -435,6 +502,7 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
       await shot('chat-01-capsule-collapsed')
       await enter()
       await shot('dm-02-on-hint-row')
+      await shot('dm-11-hint-row-in-address')
       const candidates = await frame.evaluate(() => {
         const viewport = document.documentElement.clientHeight
         return [...document.querySelectorAll('h1, h2, a[href], button')].flatMap((el) => {
@@ -498,14 +566,18 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
       await page.waitForSelector('[data-design-queue]')
       await shot('dm-08-queue-list')
       await mount(data)
+      await chord('D', true)
       await page.waitForSelector(pin(2))
       await shot('dm-09-after-reload-pins')
       await page.click(control('Send 2 to agent'))
+      await page.waitForSelector(address)
+      await enter()
       await page.waitForSelector('[data-design-pin][data-status="sent"]')
       await page.click(control('Annotation queue'))
       await page.waitForSelector('[data-design-queue-note="sent"]')
       await shot('dm-10-sent-dimmed')
       await page.keyboard.press('Escape')
+      await page.click(control('Exit Design Mode'))
       await page.evaluate(() => {
         const app = window as unknown as Fixture
         app.setDesignTasks([

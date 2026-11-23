@@ -30,6 +30,7 @@ import {
 type Screen = { id: string; name: string }
 
 interface PreviewToolbarProps {
+  annotationHint?: ReactNode
   annotationControls?: ReactNode
   addressRef: RefObject<HTMLInputElement>
   canvasId?: string
@@ -64,27 +65,32 @@ export function PreviewToolbar(props: PreviewToolbarProps) {
       className={cn(
         '@container relative z-10 flex h-9 shrink-0 items-center gap-1.5 border-b border-line bg-surface px-1.5 text-ink sm:gap-2 sm:px-2',
         minimized && 'rounded-t-panel',
+        props.annotationHint && 'border-brand/30 bg-brand/10',
       )}
       onKeyDown={(event) => event.stopPropagation()}
       onKeyUp={(event) => event.stopPropagation()}
     >
-      <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
-        <IconButton size="sm" aria-label={t('common.back')} disabled={!props.canBack} onClick={props.onBack}>
-          <ArrowLeftIcon size="rail" />
-        </IconButton>
-        <IconButton
-          size="sm"
-          aria-label={t('panels.protoForward')}
-          disabled={!props.canForward}
-          onClick={props.onForward}
-        >
-          <ArrowRightIcon size="rail" />
-        </IconButton>
-        <IconButton size="sm" aria-label={t('panels.protoReload')} onClick={props.onReload}>
-          <SyncIcon size="rail" />
-        </IconButton>
-      </div>
-      {canvasId && <PreviewAddress key={frameId} {...props} canvasId={canvasId} />}
+      {props.annotationHint ?? (
+        <>
+          <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+            <IconButton size="sm" aria-label={t('common.back')} disabled={!props.canBack} onClick={props.onBack}>
+              <ArrowLeftIcon size="rail" />
+            </IconButton>
+            <IconButton
+              size="sm"
+              aria-label={t('panels.protoForward')}
+              disabled={!props.canForward}
+              onClick={props.onForward}
+            >
+              <ArrowRightIcon size="rail" />
+            </IconButton>
+            <IconButton size="sm" aria-label={t('panels.protoReload')} onClick={props.onReload}>
+              <SyncIcon size="rail" />
+            </IconButton>
+          </div>
+          {canvasId && <PreviewAddress key={frameId} {...props} canvasId={canvasId} />}
+        </>
+      )}
       <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
         <IconButton size="sm" aria-label={t('panels.protoRestart')} onClick={props.onRestart}>
           <HistoryIcon size="rail" />

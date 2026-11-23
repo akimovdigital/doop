@@ -264,6 +264,11 @@ export function PrototypePlayer({
     setTrail(updateProtoTrail(trailRef.current, { ...current, key: nextKey() }, 'replace'))
   }
 
+  function focusAddress() {
+    addressRef.current?.focus()
+    addressRef.current?.select()
+  }
+
   function shortcut(command: ProtoShortcut) {
     switch (command) {
       case 'back':
@@ -278,8 +283,12 @@ export function PrototypePlayer({
         return chat.expand()
       case 'address':
         if (chat.allowed && !design.enabled && document.activeElement !== addressRef.current) return chat.expand()
-        addressRef.current?.focus()
-        return addressRef.current?.select()
+        if (design.enabled) {
+          design.exit()
+          window.requestAnimationFrame(focusAddress)
+          return
+        }
+        return focusAddress()
     }
   }
 
@@ -425,8 +434,13 @@ export function PrototypePlayer({
         return true
       }
     }
-    if (!design.enabled || field || target?.closest('[data-preview-toolbar],[data-design-card],[data-design-queue]'))
-      return false
+    if (!design.enabled) return false
+    if (event.code === 'Space' && !event.isComposing && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      if (target?.closest('input,textarea,select,button,[contenteditable],[role="switch"]')) return false
+      if (!event.repeat) design.holdPage()
+      return true
+    }
+    if (design.usingPage || field || target?.closest('[data-preview-toolbar],[data-design-card]')) return false
     if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
       void design.moveHighlight(event.key === 'ArrowUp' ? 'parent' : 'child')
       return true
@@ -483,10 +497,25 @@ export function PrototypePlayer({
       win?.postMessage({ type: 'doop:proto-key', key: e.key, reqId: `key-${e.timeStamp}` }, '*')
     }
     const onUp = () => handlers.current.release()
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code === 'Space' && handlers.current.design.usingPage) handlers.current.design.releasePage()
+    }
+    const onBlur = () => {
+      if (handlers.current.design.usingPage && !document.hasFocus()) handlers.current.design.releasePage()
+    }
+    const onVisibilityChange = () => {
+      if (document.hidden) handlers.current.design.releasePage()
+    }
     window.addEventListener('keydown', onKey, true)
+    window.addEventListener('keyup', onKeyUp, true)
+    window.addEventListener('blur', onBlur)
+    document.addEventListener('visibilitychange', onVisibilityChange)
     window.addEventListener('pointerup', onUp)
     return () => {
       window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('keyup', onKeyUp, true)
+      window.removeEventListener('blur', onBlur)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener('pointerup', onUp)
     }
   }, [])
@@ -518,6 +547,7 @@ export function PrototypePlayer({
     for (const win of windows.current.values()) win.postMessage({ type: 'doop:proto-hotspots' }, '*')
   }
 
+  const pageInteractive = !design.enabled || design.usingPage
   const current = stack.at(-1)!
   const base: { entry: Entry; role: 'from' | 'to' | 'still' }[] = move
     ? [
@@ -551,7 +581,7 @@ export function PrototypePlayer({
       if (win) windows.current.set(key, win)
       else windows.current.delete(key)
     },
-    annotating: design.enabled,
+    annotating: !pageInteractive,
     onDocument: () => {
       if (topEntry()?.key === entry.key) documentChanged((value) => value + 1)
     },
@@ -559,8 +589,10 @@ export function PrototypePlayer({
       /* a covered screen is switched off, but an action it sent before the
          switch reached it must not act over the screen on top */
       if (data.type === 'doop:proto-action') {
-        if (!design.enabled && topEntry()?.key === entry.key) run(data.interaction, !!data.press)
+        if (pageInteractive && topEntry()?.key === entry.key) run(data.interaction, !!data.press)
       } else if (data.type === 'doop:proto-release') release()
+      else if (data.type === 'doop:proto-space-up' && design.usingPage) design.releasePage()
+      else if (data.type === 'doop:proto-blur' && design.usingPage && !document.hasFocus()) design.releasePage()
       else if (data.type === 'doop:proto-shortcut' && topEntry()?.key === entry.key && screenHasFocus()) {
         const command = data.command
         if (
@@ -576,8 +608,10 @@ export function PrototypePlayer({
       /* Escape with the focus in a screen: the same overlay-first path as a
          key pressed on the player itself */
       else if (data.type === 'doop:esc' && topEntry()?.key === entry.key && screenHasFocus()) escape()
-      else if (data.type === 'doop:proto-site-pointer' && topEntry()?.key === entry.key) chat.collapse()
-      else if (data.type === 'doop:annotation-layout' && topEntry()?.key === entry.key) design.refreshPins()
+      else if (data.type === 'doop:proto-site-pointer' && topEntry()?.key === entry.key) {
+        design.setQueueOpen(false)
+        chat.collapse()
+      } else if (data.type === 'doop:annotation-layout' && topEntry()?.key === entry.key) design.refreshPins()
     },
   })
 
@@ -601,6 +635,7 @@ export function PrototypePlayer({
         data-proto-window=""
       >
         <PreviewToolbar
+          annotationHint={design.enabled ? <DesignModeHint mode={design} /> : undefined}
           annotationControls={design.allowed && <DesignModeControls mode={design} />}
           addressRef={addressRef}
           canvasId={canvasId}
@@ -628,7 +663,6 @@ export function PrototypePlayer({
           onToggleWindow={onClose && (() => setMinimized((value) => !value))}
           onClose={onClose}
         />
-        <DesignModeHint mode={design} />
         <div
           ref={viewportRef}
           className={`relative isolate min-h-0 flex-1 overflow-hidden ${minimized ? 'rounded-b-panel' : ''}`}
@@ -660,7 +694,7 @@ export function PrototypePlayer({
                 <ProtoScreen
                   {...screenProps(entry)}
                   layout={frame ? screenLayout(frame, viewport, scaling) : undefined}
-                  interactive={!design.enabled && role !== 'from' && !overlays.length}
+                  interactive={pageInteractive && role !== 'from' && !overlays.length}
                   onReady={onScreenReady}
                 />
               </div>
@@ -688,7 +722,7 @@ export function PrototypePlayer({
                   <ProtoScreen
                     {...screenProps(entry)}
                     layout={frame ? { width: frame.width, height: frame.height, scale } : undefined}
-                    interactive={!design.enabled && index === overlays.length - 1}
+                    interactive={pageInteractive && index === overlays.length - 1}
                     onReady={() => onOverlayReady(entry)}
                   />
                 </div>
