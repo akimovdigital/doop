@@ -11,6 +11,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { useShallow } from 'zustand/react/shallow'
 import type { ElementComment, Frame } from '../../shared/types'
 import { canEditOpenCanvas, pickedSelectors, useStore } from '../lib/store'
 import { isCanvasElement } from '../lib/drawing'
@@ -43,7 +44,7 @@ import { MOD_KEY } from '../lib/keys'
 import { isDesktopShell } from '../lib/shell'
 import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY, counterZoom } from '../lib/layoutZoom'
 import { dropEntry, recordCreate, recordUpdate, recordUpdates, trackSave, type HistoryEntry } from '../lib/history'
-import { snapFrame } from '../lib/snap'
+import { snapFrame, type SnapGuide } from '../lib/snap'
 import { visibleGuides } from '../lib/guides'
 import { gesture } from '../lib/gesture'
 import { resolvePointerAction } from '../lib/tools'
@@ -416,12 +417,10 @@ export const FrameView = memo(function FrameView({
   const select = useStore((s) => s.select)
   const flash = useStore((s) => s.flashes[frame.id])
   const stream = useStore((s) => s.streams[frame.id])
-  /* select the stable presences map, derive in render — a selector that
-     builds a fresh array re-renders every frame on EVERY store update
-     (zustand compares by identity), which defeats the memo above */
-  const presences = useStore((s) => s.presences)
   const me = getIdentity().clientId
-  const editors = Object.values(presences).filter((p) => p.activeFrameId === frame.id && p.clientId !== me)
+  const editors = useStore(
+    useShallow((s) => Object.values(s.presences).filter((p) => p.activeFrameId === frame.id && p.clientId !== me)),
+  )
   const [dragging, setDragging] = useState(false)
   /* a standalone shape on its way across the canvas shows as itself alone:
      no ring, grips or size badge until it is let go */
@@ -616,6 +615,16 @@ export const FrameView = memo(function FrameView({
     const copies: { frame: Frame; entry: HistoryEntry }[] = []
     const pageId = useStore.getState().activePageId
     let unsubscribe = () => {}
+    let raf = 0
+    let pending: { patches: [string, Partial<Frame>][]; guides: SnapGuide[] } | null = null
+    const flush = () => {
+      cancelAnimationFrame(raf)
+      raf = 0
+      const step = pending
+      pending = null
+      const state = useStore.getState()
+      if (step && state.canvas?.id === frame.canvasId) state.patchFramesLocal(step.patches, step.guides)
+    }
     /* Escape, a cancelled pointer or a page change puts the element back
        where it was: nothing is saved and nothing enters a frame */
     const cancel = () => {
@@ -626,8 +635,13 @@ export const FrameView = memo(function FrameView({
       window.removeEventListener('pointercancel', cancel)
       window.removeEventListener('keydown', onKey, true)
       unsubscribe()
+      cancelAnimationFrame(raf)
+      pending = null
+      useStore.getState().patchFramesLocal(
+        group.map(({ id, orig }) => [id, orig]),
+        [],
+      )
       for (const g of group) {
-        useStore.getState().patchFrameLocal(g.id, g.orig)
         /* peers followed the drag's broadcasts: they follow it back too */
         sendDrag(g.id, { id: g.id, ...g.orig })
       }
@@ -641,7 +655,6 @@ export const FrameView = memo(function FrameView({
       setDragging(false)
       setShapeMoving(false)
       if (duplicating) setDuping(false)
-      useStore.getState().setSnapGuides([])
       setDropTarget(null)
     }
     const onKey = (ev: KeyboardEvent) => {
@@ -659,6 +672,7 @@ export const FrameView = memo(function FrameView({
       if (ev.pointerId !== e.pointerId) return
       /* a second finger turns the gesture into a pinch: the frame stays put */
       if (gesture.pinching) {
+        flush()
         const cur = useStore.getState().canvas?.frames.find((x) => x.id === frame.id)
         base = { x: ev.clientX, y: ev.clientY, rect: cur ? { ...cur } : base.rect }
         return
@@ -723,22 +737,29 @@ export const FrameView = memo(function FrameView({
       let snapped = free ? { ...raw, guides: [] } : snapFrame(mode, raw, others, zoom, visibleGuides(), handle)
       /* with Shift the ratio wins: the snapped axis leads, the other follows */
       if (mode === 'resize' && ev.shiftKey && !free) snapped = keepRatioAfterSnap(handle, from, raw, snapped)
-      useStore.getState().setSnapGuides(snapped.guides)
+      const patches: [string, Partial<Frame>][] = []
       if (mode === 'move') {
         /* the snapped delta of the dragged frame moves the whole group */
         const sdx = snapped.x - orig.x
         const sdy = snapped.y - orig.y
         for (const g of group) {
-          useStore.getState().patchFrameLocal(g.id, { x: g.orig.x + sdx, y: g.orig.y + sdy })
+          patches.push([g.id, { x: g.orig.x + sdx, y: g.orig.y + sdy }])
         }
       } else {
         const { x, y, width, height } = snapped
-        useStore.getState().patchFrameLocal(frame.id, { x, y, width, height })
+        patches.push([frame.id, { x, y, width, height }])
       }
+      pending = { patches, guides: snapped.guides }
+      if (!raf) raf = requestAnimationFrame(flush)
+      /* Keep feeding the room's per-frame throttles every input sample. Only
+         the local preview waits for paint. */
       const live = useStore.getState().canvas?.frames ?? []
-      for (const g of group) {
-        const f = live.find((x) => x.id === g.id)
-        if (f) sendDrag(f.id, { id: f.id, x: f.x, y: f.y, width: f.width, height: f.height })
+      for (const [id, patch] of patches) {
+        const f = groupIds.has(id) && live.find((x) => x.id === id)
+        if (f) {
+          const { x, y, width, height } = { ...f, ...patch }
+          sendDrag(id, { id, x, y, width, height })
+        }
       }
       if (standaloneMove && moved) {
         const next = drawingDropFrame(toWorld(ev.clientX, ev.clientY), frame.id)
@@ -755,6 +776,7 @@ export const FrameView = memo(function FrameView({
       window.removeEventListener('pointercancel', cancel)
       window.removeEventListener('keydown', onKey, true)
       unsubscribe()
+      flush()
       setDropTarget(null)
       setDragging(false)
       setShapeMoving(false)
@@ -1069,7 +1091,7 @@ export const FrameView = memo(function FrameView({
   }, [runtimeReady, html, frame.html, frame.id, editing, suspendPost])
 
   /* ---- element comments ---- */
-  const frameComments = useStore((s) => s.comments).filter((c) => c.frameId === frame.id)
+  const frameComments = useStore(useShallow((s) => s.comments.filter((c) => c.frameId === frame.id)))
   /* only thread roots get a pin; replies live inside the root's popover */
   const comments = frameComments.filter((c) => !c.parentId && !c.resolvedAt)
   /* ⇧C hides the pins (an open thread stays); the Comment tool shows them */

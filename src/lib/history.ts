@@ -240,7 +240,7 @@ export async function saveStack(canvasId: string, before: StackWrite[], after: S
   const set = (writes: StackWrite[]) => {
     const s = useStore.getState()
     if (s.canvas?.id !== canvasId) return
-    for (const { id, z } of writes) s.patchFrameLocal(id, { z })
+    s.patchFramesLocal(writes.map(({ id, z }) => [id, { z }]))
   }
   set(after)
   try {

@@ -224,6 +224,7 @@ interface State {
   upsertComment(c: ElementComment): void
   upsertFrame(f: Frame): void
   patchFrameLocal(frameId: string, patch: Partial<Frame>): void
+  patchFramesLocal(patches: Map<string, Partial<Frame>> | [string, Partial<Frame>][], snapGuides?: SnapGuide[]): void
   removeFrame(frameId: string): void
   renameCanvasLocal(name: string): void
   /** upsert (doc set) or remove (doc null) a style guide on the open canvas */
@@ -574,14 +575,12 @@ export const useStore = create<State>((set, get) => ({
   upsertFrame: (f) =>
     set((s) => {
       if (!s.canvas || f.canvasId !== s.canvas.id) return {}
-      const frames = sortByStack(
-        s.canvas.frames.some((x) => x.id === f.id)
-          ? s.canvas.frames.map((x) => (x.id === f.id ? f : x))
-          : [...s.canvas.frames, f],
-      )
+      const previous = s.canvas.frames.find((x) => x.id === f.id)
+      const frames = previous ? s.canvas.frames.map((x) => (x.id === f.id ? f : x)) : [...s.canvas.frames, f]
+      const restack = !previous || previous.z !== f.z || previous.createdAt !== f.createdAt
       const hidden = s.selectedIds.includes(f.id) && framePageId(s.canvas, f) !== s.activePageId
       return {
-        canvas: { ...s.canvas, frames },
+        canvas: { ...s.canvas, frames: restack ? sortByStack(frames) : frames },
         ...(hidden
           ? {
               selectedIds: s.selectedIds.filter((id) => id !== f.id),
@@ -593,12 +592,36 @@ export const useStore = create<State>((set, get) => ({
           : {}),
       }
     }),
-  patchFrameLocal: (frameId, patch) =>
+  patchFrameLocal: (frameId, patch) => get().patchFramesLocal([[frameId, patch]]),
+  patchFramesLocal: (patches, snapGuides) => {
+    let byId: Map<string, Partial<Frame>>
+    if (patches instanceof Map) byId = patches
+    else {
+      byId = new Map()
+      for (const [id, patch] of patches) {
+        const previous = byId.get(id)
+        byId.set(id, previous ? { ...previous, ...patch } : patch)
+      }
+    }
     set((s) => {
-      if (!s.canvas) return {}
-      const frames = s.canvas.frames.map((f) => (f.id === frameId ? { ...f, ...patch } : f))
-      return { canvas: { ...s.canvas, frames: 'z' in patch ? sortByStack(frames) : frames } }
-    }),
+      const next: Partial<State> = {}
+      if (snapGuides && (snapGuides.length || s.snapGuides.length)) next.snapGuides = snapGuides
+      if (s.canvas && byId.size) {
+        let changed = false
+        let restack = false
+        const frames = s.canvas.frames.map((f) => {
+          const patch = byId.get(f.id)
+          if (!patch || !(Object.keys(patch) as (keyof Frame)[]).some((key) => !Object.is(f[key], patch[key]))) return f
+          const updated = { ...f, ...patch }
+          changed = true
+          restack ||= f.z !== updated.z || f.createdAt !== updated.createdAt
+          return updated
+        })
+        if (changed) next.canvas = { ...s.canvas, frames: restack ? sortByStack(frames) : frames }
+      }
+      return next.canvas || next.snapGuides ? next : s
+    })
+  },
   removeFrame: (frameId) =>
     set((s) => {
       if (!s.canvas) return {}
