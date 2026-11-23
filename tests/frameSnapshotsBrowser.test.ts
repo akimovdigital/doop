@@ -156,10 +156,16 @@ describe.skipIf(!findBrowserPath())('canvas frame budgets', { timeout: 30_000 },
     })
     const snapshot = '[data-doop-frame-shell="cached"] [data-frame-snapshot-ready]'
     await page.waitForSelector(snapshot)
-    await page.waitForFunction(() => document.querySelectorAll('iframe[data-doop-frame]').length === 20)
+    await page.waitForFunction(() => {
+      if (document.querySelector('.stage')?.hasAttribute('data-frame-camera-moving')) return false
+      const frames = [...document.querySelectorAll('iframe[data-doop-frame]')]
+      // The opening overview may still have far documents in their grace period.
+      return frames.length === 20 && frames.every((node) => !node.closest('[data-doop-frame-shell^="far-"]'))
+    })
     await page.evaluate(() => {
       window.canvasPageHarness.select('cached')
     })
+    await page.waitForSelector(snapshot + '[data-frame-snapshot-blocked]')
     const released = await page.evaluate(() => {
       const stage = document.querySelector('.stage')!
       return new Promise<number[]>((resolve, reject) => {
@@ -185,20 +191,17 @@ describe.skipIf(!findBrowserPath())('canvas frame budgets', { timeout: 30_000 },
       })
     })
     expect(released).toEqual([19, 15, 11, 7, 3, 0])
-    expect(await page.$$eval('iframe[data-doop-frame]', (nodes) => nodes.length)).toBe(20)
     await page.waitForFunction(() => {
-      const iframe = document.querySelector('iframe[data-doop-frame]')
-      return (
-        iframe &&
-        [...document.querySelectorAll('iframe[data-doop-frame]')].filter((node) =>
-          node.closest('[data-doop-frame-shell]')?.getAttribute('data-doop-frame-shell')?.startsWith('far-'),
-        ).length === 19
-      )
+      const frames = [...document.querySelectorAll('iframe[data-doop-frame]')]
+      const farCount = frames.filter((node) =>
+        node.closest('[data-doop-frame-shell]')?.getAttribute('data-doop-frame-shell')?.startsWith('far-'),
+      ).length
+      return frames.length === 20 && farCount === 19
     })
     expect(await live!.evaluate((node) => node.isConnected)).toBe(true)
-    expect(await page.$$eval('iframe[data-doop-frame]', (nodes) => nodes.length)).toBe(20)
     await page.evaluate(() => window.canvasPageHarness.select(null))
-    await page.waitForSelector(iframe('cached'), { hidden: true })
+    // A snapshot can hide the iframe before the budget actually unloads it.
+    await page.waitForFunction((node) => !node.isConnected, {}, live!)
     expect(await page.$eval(snapshot, (node) => getComputedStyle(node).visibility)).toBe('visible')
     expect(
       await page.$eval(
@@ -213,7 +216,6 @@ describe.skipIf(!findBrowserPath())('canvas frame budgets', { timeout: 30_000 },
     const restoredChild = await reloaded!.contentFrame()
     await restoredChild!.waitForSelector('input')
     expect(await restoredChild!.$eval('input', (input) => input.value)).toBe('original')
-    expect(await live!.evaluate((node) => node.isConnected)).toBe(false)
   })
 
   it('pauses CSS and new Web Animations during movement, resumes focus, and exempts selection', async () => {

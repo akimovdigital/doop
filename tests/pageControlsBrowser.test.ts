@@ -345,15 +345,18 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     const tallId = await page.evaluate(async () => {
       const id = location.pathname.split('/').at(-1)
       let tallId = ''
+      // Keep the tall frame centered and above the 160 px animation
+      // threshold when the opening camera fits the whole page.
+      const sideColumns = [0, 700, 2900, 3600]
       for (let i = 0; i < 17; i++) {
         const response = await fetch('/api/canvases/' + id + '/frames', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name: 'Overview ' + i,
-            x: (i % 4) * 1000,
-            y: Math.floor(i / 4) * 600,
-            width: 800,
+            x: i === 0 ? 1400 : sideColumns[(i - 1) % sideColumns.length],
+            y: i === 0 ? 0 : Math.floor((i - 1) / sideColumns.length) * 600,
+            width: i === 0 ? 1400 : 650,
             height: i === 0 ? 2200 : 350,
             html:
               i === 0

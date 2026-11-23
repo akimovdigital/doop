@@ -59,6 +59,7 @@ export function useFrameAdmission(
   const pausedIds = useRef(new Set<string>())
   const scheduler = useRef<(() => void) | null>(null)
   const fillAfterCommit = useRef(false)
+  const initialAdmission = useRef(true)
 
   useLayoutEffect(() => {
     if (!fillAfterCommit.current) return
@@ -107,14 +108,14 @@ export function useFrameAdmission(
     let raf = 0
     let settleTimer = 0
     let expiryTimer = 0
-    let moving = el.hasAttribute('data-frame-camera-moving')
+    let moving = !initialAdmission.current && el.hasAttribute('data-frame-camera-moving')
     const watches = new Map<string, () => void>()
     const nearBrowsers = new Set<string>()
     for (const id of seen.keys()) if (!htmlSizes.has(id)) seen.delete(id)
-    let ranked = measure()
-    let dirty = false
+    let ranked: ReturnType<typeof rankFrameCandidates> = []
+    let dirty = true
 
-    function measure() {
+    function measure(warming: boolean) {
       const now = performance.now()
       const page = currentPageSpatialIndex()
       const { viewport } = useStore.getState()
@@ -123,7 +124,6 @@ export function useFrameAdmission(
       if (!page) return []
 
       const { index, pageId } = page
-      const warming = warmSmallPage && seen.size < htmlSizes.size
       const nearby = warming
         ? index.all(pageId)
         : index.intersect(pageId, {
@@ -156,7 +156,11 @@ export function useFrameAdmission(
     }
 
     function schedule() {
-      if (!raf && !fillAfterCommit.current) raf = requestAnimationFrame(drain)
+      if (raf || fillAfterCommit.current) return
+      raf = requestAnimationFrame(() => {
+        initialAdmission.current = false
+        drain()
+      })
     }
 
     function watch(id: string, since: number) {
@@ -293,8 +297,9 @@ export function useFrameAdmission(
       raf = 0
       window.clearTimeout(expiryTimer)
       const now = performance.now()
+      const warming = warmSmallPage && seen.size < htmlSizes.size
       if (dirty && !moving) {
-        ranked = measure()
+        ranked = measure(warming)
         dirty = false
       }
       let changed = false
@@ -307,7 +312,6 @@ export function useFrameAdmission(
       const { protectedIds, forced } = protectedFrames(now)
       let expiry = Math.min(Infinity, ...leases.values())
       const browserChanged = admitBrowsers()
-      const warming = warmSmallPage && seen.size < htmlSizes.size
       const desired = moving ? forced : planFrameAdmission(ranked, ids, forced, warming, now)
       if (!moving) {
         for (const frame of ranked) {
@@ -386,6 +390,13 @@ export function useFrameAdmission(
           state.viewport.y !== previous.viewport.y ||
           state.viewport.zoom !== previous.viewport.zoom)
       ) {
+        // The parent Stage fits the opening page in a layout effect. Use
+        // that camera for the first ranking without waiting for gesture settle.
+        if (initialAdmission.current) {
+          dirty = true
+          schedule()
+          return
+        }
         if (!moving) {
           const now = performance.now()
           for (const frame of ranked) if (frame.visible) seen.set(frame.id, now)
@@ -432,6 +443,9 @@ export function useFrameAdmission(
       }, PAN_SETTLE_MS)
     }
     resize.observe(el)
+    // Small pages can mount their bounded set of documents before first paint.
+    // Larger pages wait for the final opening camera and use the boot queue.
+    if (initialAdmission.current && warmSmallPage) drain()
     schedule()
     return () => {
       scheduler.current = null
