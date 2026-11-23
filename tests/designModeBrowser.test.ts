@@ -1,4 +1,4 @@
-import { agentPromptText } from '../shared/uiElementContext'
+import { agentPromptText, readContextPrompt } from '../shared/uiElementContext'
 import { mkdir, readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -56,8 +56,10 @@ type Fixture = {
   mockDesignSends: () => void
   showDesignChat: () => void
   designSends: unknown[][]
+  designUploads: { name: string; type: string; width: number; height: number }[]
   designSendDelay?: number
   designSendError?: string
+  designCropHasMarkup: boolean
   readDesignDraft: (canvasId: string) => string
   writeDesignDraft: (canvasId: string, text: string) => void
   editFrame: (id: string, html: string) => void
@@ -80,7 +82,7 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
   beforeEach(async () => {
     page = await pages.open()
     firstMount = true
-    await page.setViewport({ width: 1000, height: 760 })
+    await page.setViewport({ width: 1000, height: 760, deviceScaleFactor: 1 })
   })
 
   async function mount(data = canvas, synced = false) {
@@ -301,8 +303,16 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await page.keyboard.type('Send later')
     await chord('l')
     await page.waitForSelector(chatField)
-    expect(await draft()).toMatch(/^change text to “Send later” \(was “A sample heading”\)/)
+    await page.waitForSelector(`${capsule} [data-context-chip]`)
+    expect(await draft()).toBe('')
     expect(await sent()).toEqual([])
+    await page.keyboard.press('Enter')
+    await page.waitForSelector('[data-preview-chat-send="sent"]')
+    const prompt = String((await sent())[0]?.[1])
+    const change = 'change text to “Send later” (was “A sample heading”)'
+    expect(agentPromptText(prompt)).toContain(change)
+    expect(readContextPrompt(prompt).contexts[0]?.changes).toEqual([change])
+    expect((await sent())[0]?.[3]).toEqual(['Design note 1'])
     expect(await page.$(control('Send 1 to agent'))).toBeNull()
   })
 
@@ -437,6 +447,8 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     expect(agentPromptText(String((await sent())[0]?.[1]))).toMatch(
       /^Screenshot region \d+ × \d+ with markup: 1 ellipse$/,
     )
+    expect((await sent())[0]?.[3]).toEqual(['Design note 1'])
+    expect(await page.evaluate(() => (window as unknown as Fixture).designCropHasMarkup)).toBe(true)
   })
 
   it('temporarily re-enables page clicks while Space is held and resumes picking after iframe keyup', async () => {
@@ -480,7 +492,7 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
         'HTML Element: <button id="go" data-doop-on="click" data-doop-action="navigate:next">Open now</button>\n' +
         'Styles: color: rgb(0, 0, 0); background-color: rgb(255, 255, 255); font-size: 16px; font-family: Arial; display: block; position: static\nFrame: Home (home)',
     )
-    expect(attachments).toEqual([])
+    expect(attachments).toEqual(['Design note 1'])
     expect(scope).toEqual({ frameId: 'home', selector: '#go' })
     await waitForInteractivity('home', false)
     await page.click(control('Exit Design Mode'))
@@ -776,10 +788,20 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await clickAt(frame, '#title', 'Alt')
     await page.waitForSelector(chip)
     await page.type(chatField, 'Move the heading')
+    const thumbnail = `${chip} [data-context-thumbnail]`
+    await page.waitForFunction(
+      (selector) => {
+        const image = document.querySelector<HTMLImageElement>(selector)
+        return image?.complete && image.naturalWidth > 0
+      },
+      {},
+      thumbnail,
+    )
     const dir = join(homedir(), 'doop-element-comments')
     if (process.env.DOOP_DESIGN_SHOTS === '1') {
       await mkdir(dir, { recursive: true })
       await page.screenshot({ path: join(dir, 'chat-06-chips-in-composer.png') })
+      await page.screenshot({ path: join(dir, 'dm-18-crop-thumb-in-chip.png') })
     }
     await page.keyboard.press('Enter')
     await page.waitForSelector('[data-preview-chat-send="sent"]')
@@ -791,6 +813,24 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     expect(await page.$eval(message, (el) => el.textContent)).not.toContain('DOM Path:')
     if (process.env.DOOP_DESIGN_SHOTS === '1')
       await page.screenshot({ path: join(dir, 'chat-07-chips-in-sent-card.png') })
+  })
+
+  it('attaches one padded PNG per queued note in annotation order', async () => {
+    const frame = await mount()
+    await enter()
+    await addBatch(frame, '#go', 'Move button', true)
+    await addBatch(frame, '#title', 'Change heading')
+    await page.click(control('Send 2 to agent'))
+    await page.waitForSelector('[data-preview-toolbar] input[role=combobox]')
+    const payload = (await sent())[0]
+    expect(payload?.[3]).toEqual(['Design note 1', 'Design note 2'])
+    const uploads = await page.evaluate(() => (window as unknown as Fixture).designUploads)
+    expect(uploads).toEqual(
+      expect.arrayContaining([
+        { name: 'Design note 1.png', type: 'image/png', width: 176, height: 76 },
+        expect.objectContaining({ name: 'Design note 2.png', type: 'image/png' }),
+      ]),
+    )
   })
 
   it.runIf(process.env.DOOP_DESIGN_SHOTS === '1')(

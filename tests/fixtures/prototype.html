@@ -106,8 +106,26 @@
         root.render(React.createElement(TooltipProvider, null, React.createElement(Stage, { onAddFrame: () => {} })))
       }
       window.designSends = []
+      window.designUploads = []
       window.mockDesignSends = () => {
         api.agentAllowance = async () => ({ used: 0, limit: 10, byoModel: true })
+        api.uploadAsset = async (_canvas, blob) => {
+          const bitmap = await createImageBitmap(blob)
+          const url = '/a/design-crop-' + encodeURIComponent(blob.name)
+          window.designUploads.push({ name: blob.name, type: blob.type, width: bitmap.width, height: bitmap.height })
+          const crop = document.createElement('canvas')
+          crop.width = bitmap.width
+          crop.height = bitmap.height
+          const ctx = crop.getContext('2d')
+          ctx.drawImage(bitmap, 0, 0)
+          const pixels = ctx.getImageData(0, 0, crop.width, crop.height).data
+          window.designCropHasMarkup = pixels.some(
+            (value, index) => index % 4 === 0 && value === 1 && pixels[index + 1] === 119 && pixels[index + 2] === 211,
+          )
+          bitmap.close()
+          return { url }
+        }
+        api.createFrame = async (_canvas, data) => ({ ...data, id: data.name })
         api.addCard = async (...args) => {
           window.designSends.push(args)
           if (window.designSendDelay) await new Promise((resolve) => setTimeout(resolve, window.designSendDelay))

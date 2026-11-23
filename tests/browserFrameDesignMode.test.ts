@@ -201,9 +201,14 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     if (shots) await page.screenshot({ path: join(shots, 'dm-21-browser-frame-note.png') })
 
     await page.click('[data-design-card] [role="switch"]')
+    const cropRequested = page.waitForRequest((request) => {
+      const url = new URL(request.url())
+      return url.pathname === `/api/frames/${frameId}/screenshot.png` && url.searchParams.has('crop')
+    })
     await page.focus(field)
     await page.keyboard.press('Enter')
     await page.waitForSelector('[data-design-pin="1"][data-status="pending"]')
+    expect(new URL((await cropRequested).url()).searchParams.get('capture')).toBe('visible')
     expect(posts).toHaveLength(0)
     await mount()
     await annotate(page)

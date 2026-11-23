@@ -1,3 +1,4 @@
+import { screenshotCropClip, type ScreenshotCrop } from '../shared/screenshotCrop.ts'
 import { fullFrameRenderScale, MAX_EXPORT_SIDE } from '../shared/exportScale.ts'
 import { navigateWebsitePage } from './websiteAccess.ts'
 import { browserReferenceHtml, browserViewport } from '../shared/browserFrame.ts'
@@ -694,6 +695,7 @@ export async function captureFramePng(
   frame: Frame,
   area: 'visible' | 'full',
   scroll: { x: number; y: number },
+  crop?: ScreenshotCrop,
 ): Promise<Buffer> {
   const source = frame.browser ? await assertPublicNetworkUrl(frame.browser.url) : undefined
   return renderer.withPage('capturing the frame', RENDER_TIMEOUT_MS, async (page) => {
@@ -710,9 +712,15 @@ export async function captureFramePng(
     }
     await settleCanvasSnapshot(page)
     if (area === 'visible') {
-      const deviceScaleFactor = fullFrameRenderScale(viewport, 1)
+      const deviceScaleFactor = crop?.scale ?? fullFrameRenderScale(viewport, 1)
       if (deviceScaleFactor !== 1) await page.setViewport({ ...viewport, deviceScaleFactor })
       await page.evaluate(({ x, y }) => window.scrollTo({ left: x, top: y, behavior: 'instant' }), scroll)
+      if (crop) {
+        const actual = await page.evaluate(() => ({ x: scrollX, y: scrollY }))
+        const clip = screenshotCropClip(crop, viewport, actual)
+        if (!clip) throw new LayerNotFoundError('The crop is outside the frame viewport')
+        return Buffer.from(await page.screenshot({ type: 'png', clip, captureBeyondViewport: false }))
+      }
       return Buffer.from(await page.screenshot({ type: 'png' }))
     }
     const pageHeight = await page.evaluate(() => Math.max(innerHeight, document.scrollingElement?.scrollHeight ?? 0))

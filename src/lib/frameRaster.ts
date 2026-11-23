@@ -84,6 +84,17 @@ async function documentBackground(id: string): Promise<string | undefined> {
     return bodyColor
 }
 
+/** Draw a live HTML snapshot with the preview viewport's media rules. */
+export async function rasterizeHtml(
+  html: string,
+  viewport: { width: number; height: number },
+  opts: RasterOptions,
+): Promise<Blob> {
+  const signal = opts.signal ?? AbortSignal.timeout(RESOURCE_FETCH_MS)
+  const svg = await inlineDocument(html, { ...viewport, signal, standalone: true })
+  return drawSvg(svg, { ...viewport, ...opts, signal })
+}
+
 /** The frame as an SVG file: the same self-contained document the raster
  *  draws (an HTML page inside a `foreignObject`, every resource inlined), so
  *  it opens anywhere a browser renders SVG but is not editable vector art.

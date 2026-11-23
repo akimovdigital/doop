@@ -157,6 +157,7 @@ function elementContext(context: UiElementContext): string {
     `HTML Element: ${context.html}`,
     `Styles: ${contextStyleNames.map((name) => `${name}: ${context.styles6[name]}`).join('; ')}`,
     `Frame: ${context.frameName} (${context.frameId})`,
+    ...(context.changes ?? []),
   ].join('\n')
 }
 
@@ -178,11 +179,25 @@ function regionSize(rect: NoteRect) {
 
 export function noteContexts(note: DesignNote): UiElementContext[] {
   const { number, frameId, frameName } = note
-  const source = { noteId: note.id, number, frameId, frameName, url: note.pageUrl }
+  const source = {
+    noteId: note.id,
+    number,
+    frameId,
+    frameName,
+    url: note.pageUrl,
+    ...(note.source && { source: note.source }),
+  }
+  const changes = [
+    ...(note.textEdit ? [textEditSummary(note.textEdit)] : []),
+    ...(note.cssEdits?.length ? [cssEditSummary(note)] : []),
+    ...(note.markup?.length ? [`Markup: ${markupSummary(note.markup)}`] : []),
+  ]
+  const editContext = changes.length ? { changes } : {}
   if (note.region) {
     return [
       {
         ...source,
+        ...editContext,
         kind: 'region',
         label: `Region ${regionSize(note.region)}`,
         selector: '',
@@ -192,12 +207,13 @@ export function noteContexts(note: DesignNote): UiElementContext[] {
       },
     ]
   }
-  return note.elements.map((el) => {
+  return note.elements.map((el, index) => {
     const tag = `<${el.tag}>`
     const text = collapse(el.text)
     const snippet = text.length > 40 ? text.slice(0, 39) + '…' : text
     return {
       ...source,
+      ...(index === 0 && editContext),
       kind: 'element',
       label: snippet ? `${tag} ${snippet}` : tag,
       selector: el.selector,
@@ -217,9 +233,16 @@ export function formatComposerContexts(text: string, contexts: UiElementContext[
   const numbers = new Map<string, number>()
   const details = contexts.map((context) => {
     if (!numbers.has(context.noteId)) numbers.set(context.noteId, numbers.size + 1)
-    if (context.kind === 'element') return elementContext({ ...context, number: numbers.get(context.noteId)! })
     const { x, y, width, height } = context.rect
-    return `Screenshot region ${regionSize(context.rect)}: top=${y}px, left=${x}px, width=${width}px, height=${height}px\nFrame: ${context.frameName} (${context.frameId})`
+    const detail =
+      context.kind === 'element'
+        ? elementContext({ ...context, number: numbers.get(context.noteId)! })
+        : [
+            `Screenshot region ${regionSize(context.rect)}: top=${y}px, left=${x}px, width=${width}px, height=${height}px`,
+            `Frame: ${context.frameName} (${context.frameId})`,
+            ...(context.changes ?? []),
+          ].join('\n')
+    return context.source === 'browser' ? `On ${context.url}:\n${detail}` : detail
   })
   return withElementContext(text, details)
 }
@@ -229,8 +252,10 @@ function cssEditSummary(note: DesignNote) {
   return changes ? `CSS edits — ${changes}` : ''
 }
 
-export function designDraftText(note: DesignNote) {
-  return [note.textEdit && textEditSummary(note.textEdit), note.comment, cssEditSummary(note)].filter(Boolean).join('\n\n')
+function designDraftText(note: DesignNote) {
+  return [note.textEdit && textEditSummary(note.textEdit), note.comment, cssEditSummary(note)]
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 export function designNotePrompt(notes: DesignNote[]) {
@@ -262,7 +287,8 @@ export function formatDesignNotes(notes: DesignNote[]): string {
             : note.textEdit
               ? `<${note.elements[0]?.tag ?? 'element'}> text edit`
               : note.elements.map(elementLabel).join(' + ')
-          for (const item of noteContexts(note)) if (item.kind === 'element') context.push(elementContext(item))
+          for (const item of noteContexts(note))
+            if (item.kind === 'element') context.push(elementContext({ ...item, changes: undefined }))
           const comment = designDraftText(note)
           return `${notes.length > 1 ? `${note.number}. ` : ''}${label}${comment ? `: ${comment}` : ''}`
         })
