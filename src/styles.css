@@ -1512,3 +1512,29 @@ body[data-panel-resizing] * {
 .stage[data-frame-panning] [data-canvas-browser-chrome] {
   visibility: hidden;
 }
+
+/* A decoded bitmap and the mounted iframe exchange visibility in one paint. */
+[data-frame-snapshot] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+:is(
+  .stage[data-frame-camera-moving] [data-frame-snapshot-ready],
+  .stage [data-frame-snapshot-ready][data-frame-snapshot-tiny]
+):not([data-frame-snapshot-blocked], [data-frame-snapshots-disabled] *) {
+  visibility: visible;
+}
+
+:is(
+    .stage[data-frame-camera-moving] [data-frame-snapshot-ready],
+    .stage [data-frame-snapshot-ready][data-frame-snapshot-tiny]
+  ):not([data-frame-snapshot-blocked], [data-frame-snapshots-disabled] *)
+  + div
+  > iframe[data-doop-frame] {
+  visibility: hidden;
+}

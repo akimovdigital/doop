@@ -12,6 +12,7 @@ import { sendWs } from '../lib/ws'
 import { throttle } from '../lib/throttle'
 import { FrameView, HiddenFrameView } from './FrameView'
 import { useFrameAdmission } from './frameAdmission'
+import { FrameSnapshots } from '../lib/frameSnapshots'
 import { CanvasComments, type CanvasComposeAt } from './CanvasComments'
 import { placeComposer } from '../lib/composerPlacement'
 import { isCanvasComment, type CanvasComment } from '../../shared/comments'
@@ -437,7 +438,7 @@ export function Stage({
     }
     apply(useStore.getState().viewport)
     let settle = 0
-    let revealChrome = 0
+    let cameraIdleTimer = 0
     const stage = ref.current
     const unsub = useStore.subscribe((s, prev) => {
       const sameCanvas = s.canvas?.id === prev.canvas?.id
@@ -453,11 +454,14 @@ export function Stage({
       if (s.viewOptions.pixelGrid !== prev.viewOptions.pixelGrid) apply(s.viewport)
       if (s.viewport === prev.viewport) return
       apply(s.viewport)
-      if (s.viewport.zoom !== prev.viewport.zoom && stage) {
-        if (!revealChrome) stage.setAttribute('data-frame-camera-moving', '')
-        window.clearTimeout(revealChrome)
-        revealChrome = window.setTimeout(() => {
-          revealChrome = 0
+      if (
+        stage &&
+        (s.viewport.x !== prev.viewport.x || s.viewport.y !== prev.viewport.y || s.viewport.zoom !== prev.viewport.zoom)
+      ) {
+        if (!cameraIdleTimer) stage.setAttribute('data-frame-camera-moving', '')
+        window.clearTimeout(cameraIdleTimer)
+        cameraIdleTimer = window.setTimeout(() => {
+          cameraIdleTimer = 0
           stage.removeAttribute('data-frame-camera-moving')
         }, 150)
       }
@@ -477,7 +481,7 @@ export function Stage({
       rememberPageCamera(useStore.getState(), cameraPage.current)
       unsub()
       window.clearTimeout(settle)
-      window.clearTimeout(revealChrome)
+      window.clearTimeout(cameraIdleTimer)
       stage?.removeAttribute('data-frame-camera-moving')
     }
   }, [])
@@ -1445,7 +1449,7 @@ export function Stage({
                 <CanvasSections stage={ref} world={worldRef} />
                 <FrameLabelLayer.Provider value={labelLayer}>
                   <FrameStack
-                    key={activePageId}
+                    key={JSON.stringify([canvas?.id, activePageId])}
                     frames={canvas?.frames ?? []}
                     layoutZoom={layoutZoom}
                     stage={ref}
@@ -1722,9 +1726,23 @@ function FrameStack({
   const rank = useMemo(() => new Map(frames.map((f, i) => [f.id, i + 1])), [frames])
   const layer = useRef<HTMLDivElement>(null)
   const { eager, admitted, request } = useFrameAdmission(frames, stage, layer)
+  const [snapshots] = useState(() => new FrameSnapshots())
+  const prototypeMode = useStore((s) => s.prototypeMode)
+  const snapshotsDisabled = presenting || prototypeMode
+  useLayoutEffect(() => {
+    const root = layer.current
+    const target = stage.current ?? root?.closest<HTMLElement>('.stage')
+    if (!root || !target) return
+    return snapshots.connect(root, target, () => useStore.getState().viewport)
+  }, [snapshots, stage])
+  useLayoutEffect(() => snapshots.wake(), [snapshots, snapshotsDisabled])
   const compactSectionTitles = useStore((s) => s.selectedSectionId !== null && s.viewport.zoom <= 0.05)
   return (
-    <div ref={layer} className="absolute top-0 left-0 isolate">
+    <div
+      ref={layer}
+      className="absolute top-0 left-0 isolate"
+      data-frame-snapshots-disabled={snapshotsDisabled ? '' : undefined}
+    >
       {mounted.map((f) =>
         f.hidden && !f.browser ? (
           <HiddenFrameView key={f.id} frame={f} stack={rank.get(f.id)} />
@@ -1735,6 +1753,7 @@ function FrameStack({
             stack={rank.get(f.id)}
             layoutZoom={layoutZoom}
             loadDocument={eager || admitted.has(f.id)}
+            snapshots={snapshots}
             compactSectionTitles={compactSectionTitles}
             requestDocument={request}
             onFollowLink={onFollowLink}

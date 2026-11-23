@@ -100,6 +100,26 @@ async function waitReady(scene: Scene) {
   )
 }
 
+function snapshotStats(): NonNullable<Sample['snapshots']> {
+  const times = [...document.querySelectorAll<HTMLElement>('[data-frame-snapshot-ready]')].map((image) => {
+    const [start, end] = (image.dataset.frameSnapshotReady ?? '').split(':')
+    return { start: Number(start), end: Number(end) }
+  })
+  return {
+    ready: times.length,
+    elapsedMs: times.length
+      ? Math.max(...times.map(({ end }) => end)) - Math.min(...times.map(({ start }) => start))
+      : null,
+    captureMs: times.map(({ start, end }) => end - start),
+  }
+}
+
+async function warmSnapshots(expected: number) {
+  const deadline = performance.now() + 3500
+  while (document.querySelectorAll('[data-frame-snapshot-ready]').length < expected && performance.now() < deadline)
+    await sleep(25)
+}
+
 function pointer(target: EventTarget, type: string, x: number, y: number) {
   target.dispatchEvent(
     new PointerEvent(type, {
@@ -259,6 +279,8 @@ async function run(): Promise<Sample> {
     }
   }
 
+  const cameraGesture = scenario === 'pan' || scenario === 'zoom' || scenario === 'zoom-wide'
+  if (cameraGesture) await warmSnapshots(scene.live)
   const warm = prepareGesture(scenario, scene, 900)
   warm.select()
   await nextFrame()
@@ -266,6 +288,7 @@ async function run(): Promise<Sample> {
   warm.reset()
   await sleep(500)
   await waitReady(scene)
+  const snapshots = cameraGesture ? snapshotStats() : undefined
   const gesture = prepareGesture(scenario, scene, duration)
   const before = await vmStat()
   const start = performance.now()
@@ -296,6 +319,7 @@ async function run(): Promise<Sample> {
     commits,
     live: { before: liveBefore, after: liveAfter },
     heapBytes,
+    snapshots,
     memory: { before, after },
   }
 }

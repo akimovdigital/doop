@@ -1,5 +1,6 @@
 import type { Frame } from '../../shared/types'
-import { snapshotFrame } from './frameBridge'
+import { colorAlpha } from './cssValues'
+import { computedStyles, snapshotFrame } from './frameBridge'
 
 /**
  * Render a frame to an image in this browser: the document is inlined into
@@ -31,6 +32,8 @@ export interface RasterOptions {
   quality?: number
   /** the whole render, fetches included, gives up when this fires */
   signal?: AbortSignal
+  /** Preserve the live document's opaque canvas color beneath the SVG content. */
+  documentBackground?: boolean
   /** the part of the frame to keep; the whole frame when unset. The
    *  document is still laid out and painted whole, so an element keeps
    *  every style its ancestors give it and whatever paints behind it. */
@@ -41,13 +44,44 @@ const RESOURCE_FETCH_MS = 15_000
 
 export async function rasterizeFrame(frame: Frame, opts: RasterOptions): Promise<Blob> {
   const signal = opts.signal ?? AbortSignal.timeout(RESOURCE_FETCH_MS)
-  const snapshot = await snapshotFrame(frame.id)
+  signal.throwIfAborted()
+  const [snapshot, background] = await Promise.all([
+    snapshotFrame(frame.id),
+    opts.documentBackground ? documentBackground(frame.id) : undefined,
+  ])
+  signal.throwIfAborted()
   /* an unmounted frame renders from its saved HTML; a mounted one whose
      pixels cannot all be read is for the server */
   if (snapshot && snapshot.html === null) throw new Error('the frame cannot be drawn here')
   const html = snapshot?.html ?? frame.html
   const svg = await inlineDocument(html, { width: frame.width, height: frame.height, signal })
-  return drawSvg(svg, { width: frame.width, height: frame.height, ...opts })
+  signal.throwIfAborted()
+  return drawSvg(svg, { width: frame.width, height: frame.height, ...opts, signal, background })
+}
+
+async function documentBackground(id: string): Promise<string | undefined> {
+  const properties = ['background-color', 'background-image', 'contain', 'display']
+  const [root, body] = await Promise.all([
+    computedStyles(id, 'html', properties),
+    computedStyles(id, 'body', properties),
+  ])
+  if (!root || root.contain !== 'none' || root.display === 'none') return
+  const rootColor = root['background-color']
+  if (rootColor && colorAlpha(rootColor) === 1) return rootColor
+  const bodyColor = body?.['background-color']
+  // A body color propagated to the HTML canvas can extend below the body box.
+  // Inside foreignObject it may paint only that box. Keep its opaque color
+  // behind the SVG without changing the layout or double-blending alpha.
+  if (
+    rootColor &&
+    colorAlpha(rootColor) === 0 &&
+    root['background-image'] === 'none' &&
+    body?.contain === 'none' &&
+    body.display !== 'none' &&
+    bodyColor &&
+    colorAlpha(bodyColor) === 1
+  )
+    return bodyColor
 }
 
 /** The frame as an SVG file: the same self-contained document the raster
@@ -450,14 +484,14 @@ function toDataUrl(blob: Blob): Promise<string> {
 }
 
 interface DrawOptions extends RasterOptions {
+  background?: string
   width: number
   height: number
 }
 
 /** Draw the SVG onto a canvas at `scale` and encode it, the whole frame
- *  or the `clip` of it. The canvas is painted white first, as the server's
- *  renderer paints a frame with no background, and a JPEG has no alpha to
- *  keep. */
+ *  or the `clip` of it. The canvas starts with the opaque document color
+ *  when requested, and uses the same white paper as the server otherwise. */
 async function drawSvg(svg: string, opts: DrawOptions): Promise<Blob> {
   /* a data: URL, not a blob: one — Chromium taints the canvas for a
      foreignObject SVG drawn from a blob URL, and the export needs toBlob */
@@ -469,6 +503,7 @@ async function drawSvg(svg: string, opts: DrawOptions): Promise<Blob> {
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('no 2d canvas')
   ctx.fillStyle = '#fff'
+  if (opts.background) ctx.fillStyle = opts.background
   ctx.fillRect(0, 0, canvas.width, canvas.height)
   /* the whole frame is drawn at scale, shifted so the clip lands at the origin */
   ctx.drawImage(
@@ -478,7 +513,12 @@ async function drawSvg(svg: string, opts: DrawOptions): Promise<Blob> {
     Math.round(opts.width * opts.scale),
     Math.round(opts.height * opts.scale),
   )
-  return encode(canvas, opts)
+  try {
+    return await encode(canvas, opts)
+  } finally {
+    canvas.width = 0
+    canvas.height = 0
+  }
 }
 
 function loadImage(url: string, signal?: AbortSignal): Promise<HTMLImageElement> {
