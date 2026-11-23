@@ -151,7 +151,7 @@ export function useCanvasDrawing(stage: RefObject<HTMLDivElement>) {
       cancel()
       return
     }
-    if ((e.target as Element).closest('[data-drawing-input], [data-ruler]')) return
+    if ((e.target as Element).closest('[data-drawing-input], [data-ruler], [data-browser-controls]')) return
     if (!e.isPrimary || gesture.pinching) {
       if (!draftRef.current?.typing) cancel()
       return
@@ -347,7 +347,7 @@ export function useCanvasDrawing(stage: RefObject<HTMLDivElement>) {
         setHover({ ...toWorld(e.clientX, e.clientY), unsnapped: e.altKey })
     },
     onDoubleClick: (e: React.MouseEvent) => {
-      if (draftRef.current?.drawing.tool !== 'path') return
+      if (draftRef.current?.drawing.tool !== 'path' || (e.target as Element).closest('[data-browser-controls]')) return
       e.preventDefault()
       e.stopPropagation()
       finish()

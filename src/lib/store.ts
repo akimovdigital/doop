@@ -955,7 +955,7 @@ export function canCommentOpenCanvas(s: Pick<State, 'canvas'>): boolean {
 
 /** Select, Hand and the Comment tool for commenters; every tool for editors. */
 export function toolAllowed(tool: Tool, role: CanvasRole): boolean {
-  if (isDrawingTool(tool) || tool === 'section') return roleAllows(role, 'edit')
+  if (isDrawingTool(tool) || tool === 'section' || tool === 'browser') return roleAllows(role, 'edit')
   if (tool === 'comment') return roleAllows(role, 'comment')
   return true
 }

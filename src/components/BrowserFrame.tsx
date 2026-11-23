@@ -354,7 +354,15 @@ export function BrowserFrame({
         transform: frame.rotation ? `rotate(${frame.rotation}deg)` : undefined,
       }}
     >
-      <div className="browser-canvas-bar browser-chrome" onDoubleClick={(event) => event.stopPropagation()}>
+      <div
+        className="browser-canvas-bar browser-chrome"
+        data-browser-controls=""
+        onPointerDown={(event) => {
+          // Let Hand pan from the grip, while a control keeps its own click.
+          if (event.target instanceof Element && event.target.closest('button, input')) event.stopPropagation()
+        }}
+        onDoubleClick={(event) => event.stopPropagation()}
+      >
         <div
           className="grid size-6 flex-none cursor-grab place-items-center text-ink-faint"
           aria-label={t('canvas.browserDrag')}
@@ -426,6 +434,7 @@ export function BrowserFrame({
         {...{ popover: 'manual' }}
         data-browser-surface={overlay ?? 'canvas'}
         data-stage-scroll={overlay ? '' : undefined}
+        data-browser-controls={overlay ? '' : undefined}
         role={overlay === 'side' ? 'complementary' : overlay === 'present' ? 'dialog' : 'presentation'}
         onCancel={(event) => {
           event.preventDefault()

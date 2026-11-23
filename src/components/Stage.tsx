@@ -1071,7 +1071,7 @@ export function Stage({
         return
       }
       const next = toolForShortcut(e)
-      if (!next) return
+      if (!next || !toolAllowed(next, roleOf(useStore.getState()))) return
       e.preventDefault()
       const previous = useStore.getState().tool
       if (next === 'zoom') zoomHeld.current ??= { previous }

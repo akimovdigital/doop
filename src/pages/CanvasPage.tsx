@@ -1,4 +1,4 @@
-import { openBrowserSurface, selectedBrowser, useBrowserUi } from '../lib/browserFrames'
+import { openBrowserSurface, useBrowserUi } from '../lib/browserFrames'
 import { CAPTURE_PREFIX, pasteWebCapture } from '../lib/webCapture'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { canEditOpenCanvas, pickedSelectors, roleOf, useStore } from '../lib/store'
@@ -665,6 +665,13 @@ export function CanvasPage({
     state.requestComposerFocus()
   }
 
+  function openPresent(frameId: string | null) {
+    if (!frameId) return
+    const frame = useStore.getState().canvas?.frames.find((item) => item.id === frameId)
+    if (frame?.browser && !frame.hidden) openBrowserSurface(frame, 'present')
+    else setPresenting(frameId)
+  }
+
   /* lend the action registry what only this page holds, fresh every render */
   useEffect(() => {
     const host: ActionHost = {
@@ -708,11 +715,8 @@ export function CanvasPage({
           .catch((err: Error) => showToast(err.message))
       },
       present: () => {
-        const browser = selectedBrowser()
-        if (browser) return openBrowserSurface(browser, 'present')
         const state = useStore.getState()
-        const from = presentStartFrame(state.canvas, state.selectedId, state.activePageId)
-        if (from) setPresenting(from)
+        openPresent(presentStartFrame(state.canvas, state.selectedId, state.activePageId))
       },
       toggleHideUi,
       toggleAgents: () => setShowActivity((open) => !open),
@@ -1013,11 +1017,7 @@ export function CanvasPage({
                   className={barPillIconBtn}
                   aria-label={t('canvas.presentPrototypeLabel')}
                   disabled={!playFrom}
-                  onClick={() => {
-                    const browser = selectedBrowser()
-                    if (browser) openBrowserSurface(browser, 'present')
-                    else setPresenting(playFrom)
-                  }}
+                  onClick={() => openPresent(playFrom)}
                 >
                   <PlayIcon className="size-3.5" />
                 </Button>

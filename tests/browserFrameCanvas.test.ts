@@ -181,6 +181,18 @@ describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
     expect(await child!.evaluate(() => window.scrollY)).toBe(400)
   }, 15_000)
 
+  it('keeps browser controls clickable with the Hand or a drawing tool selected', async () => {
+    await seed(url)
+    for (const tool of ['Hand', 'Rectangle']) {
+      await page.click(`[aria-label="Canvas tools"] button[aria-label="${tool}"]`)
+      await clickButton(BAR, 'Present browser')
+      await page.waitForSelector(PRESENT, { visible: true })
+      await page.keyboard.press('Escape')
+      await page.waitForSelector(PRESENT, { hidden: true })
+    }
+    expect(writes).toEqual([])
+  })
+
   it('offers Retry when the browser cannot reach the page and loads it when it returns', async () => {
     blocked = true
     await seed(`${url}/recover`)
