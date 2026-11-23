@@ -1505,9 +1505,9 @@ export function Stage({
               /* same 36px pill as the title and Import/Export bar, not the
                  38px toolbar that came from 5px padding and a 12px radius */
               'h-9 rounded-[10px] px-1 py-0',
-              /* the Section tool is one more phone button; a 1px gap keeps the
-                 whole strip inside a 390px screen, where 2px gaps spill 1.5px */
-              'max-sm:gap-px',
+              /* Nine tools plus Comment share the mobile strip. Keep the
+                 touch height and give each button a share of the width. */
+              'max-sm:gap-px max-sm:[&_[data-slot=toolbar-button]]:min-w-[clamp(26px,calc((100vw_-_30px)/10),40px)]',
             )}
           >
             {/* one fill slides between tools; the buttons themselves stay
