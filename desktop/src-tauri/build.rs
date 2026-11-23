@@ -8,6 +8,9 @@ fn main() {
     if chromium {
         println!("cargo::rustc-cfg=chromium");
     }
+    if !chromium && std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        build_macos_dictation();
+    }
     let attributes =
         tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(&[
             "claude_status",
@@ -30,6 +33,9 @@ fn main() {
             "update_card_ready",
             "update_restart",
             "open_canvas_window",
+            "dictation_available",
+            "dictation_start",
+            "dictation_stop",
         ]));
     let attributes = if chromium {
         // tauri-build watches only its default capabilities path, so a
@@ -40,4 +46,42 @@ fn main() {
         attributes
     };
     tauri_build::try_build(attributes).expect("failed to build desktop permissions");
+}
+
+fn build_macos_dictation() {
+    use std::{env, path::Path, process::Command};
+
+    let out = env::var_os("OUT_DIR").expect("OUT_DIR");
+    let source = Path::new("src/dictation.m");
+    let object = Path::new(&out).join("doop_dictation.o");
+    let archive = Path::new(&out).join("libdoop_dictation.a");
+    let arch = match env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+        Ok("aarch64") => "arm64",
+        Ok("x86_64") => "x86_64",
+        _ => panic!("unsupported macOS target for dictation"),
+    };
+    println!("cargo:rerun-if-changed={}", source.display());
+    println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
+    let minimum = env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "10.13".into());
+    let compiled = Command::new("xcrun")
+        .args(["--sdk", "macosx", "clang", "-arch", arch, "-fobjc-arc", "-fblocks", "-c"])
+        .arg(format!("-mmacosx-version-min={minimum}"))
+        .arg(source)
+        .arg("-o")
+        .arg(&object)
+        .status()
+        .expect("run clang for dictation");
+    assert!(compiled.success(), "compile the macOS dictation bridge");
+    let archived = Command::new("xcrun")
+        .args(["--sdk", "macosx", "ar", "crs"])
+        .arg(&archive)
+        .arg(&object)
+        .status()
+        .expect("archive the macOS dictation bridge");
+    assert!(archived.success(), "archive the macOS dictation bridge");
+    println!("cargo:rustc-link-search=native={}", Path::new(&out).display());
+    println!("cargo:rustc-link-lib=static=doop_dictation");
+    println!("cargo:rustc-link-lib=framework=Foundation");
+    println!("cargo:rustc-link-lib=framework=AVFoundation");
+    println!("cargo:rustc-link-arg=-Wl,-weak_framework,Speech");
 }

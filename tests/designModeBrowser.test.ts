@@ -833,6 +833,70 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     )
   })
 
+  it('dictates into the note and capsule with interim text and keeps the editor open on Escape', async () => {
+    const frame = await mount()
+    await page.evaluate(() => {
+      class FakeRecognition extends EventTarget {
+        start() {
+          const result = Object.assign(new Event('result'), {
+            results: [{ isFinal: false, 0: { transcript: 'make it wider' } }],
+          })
+          this.dispatchEvent(result)
+        }
+        stop() {
+          this.dispatchEvent(new Event('end'))
+        }
+        abort() {
+          this.stop()
+        }
+      }
+      Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: FakeRecognition })
+    })
+    await enter()
+    await pick(frame, '#title')
+    const mic = '[data-design-card] [data-dictate]'
+    expect(await page.$(mic)).toBeNull()
+    await page.keyboard.type('Please')
+    await page.waitForSelector(mic)
+    await page.click(mic)
+    await page.waitForSelector(`${mic}[data-recording="true"]`)
+    expect(await page.$eval(field, (el) => (el as HTMLTextAreaElement).value)).toBe('Please make it wider')
+    if (process.env.DOOP_DESIGN_SHOTS === '1') {
+      const dir = join(homedir(), 'doop-element-comments')
+      await mkdir(dir, { recursive: true })
+      await page.screenshot({ path: join(dir, 'dm-19-dictation-listening.png') })
+    }
+    await page.keyboard.press('Escape')
+    await page.waitForSelector(`${mic}[aria-pressed="false"]`)
+    await page.focus(field)
+    await chord('l')
+    await page.waitForSelector(chatField)
+    const capsuleMic = `${capsule} [data-dictate]`
+    await page.waitForSelector(capsuleMic)
+    await page.click(capsuleMic)
+    await page.waitForSelector(`${capsuleMic}[data-recording="true"]`)
+    expect(await draft()).toBe('Please make it wider make it wider')
+    await page.keyboard.press('Escape')
+    await page.waitForSelector(`${capsuleMic}[aria-pressed="false"]`)
+
+    await enter()
+    await pick(frame, '#title')
+    await page.click(control('Edit CSS properties'))
+    const filter = 'input[aria-label="Filter properties"]'
+    await page.waitForSelector(filter)
+    await page.type(filter, 'color')
+    const color = 'input[aria-label="color"]'
+    await page.$eval(color, (el) => (el as HTMLInputElement).select())
+    await page.keyboard.type('red')
+    await page.waitForSelector(mic)
+    expect(await page.$eval(field, (el) => (el as HTMLTextAreaElement).value)).toBe('')
+    await page.click(mic)
+    await page.waitForSelector(`${mic}[data-recording="true"]`)
+    expect(await page.$eval(field, (el) => (el as HTMLTextAreaElement).value)).toBe('make it wider')
+    await page.keyboard.press('Escape')
+    await page.waitForSelector(`${mic}[aria-pressed="false"]`)
+  })
+
   it.runIf(process.env.DOOP_DESIGN_SHOTS === '1')(
     'captures the design mode states at 1440 × 960',
     { timeout: 90_000 },

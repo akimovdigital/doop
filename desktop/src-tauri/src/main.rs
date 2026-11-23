@@ -58,6 +58,8 @@ mod appimage;
 mod claude;
 mod claude_extension;
 mod codex;
+#[cfg(all(target_os = "macos", not(chromium)))]
+mod dictation;
 mod fonts;
 mod server;
 mod updates;
@@ -380,14 +382,15 @@ fn build_canvas_window(
     // tab strip. Declare the overlay directly because custom builds
     // can have a release series independent of the upstream shell.
     let desktop_marker = format!(
-        "window.__DOOP_DESKTOP__ = '{}'; window.__DOOP_DESKTOP_PLATFORM__ = '{}'; window.__DOOP_DESKTOP_TRAFFIC_LIGHTS__ = {}; window.__DOOP_CLAUDE_CLI__ = true; window.__DOOP_CLAUDE_INSTALL__ = true; window.__DOOP_CLAUDE_CHOOSE__ = true; window.__DOOP_CLAUDE_EXTENSION__ = {}; window.__DOOP_CODEX_SETUP__ = true; window.__DOOP_VIEW_MENU__ = true; window.__DOOP_APP_MENU__ = {}; window.__DOOP_LOCAL_FONTS__ = true; window.__DOOP_UPDATE_CARD__ = true; window.__DOOP_SERVER_CHOOSE__ = true; window.__DOOP_TAB_WINDOWS__ = true; window.__DOOP_DETACHED_WINDOW__ = {};",
+        "window.__DOOP_DESKTOP__ = '{}'; window.__DOOP_DESKTOP_PLATFORM__ = '{}'; window.__DOOP_DESKTOP_TRAFFIC_LIGHTS__ = {}; window.__DOOP_CLAUDE_CLI__ = true; window.__DOOP_CLAUDE_INSTALL__ = true; window.__DOOP_CLAUDE_CHOOSE__ = true; window.__DOOP_CLAUDE_EXTENSION__ = {}; window.__DOOP_CODEX_SETUP__ = true; window.__DOOP_VIEW_MENU__ = true; window.__DOOP_APP_MENU__ = {}; window.__DOOP_LOCAL_FONTS__ = true; window.__DOOP_UPDATE_CARD__ = true; window.__DOOP_SERVER_CHOOSE__ = true; window.__DOOP_TAB_WINDOWS__ = true; window.__DOOP_DETACHED_WINDOW__ = {}; window.__DOOP_NATIVE_DICTATION__ = {};",
         app.package_info().version,
         std::env::consts::OS,
         cfg!(target_os = "macos"),
         cfg!(any(target_os = "macos", target_os = "windows")),
         // only macOS has a menu bar for the page to build (app_menu.rs)
         cfg!(target_os = "macos"),
-        !label_is_main
+        !label_is_main,
+        cfg!(all(target_os = "macos", not(chromium)))
     );
     // macOS never reports the saved path on `Finished`, so remember
     // the destinations chosen on `Requested`, keyed by URL. The same
@@ -560,7 +563,13 @@ fn main() {
             app_menu::app_menu_state,
             updates::update_card_ready,
             updates::update_restart,
-            open_canvas_window
+            open_canvas_window,
+            #[cfg(all(target_os = "macos", not(chromium)))]
+            dictation::dictation_available,
+            #[cfg(all(target_os = "macos", not(chromium)))]
+            dictation::dictation_start,
+            #[cfg(all(target_os = "macos", not(chromium)))]
+            dictation::dictation_stop,
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             focus_main_window(app)
@@ -585,6 +594,10 @@ fn main() {
     });
     builder
         .on_window_event(|window, event| {
+            #[cfg(all(target_os = "macos", not(chromium)))]
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed) {
+                dictation::cancel_window(window);
+            }
             #[cfg(target_os = "macos")]
             if matches!(
                 event,

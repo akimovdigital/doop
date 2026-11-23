@@ -1,3 +1,4 @@
+import { DictateButton } from './DictateButton'
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
@@ -558,6 +559,9 @@ export function DesignModeOverlay({
                 />
               </label>
               <div className="flex items-center gap-1">
+                {(comment || draft.textEdit || !!draft.cssEdits?.length) && (
+                  <DictateButton text={draft.comment} onText={mode.setComment} disabled={mode.busy} />
+                )}
                 {draft.id && (
                   <IconButton
                     size="sm"

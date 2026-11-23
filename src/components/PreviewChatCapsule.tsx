@@ -1,3 +1,4 @@
+import { DictateButton } from './DictateButton'
 import { ComposerContextChips } from './ContextChip'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useT } from '@/lib/i18n'
@@ -212,6 +213,11 @@ export function PreviewChatCapsule({
                 if (!event.repeat) void submit()
               }}
               onKeyUp={(event) => event.stopPropagation()}
+            />
+            <DictateButton
+              text={draft.text}
+              onText={(value) => useStore.getState().setComposerDraft(canvasId, value)}
+              disabled={busy}
             />
             <IconButton
               type="submit"

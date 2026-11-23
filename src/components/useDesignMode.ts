@@ -3,6 +3,7 @@ import { captureDesignCrop, discardDesignCrop } from '../lib/designCrop'
 import type { CardScope, Frame } from '../../shared/types'
 import type { ComponentDef } from '../../shared/components'
 import { constrainMarkup, markupPath, undoMarkup, type MarkupStroke, type MarkupTool } from '../lib/designMarkup'
+import { stopActiveDictation } from '../lib/dictation'
 import { askFrameWindow } from '../lib/frameBridge'
 import {
   designEscape,
@@ -314,6 +315,7 @@ export function useDesignMode({
 
   function draftToChat(value: Draft) {
     if (!frame || !allowed) return
+    stopActiveDictation()
     const note = asNote({ ...value, id: undefined }, value.comment.trim())
     const win = getWindow()
     const sequence = ++pickSequence.current
