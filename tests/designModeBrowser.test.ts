@@ -60,6 +60,7 @@ type Fixture = {
   designSendDelay?: number
   designSendError?: string
   designCropHasMarkup: boolean
+  finishDesignCrop?: () => void
   readDesignDraft: (canvasId: string) => string
   writeDesignDraft: (canvasId: string, text: string) => void
   editFrame: (id: string, html: string) => void
@@ -467,7 +468,23 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await draw(at.x + 30, at.y + 25, 124, 70)
     await page.waitForSelector('[data-markup-tool="ellipse"]')
     await page.click('[role="switch"]')
+    await page.evaluate(() => {
+      const toBlob = HTMLCanvasElement.prototype.toBlob
+      HTMLCanvasElement.prototype.toBlob = function (callback, ...options) {
+        HTMLCanvasElement.prototype.toBlob = toBlob
+        toBlob.call(
+          this,
+          (blob) => {
+            ;(window as unknown as Fixture).finishDesignCrop = () => callback(blob)
+          },
+          ...options,
+        )
+      }
+    })
     await page.click(control('Add to stack'))
+    await page.waitForFunction(() => typeof (window as unknown as Fixture).finishDesignCrop === 'function')
+    expect(await page.$(pin(1))).toBeNull()
+    await page.evaluate(() => (window as unknown as Fixture).finishDesignCrop!())
     await page.waitForSelector(pin(1))
     const ellipse = '[data-markup-status="pending"] [data-markup-tool="ellipse"]'
     await page.waitForSelector(ellipse)

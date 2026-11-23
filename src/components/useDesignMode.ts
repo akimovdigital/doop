@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { captureDesignCrop, discardDesignCrop } from '../lib/designCrop'
+import { captureDesignCrop, discardDesignCrop, readDesignCrop } from '../lib/designCrop'
 import type { CardScope, Frame } from '../../shared/types'
 import type { ComponentDef } from '../../shared/components'
 import { constrainMarkup, markupPath, undoMarkup, type MarkupStroke, type MarkupTool } from '../lib/designMarkup'
@@ -129,7 +129,10 @@ export function useDesignMode({
   const pickSequence = useRef(0)
   const point = useRef<DesignPoint>()
   const lastRects = useRef(new Map<string, NoteRect>())
-  const busy = useStore((s) => s.composerSend?.status === 'busy')
+  const savingRegion = useRef(false)
+  const [regionSaving, setRegionSaving] = useState(false)
+  const sending = useStore((s) => s.composerSend?.status === 'busy')
+  const busy = sending || regionSaving
   const sendError = useStore((s) =>
     s.composerSend?.canvasId === canvasId && s.composerSend?.status === 'error' ? s.composerSend.message : null,
   )
@@ -314,7 +317,7 @@ export function useDesignMode({
   }
 
   function draftToChat(value: Draft) {
-    if (!frame || !allowed) return
+    if (!frame || !allowed || savingRegion.current) return
     stopActiveDictation()
     const note = asNote({ ...value, id: undefined }, value.comment.trim())
     const win = getWindow()
@@ -686,11 +689,25 @@ export function useDesignMode({
       (!draft.comment.trim() && !draft.textEdit && !draft.cssEdits?.length && !draft.markup?.length) ||
       !frame ||
       !allowed ||
+      savingRegion.current ||
       useStore.getState().composerSend?.status === 'busy'
     )
       return
     const note = asNote(draft, draft.comment.trim())
-    void capture(note)
+    const sequence = pickSequence.current
+    const captureReady = capture(note)
+    // A queued region is a screenshot note. Publish its pin after the PNG
+    // transaction finishes so reloading at that point keeps the attachment.
+    if (note.region && captureReady && (draft.id || saved.batch)) {
+      savingRegion.current = true
+      setRegionSaving(true)
+      try {
+        await readDesignCrop(note.id)
+      } finally {
+        savingRegion.current = false
+        setRegionSaving(false)
+      }
+    }
     if (draft.id) {
       dispatch({
         type: 'update',
@@ -715,7 +732,7 @@ export function useDesignMode({
         if (!(await sendNotes([queued]))) return
       }
     }
-    closeDraft()
+    if (sequence === pickSequence.current) closeDraft()
   }
 
   async function sendPending() {
