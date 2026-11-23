@@ -568,6 +568,8 @@ export function PrototypePlayer({
       hit?: unknown
       before?: unknown
       after?: unknown
+      scrollX?: unknown
+      scrollY?: unknown
     }) => {
       /* a covered screen is switched off, but an action it sent before the
          switch reached it must not act over the screen on top */
@@ -595,7 +597,8 @@ export function PrototypePlayer({
         design.setQueueOpen(false)
         chat.collapse()
       } else if (data.type === 'doop:textEdit-finished' && topEntry()?.key === entry.key) design.finishTextEdit(data)
-      else if (data.type === 'doop:annotation-layout' && topEntry()?.key === entry.key) design.refreshPins()
+      else if (data.type === 'doop:annotation-layout' && topEntry()?.key === entry.key)
+        design.refreshPins(data.scrollX, data.scrollY)
     },
   })
 

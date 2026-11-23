@@ -1189,7 +1189,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
     if (!annotationWatching || annotationChangeFrame) return
     annotationChangeFrame = requestAnimationFrame(function () {
       annotationChangeFrame = 0
-      if (annotationWatching) postToEditor({ type: 'doop:annotation-layout' })
+      if (annotationWatching) postToEditor({ type: 'doop:annotation-layout', scrollX: window.scrollX, scrollY: window.scrollY })
     })
   }
   window.addEventListener('scroll', annotationChanged, true)

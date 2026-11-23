@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CardScope, Frame } from '../../shared/types'
 import type { ComponentDef } from '../../shared/components'
+import { constrainMarkup, markupPath, undoMarkup, type MarkupStroke, type MarkupTool } from '../lib/designMarkup'
 import { askFrameWindow } from '../lib/frameBridge'
 import {
   designEscape,
@@ -33,13 +34,18 @@ interface Target {
 
 type Details = Omit<NoteElement, 'label' | 'htmlExcerpt'> & Target
 export type DesignPoint = { x: number; y: number }
-type Draft = Pick<DesignNote, 'elements' | 'region' | 'comment' | 'textEdit' | 'cssEdits'> & { id?: string }
+type Draft = Pick<
+  DesignNote,
+  'elements' | 'region' | 'comment' | 'textEdit' | 'cssEdits' | 'regionInPage' | 'markup'
+> & { id?: string }
 type CssInspector = { selector: string; properties: Record<string, string> }
 type LocatedPin = { rect: NoteRect; missing: boolean }
 
 function annotationSelector(element: NoteElement) {
   return element.doopId ? `[data-doop-id="${CSS.escape(element.doopId)}"]` : element.selector
 }
+
+const zeroOffset = { x: 0, y: 0 }
 
 const subscribers = new Set<() => void>()
 const notesByCanvas = new Map<string, SavedDesignNotes>()
@@ -107,6 +113,13 @@ export function useDesignMode({
   const textSession = useRef<{ id: string; win: Window }>()
   const [hover, setHover] = useState<Target | null>(null)
   const [region, setRegion] = useState<NoteRect>()
+  const [markupTool, setMarkupTool] = useState<MarkupTool | 'move'>('move')
+  const [markupStroke, setMarkupStroke] = useState<MarkupStroke>()
+  const regionMove = useRef<{ start: DesignPoint; pointerId: number; draft: Draft }>()
+  const stroke = useRef<{ pointerId: number; markup: MarkupStroke }>()
+  const [pageScroll, setPageScroll] = useState<{ screen: number; revision: number; offset: DesignPoint }>()
+  const pageOffset =
+    pageScroll?.screen === screenKey && pageScroll.revision === documentRevision ? pageScroll.offset : zeroOffset
   const [pins, setPins] = useState<Record<string, LocatedPin>>({})
   const drag = useRef<{ start: DesignPoint; pointerId: number; rect?: NoteRect }>()
   const hoverSequence = useRef(0)
@@ -152,6 +165,7 @@ export function useDesignMode({
   }
 
   function closeDraft() {
+    cancelMarkup()
     closeCssInspector()
     setDraft(null)
   }
@@ -160,14 +174,14 @@ export function useDesignMode({
     cancelText()
     clearHover()
     pickSequence.current++
-    drag.current = undefined
-    setRegion(undefined)
+    cancelDrag()
     closeDraft()
   }
 
   function holdPage() {
     clearHover()
     cancelDrag()
+    cancelMarkup()
     pickSequence.current++
     setUsingPage(true)
   }
@@ -195,6 +209,18 @@ export function useDesignMode({
   }
 
   function escape() {
+    if (stroke.current) {
+      cancelMarkup()
+      return true
+    }
+    if (regionMove.current) {
+      cancelDrag()
+      return true
+    }
+    if (draft?.region && markupTool !== 'move') {
+      setMarkupTool('move')
+      return true
+    }
     if (textSession.current) {
       cancelText()
       return true
@@ -266,6 +292,8 @@ export function useDesignMode({
       ...(stored || {}),
       elements: value.elements,
       region: value.region,
+      regionInPage: value.regionInPage,
+      markup: value.markup,
       textEdit: value.textEdit,
       cssEdits: value.cssEdits,
       comment,
@@ -435,11 +463,87 @@ export function useDesignMode({
     setHover(null)
   }
 
+  function cancelMarkup() {
+    stroke.current = undefined
+    setMarkupStroke(undefined)
+  }
+
+  function undoStroke() {
+    if (!enabled || !draft?.region) return false
+    if (stroke.current) {
+      cancelMarkup()
+      return true
+    }
+    if (!draft.markup?.length) return false
+    setDraft((current) => current && { ...current, markup: undoMarkup(current.markup ?? []) })
+    return true
+  }
+
+  function visibleRegion(note: Pick<DesignNote, 'region' | 'regionInPage'>) {
+    const rect = note.region
+    if (!rect || !note.regionInPage) return rect
+    return { ...rect, x: rect.x - pageOffset.x, y: rect.y - pageOffset.y }
+  }
+
+  function pagePoint(at: DesignPoint) {
+    return { x: at.x + pageOffset.x, y: at.y + pageOffset.y }
+  }
+
+  function extendStroke(current: MarkupStroke, at: DesignPoint, shift: boolean): MarkupStroke {
+    const end = pagePoint(at)
+    const start = current.points[0]!
+    if (current.tool === 'draw') {
+      const last = current.points.at(-1)!
+      if (last.x === end.x && last.y === end.y) return current
+      return { ...current, points: [...current.points, end] }
+    }
+    return { ...current, points: [start, shift ? constrainMarkup(current.tool, start, end) : end] }
+  }
+
   function pointerDown(at: DesignPoint, pointerId: number) {
-    if (!busy) drag.current = { start: at, pointerId }
+    if (busy) return
+    if (draft?.region) {
+      if (markupTool === 'move') {
+        const rect = visibleRegion(draft)!
+        if (at.x >= rect.x && at.x <= rect.x + rect.width && at.y >= rect.y && at.y <= rect.y + rect.height) {
+          regionMove.current = { start: at, pointerId, draft }
+        }
+        return
+      }
+      const markup = { tool: markupTool, points: [pagePoint(at)] }
+      stroke.current = { pointerId, markup }
+      setMarkupStroke(markup)
+      return
+    }
+    drag.current = { start: at, pointerId }
   }
 
   function pointerMove(at: DesignPoint, shift: boolean, alt: boolean, scale: number) {
+    const drawing = stroke.current
+    if (drawing) {
+      drawing.markup = extendStroke(drawing.markup, at, shift)
+      setMarkupStroke(drawing.markup)
+      return
+    }
+    const moving = regionMove.current
+    if (moving) {
+      const dx = at.x - moving.start.x
+      const dy = at.y - moving.start.y
+      const rect = moving.draft.region!
+      setDraft(
+        (value) =>
+          value && {
+            ...value,
+            region: { ...rect, x: rect.x + dx, y: rect.y + dy },
+            markup: moving.draft.markup?.map((mark) => ({
+              ...mark,
+              points: mark.points.map((point) => ({ x: point.x + dx, y: point.y + dy })),
+            })),
+          },
+      )
+      return
+    }
+    if (draft?.region) return
     const current = drag.current
     if (!current) {
       void probe(at)
@@ -461,11 +565,28 @@ export function useDesignMode({
   }
 
   function cancelDrag() {
+    if (regionMove.current) {
+      setDraft(regionMove.current.draft)
+      regionMove.current = undefined
+    }
     drag.current = undefined
     setRegion(undefined)
   }
 
   function pointerUp(at: DesignPoint, pointerId: number, shift: boolean, alt: boolean, scale: number) {
+    if (regionMove.current?.pointerId === pointerId) {
+      pointerMove(at, shift, alt, scale)
+      regionMove.current = undefined
+      return
+    }
+    const drawing = stroke.current
+    if (drawing?.pointerId === pointerId) {
+      const markup = extendStroke(drawing.markup, at, shift)
+      if (markupPath(markup))
+        setDraft((current) => (current?.region ? { ...current, markup: [...(current.markup ?? []), markup] } : current))
+      cancelMarkup()
+      return
+    }
     const current = drag.current
     if (!current || current.pointerId !== pointerId) return
     pointerMove(at, shift, alt, scale)
@@ -473,13 +594,17 @@ export function useDesignMode({
     if (current.rect) {
       pickSequence.current++
       closeCssInspector()
-      setDraft({ region: current.rect, elements: [], comment: '' })
+      setMarkupTool('move')
+      const rect = current.rect
+      setDraft({ region: { ...rect, ...pagePoint(rect) }, regionInPage: true, elements: [], comment: '' })
     } else void pick(at, shift, alt)
   }
 
   function openNote(note: DesignNote) {
     if (!allowed || busy) return
     enter()
+    cancelMarkup()
+    setMarkupTool('move')
     closeCssInspector()
     setQueueOpen(false)
     if (source === 'browser' ? note.pageUrl !== pageUrl : note.frameId !== frameId)
@@ -489,6 +614,8 @@ export function useDesignMode({
       comment: note.comment,
       elements: note.elements,
       region: note.region,
+      regionInPage: note.regionInPage,
+      markup: note.markup,
       textEdit: note.textEdit,
       cssEdits: note.cssEdits,
     })
@@ -523,7 +650,7 @@ export function useDesignMode({
   async function submit() {
     if (
       !draft ||
-      (!draft.comment.trim() && !draft.textEdit && !draft.cssEdits?.length) ||
+      (!draft.comment.trim() && !draft.textEdit && !draft.cssEdits?.length && !draft.markup?.length) ||
       !frame ||
       !allowed ||
       useStore.getState().composerSend?.status === 'busy'
@@ -538,6 +665,8 @@ export function useDesignMode({
           comment: note.comment,
           elements: note.elements,
           region: note.region,
+          regionInPage: note.regionInPage,
+          markup: note.markup,
           cssEdits: note.cssEdits,
           ...(note.status !== 'pending' && note.cssEdits?.length
             ? { status: 'pending' as const, cardId: undefined, sentAt: undefined, resolvedAt: undefined }
@@ -560,7 +689,7 @@ export function useDesignMode({
     if (await sendNotes(notes)) exit()
   }
 
-  const watching = allowed && pageNotes.length > 0
+  const watching = allowed && (enabled || pageNotes.length > 0)
   useEffect(() => {
     const win = getWindow()
     if (!win || !watching) return
@@ -569,7 +698,21 @@ export function useDesignMode({
   }, [screenKey, documentRevision, watching, getWindow])
 
   const [windowRevision, refreshWindow] = useState(0)
-  const refreshPins = useCallback(() => refreshWindow((value) => value + 1), [])
+  const refreshPins = useCallback(
+    (x: unknown, y: unknown) => {
+      if (typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y))
+        setPageScroll((previous) =>
+          previous?.screen === screenKey &&
+          previous.revision === documentRevision &&
+          previous.offset.x === x &&
+          previous.offset.y === y
+            ? previous
+            : { screen: screenKey, revision: documentRevision, offset: { x, y } },
+        )
+      refreshWindow((value) => value + 1)
+    },
+    [screenKey, documentRevision],
+  )
   useEffect(() => {
     const win = getWindow()
     if (!win || !watching || !canvasId) return
@@ -625,6 +768,16 @@ export function useDesignMode({
         return true
       }
     }
+    if (
+      (event.metaKey || event.ctrlKey) &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.isComposing &&
+      event.key.toLowerCase() === 'z' &&
+      !target?.closest('input,[contenteditable]') &&
+      undoStroke()
+    )
+      return true
     if (target?.closest('[data-design-css-inspector]')) {
       if (event.key === 'Escape') {
         target.closest('[data-design-card]')?.querySelector<HTMLButtonElement>('button[aria-expanded="true"]')?.focus()
@@ -651,6 +804,16 @@ export function useDesignMode({
     pageNotes,
     handleKey,
     editingText,
+    markupTool,
+    setMarkupTool,
+    markupStroke,
+    pageOffset,
+    visibleRegion,
+    undoStroke,
+    cancelPointer: () => {
+      cancelMarkup()
+      cancelDrag()
+    },
     cssInspector,
     toggleCssInspector,
     closeCssInspector,
@@ -682,7 +845,6 @@ export function useDesignMode({
     pointerDown,
     pointerMove,
     pointerUp,
-    cancelDrag,
     openNote,
     deleteNote,
     submit,

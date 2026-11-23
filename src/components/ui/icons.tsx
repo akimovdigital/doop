@@ -36,6 +36,7 @@ import {
   ArrowLeft,
   ArrowDown,
   ArrowRight,
+  ArrowUpRight,
   ArrowUp,
   Bell,
   Blocks,
@@ -318,6 +319,7 @@ export const PlayIcon = icon(Play)
 export const ArrowUpIcon = icon(ArrowUp)
 export const ArrowLeftIcon = icon(ArrowLeft)
 export const ArrowRightIcon = icon(ArrowRight)
+export const ArrowUpRightIcon = icon(ArrowUpRight)
 export const ChevronLeftIcon = icon(ChevronLeft)
 export const GridIcon = icon(LayoutGrid)
 export const ListIcon = icon(Menu)

@@ -1,3 +1,5 @@
+import type { MarkupStroke, MarkupTool } from './designMarkup'
+
 export interface NoteRect {
   x: number
   y: number
@@ -46,6 +48,9 @@ export interface DesignNote {
   cssEdits?: DesignCssEdit[]
   elements: NoteElement[]
   region?: NoteRect
+  /** Older saved regions used viewport coordinates. */
+  regionInPage?: boolean
+  markup?: MarkupStroke[]
   comment: string
   status: 'pending' | 'sent' | 'resolved'
   createdAt: number
@@ -63,7 +68,17 @@ export type DesignNotesAction =
       changes: Partial<
         Pick<
           DesignNote,
-          'comment' | 'elements' | 'region' | 'textEdit' | 'cssEdits' | 'status' | 'sentAt' | 'resolvedAt' | 'cardId'
+          | 'comment'
+          | 'elements'
+          | 'region'
+          | 'textEdit'
+          | 'cssEdits'
+          | 'regionInPage'
+          | 'markup'
+          | 'status'
+          | 'sentAt'
+          | 'resolvedAt'
+          | 'cardId'
         >
       >
     }
@@ -146,6 +161,18 @@ function elementContext(note: DesignNote, element: NoteElement): string {
   ].join('\n')
 }
 
+function markupSummary(markup: MarkupStroke[]) {
+  const labels: Record<MarkupTool, [one: string, many: string]> = {
+    draw: ['drawing', 'drawings'],
+    ellipse: ['ellipse', 'ellipses'],
+    rectangle: ['rectangle', 'rectangles'],
+    arrow: ['arrow', 'arrows'],
+  }
+  const counts = new Map<MarkupTool, number>()
+  for (const { tool } of markup) counts.set(tool, (counts.get(tool) ?? 0) + 1)
+  return [...counts].map(([tool, count]) => `${count} ${labels[tool][count === 1 ? 0 : 1]}`).join(', ')
+}
+
 export function formatDesignNotes(notes: DesignNote[]): string {
   const byPage = new Map<string, DesignNote[]>()
   for (const note of notes) {
@@ -160,7 +187,7 @@ export function formatDesignNotes(notes: DesignNote[]): string {
         .sort((a, b) => a.number - b.number)
         .map((note) => {
           const label = note.region
-            ? `Screenshot region ${Math.round(note.region.width)} × ${Math.round(note.region.height)}`
+            ? `Screenshot region ${Math.round(note.region.width)} × ${Math.round(note.region.height)}${note.markup?.length ? ` with markup: ${markupSummary(note.markup)}` : ''}`
             : note.textEdit
               ? `<${note.elements[0]?.tag ?? 'element'}> text edit`
               : note.elements.map(elementLabel).join(' + ')
