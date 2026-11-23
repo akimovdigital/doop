@@ -45,3 +45,38 @@ export function makeScene(count: FramePreset, seed = sceneSeed) {
   })
   return { frames, live, seed }
 }
+
+export function makeRealScene(value: unknown, sha256: string) {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !('frames' in value) ||
+    !Array.isArray(value.frames) ||
+    !value.frames.length
+  ) {
+    throw new Error('Expected a nonempty frames array in the scene export')
+  }
+  if (!('source' in value) || typeof value.source !== 'string' || !value.source.trim()) {
+    throw new Error('Expected a source name in the scene export')
+  }
+  const ids = new Set<string>()
+  for (const [index, frame] of value.frames.entries()) {
+    if (
+      !frame ||
+      typeof frame.id !== 'string' ||
+      !frame.id ||
+      ids.has(frame.id) ||
+      typeof frame.html !== 'string' ||
+      ![frame.x, frame.y, frame.width, frame.height].every(Number.isFinite) ||
+      frame.width <= 0 ||
+      frame.height <= 0
+    ) {
+      throw new Error(`Invalid or duplicate frame at export index ${index}`)
+    }
+    ids.add(frame.id)
+  }
+  const frames = (value.frames as Frame[])
+    .map((frame) => ({ ...frame, canvasId, pageId: undefined }))
+    .sort((a, b) => a.x - b.x || a.y - b.y || (a.id < b.id ? -1 : Number(a.id > b.id)))
+  return { frames, source: value.source, sha256 }
+}

@@ -4,7 +4,7 @@ import { frameIntervals, intervalStats, nearestRank } from '../../src/perf/metri
 import { trajectory } from './gesture'
 import { noiseFloor, pairRejectionReasons, rejectionReasons, verdict } from './judgment'
 import { cameraRange, initialCamera, type Sample } from './protocol'
-import { framePresets, makeScene } from './scene'
+import { framePresets, makeRealScene, makeScene } from './scene'
 
 function trial(): Sample {
   const camera = initialCamera('pan')
@@ -60,6 +60,45 @@ describe('canvas benchmark', () => {
       'A/B camera y ranges differ',
       'A/B camera step counts differ: 98 vs 50',
     ])
+  })
+
+  it('accepts different fully ready document budgets on the same exported scene', () => {
+    const a = trial()
+    const b = trial()
+    a.scene = { frames: 40, expectedLive: 17, source: 'test-scene', sha256: 'test-hash' }
+    b.scene = { ...a.scene, expectedLive: 5 }
+    a.live = { before: { mounted: 17, ready: 17 }, after: { mounted: 18, ready: 18 } }
+    b.live = { before: { mounted: 5, ready: 5 }, after: { mounted: 6, ready: 6 } }
+    expect(rejectionReasons(a, 256)).toEqual([])
+    expect(rejectionReasons(b, 256)).toEqual([])
+    expect(pairRejectionReasons(a, b)).toEqual([])
+    b.live.after.ready--
+    expect(rejectionReasons(b, 256)).toEqual(['Live documents after: 6 mounted, 5 ready'])
+    b.scene.sha256 = 'different-hash'
+    expect(pairRejectionReasons(a, b)).toEqual(['A/B scenario or scene differs'])
+    expect(pairRejectionReasons(a, trial())).toContain('A/B scenario or scene differs')
+  })
+
+  it('imports exported frames in stable drag order on the fixture page', () => {
+    const frame = { y: 0, width: 300, height: 100, html: '<p>Fixture</p>', pageId: 'exported-page' }
+    const frames = [
+      { ...frame, x: 900, id: 'right' },
+      { ...frame, x: 0, id: 'left-b' },
+      { ...frame, x: 0, id: 'left-a' },
+    ]
+    const scene = makeRealScene({ source: 'fixture', exportedAt: '2026-11-23', frames }, 'hash')
+    expect(scene.frames.map(({ id }) => id)).toEqual(['left-a', 'left-b', 'right'])
+    expect(scene.frames[0]).toMatchObject({ canvasId: 'perf-canvas', pageId: undefined, html: '<p>Fixture</p>' })
+    expect(frames[0]?.pageId).toBe('exported-page')
+    expect(() => makeRealScene({ source: 'fixture', frames: [frames[0], frames[0]] }, 'hash')).toThrow('duplicate')
+  })
+
+  it('allows an explicit inclusive swapout limit', () => {
+    const sample = trial()
+    sample.memory.after.Swapouts += 8
+    expect(rejectionReasons(sample, 256)).toEqual(['Swapouts grew by 8 pages'])
+    expect(rejectionReasons(sample, 256, 8)).toEqual([])
+    expect(rejectionReasons(sample, 256, 7)).toEqual(['Swapouts grew by 8 pages'])
   })
 
   it('requires agreement across pairs and a median outside the A/A noise floor', () => {
