@@ -24,6 +24,12 @@ final class Probe: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         let rect = NSRect(x: screen.visibleFrame.minX + 10, y: screen.visibleFrame.minY + 10, width: 1280, height: 800)
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
+        config.userContentController.addUserScript(WKUserScript(source: """
+            window.perfBenchLoadErrors = [];
+            addEventListener('error', event => {
+                window.perfBenchLoadErrors.push(event.message || event.target?.src || 'Resource failed to load');
+            }, true);
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         if #available(macOS 14.0, *) {
             config.preferences.inactiveSchedulingPolicy = .none
         }
@@ -55,7 +61,15 @@ final class Probe: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         guard !started else { return }
         started = true
         view.callAsyncJavaScript("""
-            if (!window.perfBenchResult) throw new Error('Performance fixture did not initialize');
+            const deadline = performance.now() + 5_000;
+            while (!window.perfBenchResult && performance.now() < deadline) {
+                await new Promise(resolve => setTimeout(resolve, 25));
+            }
+            if (!window.perfBenchResult) {
+                const errors = window.perfBenchLoadErrors?.join('; ');
+                throw new Error('Performance fixture did not initialize at ' + location.href +
+                    ' (' + document.readyState + '): ' + (errors || document.title || document.body?.textContent?.slice(0, 500)));
+            }
             return JSON.stringify(await window.perfBenchResult);
             """, arguments: [:], in: nil, in: .page) { result in
             switch result {

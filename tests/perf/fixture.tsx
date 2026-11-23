@@ -1,4 +1,4 @@
-import { Profiler, type ProfilerOnRenderCallback } from 'react'
+import { Profiler, useLayoutEffect, type ProfilerOnRenderCallback } from 'react'
 import { createRoot } from 'react-dom/client'
 import { CanvasPage } from '../../src/pages/CanvasPage'
 import { TooltipProvider } from '../../src/components/ui/tooltip'
@@ -53,6 +53,12 @@ const recordCommit: ProfilerOnRenderCallback = (_id, _phase, actualDuration) => 
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms))
 const nextFrame = () => new Promise<number>((resolve) => requestAnimationFrame(resolve))
 
+function FixtureCamera({ viewport }: { viewport: Viewport }) {
+  // Stage fits the page in its layout effect. Run after it, before admission's first rAF.
+  useLayoutEffect(() => harness.setCamera(viewport), [viewport])
+  return null
+}
+
 async function vmStat(initial = false): Promise<Memory> {
   const response = await fetch(initial ? '/__memory?initial=1' : '/__memory', { cache: 'no-store' })
   if (!response.ok) throw new Error(`vm_stat sample failed: HTTP ${response.status}`)
@@ -88,8 +94,9 @@ async function waitReady(scene: Scene) {
     }
     await sleep(30)
   }
+  const stage = document.querySelector('.stage')
   throw new Error(
-    `Expected ${scene.frames.length} shells and ${scene.live} live documents; found ${document.querySelectorAll('[data-doop-frame-shell]').length} shells and ${JSON.stringify(liveDocuments())}`,
+    `Expected ${scene.frames.length} shells and ${scene.live} live documents; found ${document.querySelectorAll('[data-doop-frame-shell]').length} shells and ${JSON.stringify(liveDocuments())} at camera ${JSON.stringify(harness.getCamera())}, stage ${stage?.clientWidth}×${stage?.clientHeight}`,
   )
 }
 
@@ -201,11 +208,11 @@ async function run(): Promise<Sample> {
     dpr: devicePixelRatio,
     visibility: document.visibilityState,
   }
-  harness.setCamera(initial)
   harness.seed(scene)
   const canvas = (
     <TooltipProvider>
       <CanvasPage canvasId={canvasId} />
+      <FixtureCamera viewport={initial} />
     </TooltipProvider>
   )
   const hud = await loadPerfHud(location.search, localStorage, () => import('../../src/perf/PerfHud'))
