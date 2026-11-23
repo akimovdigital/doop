@@ -95,6 +95,7 @@ function Modal({
   open = true,
   onClose,
   showClose = true,
+  overlayClassName,
   size,
   className,
   children,
@@ -107,6 +108,7 @@ function Modal({
      *  same way, and on a phone a wide modal leaves almost no backdrop to
      *  tap. Off only for a modal whose header draws its own */
     showClose?: boolean
+    overlayClassName?: string
   }) {
   const t = useT()
   const overlayRef = React.useRef<HTMLDivElement>(null)
@@ -121,7 +123,7 @@ function Modal({
   return (
     <DialogPrimitive.Root open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay ref={overlayRef} className={overlayCls} />
+        <DialogPrimitive.Overlay ref={overlayRef} className={cn(overlayCls, overlayClassName)} />
         <DialogPrimitive.Content
           ref={contentRef}
           data-slot="modal"

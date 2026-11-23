@@ -20,14 +20,14 @@ import { t as translate, useT, type Translate } from '../lib/i18n'
 
 export type { Allowance }
 
-export function useAllowance(): { allowance: Allowance | null; refresh: () => void } {
+export function useAllowance(enabled = true): { allowance: Allowance | null; refresh: () => void } {
   const [allowance, setAllowance] = useState<Allowance | null>(null)
   /* re-read whenever a model account is connected or dropped anywhere in the
      app, so every meter on screen agrees without prop-drilling */
   const version = useStore((s) => s.allowanceVersion)
   const refresh = useCallback(() => {
-    api.agentAllowance().then(setAllowance, () => {})
-  }, [])
+    if (enabled) api.agentAllowance().then(setAllowance, () => {})
+  }, [enabled])
   useEffect(refresh, [refresh, version])
   return { allowance, refresh }
 }
@@ -91,10 +91,12 @@ export function MeterLine({ allowance }: { allowance: Allowance | null }) {
 
 export function LimitWall({
   canvasId,
+  overPreview = false,
   onClose,
   onOpenConnect,
 }: {
   canvasId: string
+  overPreview?: boolean
   onClose: () => void
   onOpenConnect: () => void
 }) {
@@ -108,7 +110,12 @@ export function LimitWall({
     posthog.capture('resident_limit_hit')
   }, [])
   return (
-    <Modal size="lg" onClose={onClose}>
+    <Modal
+      size="lg"
+      onClose={onClose}
+      className={overPreview ? 'z-[91]' : undefined}
+      overlayClassName={overPreview ? 'z-[90]' : undefined}
+    >
       <>
         <ModalTitle>{hadFreeTier ? t('home.wallUsedUpTitle') : t('home.wallConnectTitle')}</ModalTitle>
         <ModalLede>

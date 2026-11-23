@@ -909,7 +909,7 @@ export const api = {
     scope?: CardScope,
     runner?: RunnerPick,
   ) =>
-    req(`/api/canvases/${canvasId}/cards`, {
+    req<{ id?: string }>(`/api/canvases/${canvasId}/cards`, {
       method: 'POST',
       body: JSON.stringify({ title, agents, attachments, scope, runner }),
     }),

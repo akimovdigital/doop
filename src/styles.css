@@ -581,6 +581,15 @@ body[data-panel-resizing] * {
   }
 }
 
+@keyframes preview-chat-in {
+  from {
+    transform: translateY(4px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
 @keyframes fade-in {
   from {
     opacity: 0;

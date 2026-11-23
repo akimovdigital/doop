@@ -216,11 +216,12 @@ export function previewFrameFromAddress(value: string, previewPath: string): str
   }
 }
 
-export type ProtoShortcut = 'back' | 'forward' | 'reload' | 'address'
+export type ProtoShortcut = 'back' | 'forward' | 'reload' | 'address' | 'annotate' | 'chat'
 
 /** Also inlined in the sandboxed screen; keep this independent of module state. */
 export function protoShortcut(event: KeyboardEvent): ProtoShortcut | undefined {
-  if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey || event.isComposing) return
+  if (!event.metaKey || event.altKey || event.ctrlKey || event.isComposing) return
+  if (event.shiftKey) return event.key.toLowerCase() === 'd' ? 'annotate' : undefined
   switch (event.key.toLowerCase()) {
     case '[':
       return 'back'
@@ -230,5 +231,7 @@ export function protoShortcut(event: KeyboardEvent): ProtoShortcut | undefined {
       return 'reload'
     case 'l':
       return 'address'
+    case '/':
+      return 'chat'
   }
 }

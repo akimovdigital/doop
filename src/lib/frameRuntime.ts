@@ -1170,6 +1170,71 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
     }
   }
 
+  var annotationWatching = false
+  var annotationChangeFrame = 0
+  function annotationChanged() {
+    if (!annotationWatching || annotationChangeFrame) return
+    annotationChangeFrame = requestAnimationFrame(function () {
+      annotationChangeFrame = 0
+      if (annotationWatching) parent.postMessage({ type: 'doop:annotation-layout' }, '*')
+    })
+  }
+  window.addEventListener('scroll', annotationChanged, true)
+  window.addEventListener('resize', annotationChanged)
+  if (typeof ResizeObserver !== 'undefined') {
+    var annotationResize = new ResizeObserver(annotationChanged)
+    annotationResize.observe(document.documentElement)
+  }
+
+  function annotationTarget(el, x, y) {
+    if (!el || el === document.body || el === document.documentElement) return null
+    var component = el.closest('[data-doop-component], [data-doop-instance]')
+    var child = x == null ? el.firstElementChild : document.elementsFromPoint(viewX(x), viewX(y)).find(function (hit) {
+      return hit.parentElement === el
+    }) || el.firstElementChild
+    return {
+      selector: cssPath(el),
+      rect: designRect(el),
+      tag: el.tagName.toLowerCase(),
+      componentId: component && (component.getAttribute('data-doop-component') || component.getAttribute('data-doop-instance')),
+      parent: el.parentElement === document.body ? null : cssPath(el.parentElement),
+      child: child ? cssPath(child) : null,
+    }
+  }
+
+  function annotationDetails(el, x, y) {
+    var target = annotationTarget(el, x, y)
+    if (!target) return null
+    var cs = getComputedStyle(el)
+    target.id = el.id
+    target.doopId = el.getAttribute('data-doop-id') || undefined
+    target.classes = Array.from(el.classList)
+    target.text = (el.innerText || (el instanceof SVGElement ? el.textContent : '') || '').replace(/\\s+/g, ' ').trim().slice(0, 500)
+    target.attributes = Array.from(el.attributes, function (attr) { return [attr.name, attr.value.slice(0, 200)] })
+    target.styles = {}
+    ;['color', 'background-color', 'font-size', 'font-family', 'display', 'position'].forEach(function (name) {
+      target.styles[name] = cs.getPropertyValue(name)
+    })
+    return target
+  }
+
+  /* The pointer shield lives above the sandbox. Scroll its closest scrollable
+     container, then the document, just as a wheel over the document would. */
+  function annotationWheel(d) {
+    var el = document.elementFromPoint(viewX(d.x), viewX(d.y))
+    for (; el && el !== document.body; el = el.parentElement) {
+      var cs = getComputedStyle(el)
+      var x = /^(auto|scroll)$/.test(cs.overflowX) ? d.dx : 0
+      var y = /^(auto|scroll)$/.test(cs.overflowY) ? d.dy : 0
+      if ((x < 0 && el.scrollLeft > 0) || (x > 0 && el.scrollLeft + el.clientWidth < el.scrollWidth) ||
+          (y < 0 && el.scrollTop > 0) || (y > 0 && el.scrollTop + el.clientHeight < el.scrollHeight)) {
+        el.scrollBy(x, y)
+        return
+      }
+    }
+    window.scrollBy(d.dx, d.dy)
+  }
+
   /* ⌥ measuring: where the picked elements are, the box around the primary
      one, and what the pointer is over when that is none of them */
   function measure(selector, x, y, selected) {
@@ -2155,13 +2220,13 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
       parent.postMessage({ type: 'doop:drawing-moving-result', reqId: d.reqId }, '*')
     }
     if (d.type === 'doop:hover') {
-      parent.postMessage({ type: 'doop:hover-result', reqId: d.reqId, hit: hoverProbe(d.x, d.y, d.selected) }, '*')
+      parent.postMessage({ type: 'doop:hover-result', reqId: d.reqId, hit: d.annotation ? annotationTarget(document.elementFromPoint(viewX(d.x), viewX(d.y)), d.x, d.y) : hoverProbe(d.x, d.y, d.selected) }, '*')
     }
     if (d.type === 'doop:measure') {
       parent.postMessage({ type: 'doop:measure-result', reqId: d.reqId, measure: measure(d.selector, d.x, d.y, d.selected) }, '*')
     }
     if (d.type === 'doop:select') {
-      parent.postMessage({ type: 'doop:select-result', reqId: d.reqId, hit: describe(d.selector) }, '*')
+      parent.postMessage({ type: 'doop:select-result', reqId: d.reqId, hit: d.annotation ? annotationDetails(styleTarget(d.selector), d.x, d.y) : describe(d.selector) }, '*')
     }
     if (d.type === 'doop:capture-metrics') {
       parent.postMessage({
@@ -2181,6 +2246,11 @@ export const FRAME_BOOTSTRAP = `<!doctype html>
       } catch (e) {
         answer(null)
       }
+    }
+    if (d.type === 'doop:annotation-wheel') annotationWheel(d)
+    if (d.type === 'doop:annotation-watch') {
+      annotationWatching = !!d.on
+      if (annotationWatching) annotationChanged()
     }
     if (d.type === 'doop:locate') {
       var found = null

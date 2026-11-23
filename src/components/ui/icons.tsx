@@ -90,6 +90,7 @@ import {
   MousePointer2,
   MessageCircle,
   MessageSquare,
+  MessageSquarePlus,
   Monitor,
   Maximize2,
   Minimize2,
@@ -404,6 +405,7 @@ export const FlowStartIcon = icon(Flag)
 export const HotspotIcon = icon(SquareMousePointer)
 /** review comments: the square bubble */
 export const MessageSquareIcon = icon(MessageSquare)
+export const AnnotationIcon = icon(MessageSquarePlus)
 /** draft a page: a page skeleton */
 export const LayoutTemplateIcon = icon(LayoutTemplate)
 export const SectionIcon = icon(PanelsTopLeft)

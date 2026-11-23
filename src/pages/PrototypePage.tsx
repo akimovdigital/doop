@@ -4,6 +4,7 @@ import { flowStartFrame } from '../../shared/prototype'
 import { connect, disconnect } from '../lib/ws'
 import { useStore } from '../lib/store'
 import { navigate } from '../lib/navigate'
+import { LimitWall } from '../components/TeamAllowance'
 import { PrototypePlayer } from '../components/PrototypePlayer'
 import { Button } from '../components/ui/button'
 import { AuthCard, AuthCardText, AuthScreen } from '../components/ui/screen'
@@ -18,6 +19,7 @@ import { useT } from '@/lib/i18n'
  */
 export function PrototypePage({ canvasId }: { canvasId: string }) {
   const canvas = useStore((s) => s.canvas)
+  const limitWall = useStore((s) => s.limitWall)
   const notFound = useStore((s) => s.canvasNotFound)
   /* read once: later navigations rewrite ?frame= as the flow moves on */
   const [query] = useState(() => new URLSearchParams(location.search))
@@ -29,6 +31,7 @@ export function PrototypePage({ canvasId }: { canvasId: string }) {
       disconnect()
       useStore.getState().setCanvas(null)
       useStore.getState().setCanvasNotFound(false)
+      useStore.getState().setLimitWall(false)
     }
   }, [canvasId])
 
@@ -59,5 +62,21 @@ export function PrototypePage({ canvasId }: { canvasId: string }) {
         </AuthCard>
       </AuthScreen>
     )
-  return <PrototypePlayer startFrameId={start.id} syncUrl />
+  const closeLimit = () => useStore.getState().setLimitWall(false)
+  return (
+    <>
+      <PrototypePlayer startFrameId={start.id} syncUrl />
+      {limitWall && (
+        <LimitWall
+          overPreview
+          canvasId={canvasId}
+          onClose={closeLimit}
+          onOpenConnect={() => {
+            closeLimit()
+            navigate(`/settings?from=${encodeURIComponent(location.pathname + location.search)}`)
+          }}
+        />
+      )}
+    </>
+  )
 }

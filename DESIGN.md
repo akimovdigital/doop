@@ -96,8 +96,8 @@ shows through. When canvas chrome is hidden, the bottom-right button and Escape 
 
 ## Prototype preview
 
-The 36 px preview bar sits below the desktop strip and above the site viewport. The bar uses
-`--surface`, a one-pixel `--line` divider and quiet 24 px Doop icon buttons. The 28 px address
+The 36 px preview bar sits below the desktop strip and above the site viewport. It uses
+Doop's solid dark `--surface`, a one-pixel `--line` divider and quiet 24 px Doop icon buttons. The 28 px address
 field uses `--sub`, the 10 px pill radius and the shared focus ring. It truncates the preview
 address and, where there is room, displays a muted frame name. The address suggestions and scaling
 menu use the shared menu surface, radius and elevation.
@@ -110,3 +110,13 @@ inside the window. Standalone preview keeps the same bar layout with its editor 
 ## Development performance HUD
 
 The opt-in HUD sits in the lower-right corner above the canvas toolbar and moves below the top chrome on narrow windows. It uses the surface, ink, line, panel-radius and caption tokens with tabular mono figures. It does not capture pointer input. Its styles load with the development HUD and do not ship in the production entry.
+
+### Prototype annotations
+
+Design Mode replaces the address and navigation cluster in the 36 px preview toolbar with an Exit icon and a brand-tinted hint. Holding Space over the preview restores page interaction until release. Hover and selection use 1 px brand outlines with tag badges at their top-right corners. A compact note pill sits below the selection and shows the Batch edits controls after typing. Numbered pins use 16 px brand circles at the top-right corners of their anchors and appear during Design Mode. The split Send pill stays in the toolbar while notes are pending. Its chevron anchors the queue popover.
+
+The note pill and queue use the toolbar's solid dark `--surface`, light `--ink`, a one-pixel `--line` border and `shadow-pop`. The queue is up to 300 px wide. Its header keeps the edit count and Clear All visible while notes scroll. Each row shows a label followed by the comment, with ellipses for long text. Pending, sent and resolved notes live in local storage per canvas. Sent pins are dimmed and resolved pins are hidden.
+
+### Prototype chat capsule
+
+At the bottom center of the preview, an 80 × 16 px button presents a textless 70 × 5 px grabber. The pending count and working indicator sit beside it. A short hover or click opens the shared draft composer, up to 560 px wide, with the latest reply and selected element when available. The composer uses the same solid dark surface as the note pill and queue. It slides into place in 150 ms when motion is allowed.

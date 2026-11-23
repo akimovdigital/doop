@@ -23,12 +23,19 @@
       import { ensureTab } from '/src/lib/desktop.ts'
       import { Stage } from '/src/components/Stage.tsx'
       import { TooltipProvider } from '/src/components/ui/tooltip.tsx'
+      import { api } from '/src/lib/api.ts'
       import { useStore } from '/src/lib/store.ts'
       import { FRAME_BOOTSTRAP } from '/src/lib/frameRuntime.ts'
       import '/src/styles.css'
       const root = createRoot(document.getElementById('root'))
       window.messages = []
-      window.addEventListener('message', (ev) => window.messages.push(ev.data))
+      window.prototypeInteractivity = new WeakMap()
+      window.addEventListener('message', (ev) => {
+        window.messages.push(ev.data)
+        if (ev.source && ev.data?.type === 'doop:proto-result') {
+          window.prototypeInteractivity.set(ev.source, ev.data.on)
+        }
+      })
       window.seed = (canvas) => useStore.getState().setCanvas(canvas)
       window.editFrame = (id, html) => {
         const frame = useStore.getState().canvas.frames.find((f) => f.id === id)
@@ -44,6 +51,10 @@
       window.play = (startFrameId) =>
         mountPlayer({
           startFrameId,
+          onOpenChat: () => {
+            useStore.getState().setPanelTab('tasks')
+            useStore.getState().requestComposerFocus()
+          },
           onClose: () => {
             window.playerClosed = true
             root.render(null)
@@ -87,6 +98,19 @@
         useStore.getState().setPrototypeMode(prototypeMode)
         root.render(React.createElement(TooltipProvider, null, React.createElement(Stage, { onAddFrame: () => {} })))
       }
+      window.designSends = []
+      window.mockDesignSends = () => {
+        api.agentAllowance = async () => ({ used: 0, limit: 10, byoModel: true })
+        api.addCard = async (...args) => {
+          window.designSends.push(args)
+          if (window.designSendDelay) await new Promise((resolve) => setTimeout(resolve, window.designSendDelay))
+          if (window.designSendError) throw new Error(window.designSendError)
+          return { id: 'annotation-card' }
+        }
+      }
+      window.setDesignTasks = (tasks) => useStore.getState().setTasks(tasks)
+      window.readDesignDraft = (canvasId) => useStore.getState().composerDrafts[canvasId]
+      window.writeDesignDraft = (canvasId, draft) => useStore.getState().setComposerDraft(canvasId, draft)
       window.fixtureReady = true
     </script>
   </body>

@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type KeyboardEvent, type RefObject } from 'react'
+import { useEffect, useId, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { useT } from '@/lib/i18n'
 import { prototypePath } from '../lib/prototype'
 import { isProtoScaling, matchPreviewFrames, previewFrameFromAddress, type ProtoScaling } from '../lib/prototypePlayer'
@@ -30,6 +30,8 @@ import {
 type Screen = { id: string; name: string }
 
 interface PreviewToolbarProps {
+  annotationHint?: ReactNode
+  annotationControls?: ReactNode
   addressRef: RefObject<HTMLInputElement>
   canvasId?: string
   frameId: string
@@ -44,6 +46,9 @@ interface PreviewToolbarProps {
   onNavigate: (id: string) => void
   onRestart: () => void
   onHotspots: () => void
+  /** editors: the pointer-in-square button toggles Design Mode (⌘⇧D) instead of flashing hotspots */
+  onDesignMode?: () => void
+  designModeOn?: boolean
   scaling: ProtoScaling
   onScalingChange: (next: ProtoScaling) => void
   onMenuClose: (event: Event) => void
@@ -61,36 +66,55 @@ export function PreviewToolbar(props: PreviewToolbarProps) {
       role="group"
       aria-label={t('panels.protoToolbar')}
       className={cn(
-        '@container relative z-10 flex h-9 shrink-0 items-center gap-1.5 border-b border-line bg-surface px-1.5 text-ink sm:gap-2 sm:px-2',
+        'dark @container relative z-10 flex h-9 shrink-0 items-center gap-1.5 border-b border-line bg-surface px-1.5 text-ink sm:gap-2 sm:px-2',
         minimized && 'rounded-t-panel',
+        props.annotationHint && 'border-brand/30',
       )}
       onKeyDown={(event) => event.stopPropagation()}
       onKeyUp={(event) => event.stopPropagation()}
     >
-      <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
-        <IconButton size="sm" aria-label={t('common.back')} disabled={!props.canBack} onClick={props.onBack}>
-          <ArrowLeftIcon size="rail" />
-        </IconButton>
-        <IconButton
-          size="sm"
-          aria-label={t('panels.protoForward')}
-          disabled={!props.canForward}
-          onClick={props.onForward}
-        >
-          <ArrowRightIcon size="rail" />
-        </IconButton>
-        <IconButton size="sm" aria-label={t('panels.protoReload')} onClick={props.onReload}>
-          <SyncIcon size="rail" />
-        </IconButton>
-      </div>
-      {canvasId && <PreviewAddress key={frameId} {...props} canvasId={canvasId} />}
+      {props.annotationHint ?? (
+        <>
+          <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+            <IconButton size="sm" aria-label={t('common.back')} disabled={!props.canBack} onClick={props.onBack}>
+              <ArrowLeftIcon size="rail" />
+            </IconButton>
+            <IconButton
+              size="sm"
+              aria-label={t('panels.protoForward')}
+              disabled={!props.canForward}
+              onClick={props.onForward}
+            >
+              <ArrowRightIcon size="rail" />
+            </IconButton>
+            <IconButton size="sm" aria-label={t('panels.protoReload')} onClick={props.onReload}>
+              <SyncIcon size="rail" />
+            </IconButton>
+          </div>
+          {canvasId && <PreviewAddress key={frameId} {...props} canvasId={canvasId} />}
+        </>
+      )}
       <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
         <IconButton size="sm" aria-label={t('panels.protoRestart')} onClick={props.onRestart}>
           <HistoryIcon size="rail" />
         </IconButton>
-        <IconButton size="sm" aria-label={t('panels.protoHotspots')} onClick={props.onHotspots}>
-          <HotspotIcon size="rail" />
-        </IconButton>
+        {props.onDesignMode ? (
+          <IconButton
+            size="sm"
+            aria-label={t('panels.designAnnotate')}
+            title={t('panels.designAnnotateShortcut')}
+            aria-pressed={props.designModeOn ?? false}
+            on={props.designModeOn}
+            data-design-toggle=""
+            onClick={props.onDesignMode}
+          >
+            <HotspotIcon size="rail" />
+          </IconButton>
+        ) : (
+          <IconButton size="sm" aria-label={t('panels.protoHotspots')} onClick={props.onHotspots}>
+            <HotspotIcon size="rail" />
+          </IconButton>
+        )}
         <ScalingMenu scaling={props.scaling} onChange={props.onScalingChange} onClose={props.onMenuClose} />
         {onClose && canvasId && (
           <IconButton
@@ -102,6 +126,7 @@ export function PreviewToolbar(props: PreviewToolbarProps) {
           </IconButton>
         )}
       </div>
+      {props.annotationControls}
       {onClose && (
         <div className="flex shrink-0 items-center gap-0.5 border-l border-line pl-1 sm:gap-1 sm:pl-2">
           {onToggleWindow && (
