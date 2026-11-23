@@ -179,6 +179,7 @@ describe.skipIf(!findBrowserPath())('prototype player', { timeout: 30_000 }, () 
       ['Show hotspots', 'Show hotspots'],
       ['Scaling', 'Scaling'],
       ['Open prototype in a new tab', 'Open prototype in a new tab'],
+      ['Annotate', 'Annotate (⌘⇧D)'],
       ['Minimize preview', 'Minimize preview'],
       ['Exit prototype', 'Exit (Esc)'],
     ])

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import type { Frame } from '../../shared/types'
 import { framePageId, pageFrames } from '../../shared/pages'
 import type { Interaction, ProtoTransition } from '../../shared/prototype'
-import { useStore } from '../lib/store'
+import { canEditOpenCanvas, useStore } from '../lib/store'
 import { posthog } from '../lib/posthog'
 import { FRAME_BOOTSTRAP } from '../lib/frameRuntime'
 import {
@@ -23,6 +23,9 @@ import {
 } from '../lib/prototypePlayer'
 import { prototypePath } from '../lib/prototype'
 import { PreviewToolbar } from './PreviewToolbar'
+import { DesignModeControls, DesignModeHint, DesignModeOverlay } from './DesignModeOverlay'
+import { useDesignMode } from './useDesignMode'
+import { navigate as navigateApp } from '../lib/navigate'
 import { t as translate, useT } from '@/lib/i18n'
 
 /* One screen on the player's history stack: the frame it shows and how it
@@ -67,17 +70,20 @@ const OVERLAY_FIT = 0.94
 export function PrototypePlayer({
   startFrameId,
   onClose,
+  onOpenChat,
   syncUrl = false,
   initialInteraction,
 }: {
   startFrameId: string
   onClose?: () => void
+  onOpenChat?: () => void
   syncUrl?: boolean
   initialInteraction?: Interaction
 }) {
   const canvas = useStore((s) => s.canvas)
   const frames = canvas?.frames
   const canvasId = canvas?.id
+  const canEdit = useStore(canEditOpenCanvas)
   const frameById = useCallback((id: string) => frames?.find((f) => f.id === id), [frames])
   const t = useT()
 
@@ -100,6 +106,7 @@ export function PrototypePlayer({
   const overlaysRef = useRef(overlays)
   const moveRef = useRef(move)
   const setTrail = (next: typeof trail) => {
+    if (next.stack.at(-1)?.key !== trailRef.current.stack.at(-1)?.key) design.clearInteraction()
     trailRef.current = next
     setTrailState(next)
   }
@@ -107,6 +114,7 @@ export function PrototypePlayer({
      screen it uncovers takes it back (see ProtoScreen) */
   const focusHandoff = useRef(false)
   const setOverlays = (next: Entry[]) => {
+    if (next.at(-1)?.key !== overlaysRef.current.at(-1)?.key) design.clearInteraction()
     if (next.length < overlaysRef.current.length && screenHasFocus()) focusHandoff.current = true
     overlaysRef.current = next
     setOverlaysState(next)
@@ -144,6 +152,32 @@ export function PrototypePlayer({
     saveProtoScaling(next)
     setScalingState(next)
   }
+
+  const [documentRevision, documentChanged] = useState(0)
+  const annotationScreen = overlays.at(-1) ?? move?.to ?? stack.at(-1)!
+  const getAnnotationWindow = useCallback(() => windows.current.get(annotationScreen.key), [annotationScreen.key])
+  const design = useDesignMode({
+    canvasId,
+    canEdit,
+    frame: frameById(annotationScreen.frameId),
+    screenKey: annotationScreen.key,
+    documentRevision,
+    pageUrl: new URL(prototypePath(canvasId ?? '', annotationScreen.frameId), location.origin).href,
+    components: canvas?.components,
+    getWindow: getAnnotationWindow,
+    onNavigate: (frameId) => navigate(frameId, 'instant', 0),
+    onDraft: () => {
+      if (onOpenChat) {
+        onClose?.()
+        onOpenChat()
+        return
+      }
+      const state = useStore.getState()
+      state.setPanelTab('tasks')
+      state.requestComposerFocus()
+      if (syncUrl && canvasId) navigateApp(`/c/${canvasId}`)
+    },
+  })
 
   function entryFor(
     frameId: string,
@@ -238,6 +272,8 @@ export function PrototypePlayer({
         return forward()
       case 'reload':
         return reload()
+      case 'annotate':
+        return design.toggle()
       case 'address':
         addressRef.current?.focus()
         return addressRef.current?.select()
@@ -322,6 +358,7 @@ export function PrototypePlayer({
   /* Escape: an open overlay closes first; then the screen's own key:Escape
      interaction; then, over the editor, the player itself */
   function escape() {
+    if (design.escape()) return
     if (overlaysRef.current.length) return closeOverlay()
     const win = topWindow()
     if (!win) return onClose?.()
@@ -358,6 +395,7 @@ export function PrototypePlayer({
         if (moveRef.current !== next) return
         running.current = []
         setMove(null)
+        documentChanged((value) => value + 1)
       })
       .catch(() => {
         /* cancelled by a newer navigation, which owns the screens now */
@@ -371,10 +409,32 @@ export function PrototypePlayer({
       wrappers.current.get(entry.key)?.animate(incoming, { duration: entry.duration, easing: EASING, fill: 'both' })
   }
 
+  function designKey(event: KeyboardEvent, target: Element | null) {
+    if (!design.allowed) return false
+    const field = target?.closest('[data-design-note-field]')
+    if (field && design.draft && !event.isComposing) {
+      if (event.metaKey && !event.shiftKey && event.key.toLowerCase() === 'l') {
+        design.draftToChat(design.draft)
+        return true
+      }
+      if (event.key === 'Enter' && !event.shiftKey) {
+        if (!event.repeat) void design.submit()
+        return true
+      }
+    }
+    if (!design.enabled || field || target?.closest('[data-preview-toolbar],[data-design-card],[data-design-queue]'))
+      return false
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      void design.moveHighlight(event.key === 'ArrowUp' ? 'parent' : 'child')
+      return true
+    }
+    return false
+  }
+
   /* the latest handlers for the listeners below, which subscribe once */
-  const handlers = useRef({ escape, back, jumpTo, release, topWindow, shortcut })
+  const handlers = useRef({ escape, back, jumpTo, release, topWindow, shortcut, design, designKey })
   useLayoutEffect(() => {
-    handlers.current = { escape, back, jumpTo, release, topWindow, shortcut }
+    handlers.current = { escape, back, jumpTo, release, topWindow, shortcut, design, designKey }
   })
 
   useEffect(() => {
@@ -383,9 +443,22 @@ export function PrototypePlayer({
          Escape in the menu) and stop them short of the editor themselves;
          Escape on the button still leaves the player */
       const target = e.target instanceof Element ? e.target : null
-      if (target?.closest('[data-proto-menu]')) return
+      if (target?.closest('[data-proto-menu],[data-slot=modal]')) return
+      if (handlers.current.designKey(e, target)) {
+        e.preventDefault()
+        e.stopPropagation()
+        return
+      }
+      const inDesignControl = target?.closest(
+        '[data-design-card],[data-design-queue],[data-design-hint],[data-design-pin]',
+      )
       const command = protoShortcut(e)
-      if (target === addressRef.current && command !== 'address') return
+      if (command === 'annotate' && !handlers.current.design.allowed) return
+      if (target === addressRef.current && command !== 'address' && command !== 'annotate') return
+      if (inDesignControl && e.key !== 'Escape' && command !== 'annotate') {
+        if (target?.closest('[data-design-note-field]')) return
+        if (command !== 'address') return
+      }
       if (command) {
         e.preventDefault()
         e.stopPropagation()
@@ -396,8 +469,11 @@ export function PrototypePlayer({
       /* capture phase, and modal: no key reaches the editor underneath (an
          arrow would nudge the selected frame, Delete would remove it) */
       e.stopPropagation()
-      if (e.key === 'Escape') return handlers.current.escape()
-      if (e.repeat || e.metaKey || e.ctrlKey) return
+      if (e.key === 'Escape') {
+        if (handlers.current.design.enabled || handlers.current.design.queueOpen) e.preventDefault()
+        return handlers.current.escape()
+      }
+      if (handlers.current.design.enabled || e.repeat || e.metaKey || e.ctrlKey) return
       const win = handlers.current.topWindow()
       win?.postMessage({ type: 'doop:proto-key', key: e.key, reqId: `key-${e.timeStamp}` }, '*')
     }
@@ -470,20 +546,31 @@ export function PrototypePlayer({
       if (win) windows.current.set(key, win)
       else windows.current.delete(key)
     },
+    annotating: design.enabled,
+    onDocument: () => {
+      if (topEntry()?.key === entry.key) documentChanged((value) => value + 1)
+    },
     onMessage: (data: { type?: string; interaction?: unknown; press?: boolean; command?: unknown }) => {
       /* a covered screen is switched off, but an action it sent before the
          switch reached it must not act over the screen on top */
       if (data.type === 'doop:proto-action') {
-        if (topEntry()?.key === entry.key) run(data.interaction, !!data.press)
+        if (!design.enabled && topEntry()?.key === entry.key) run(data.interaction, !!data.press)
       } else if (data.type === 'doop:proto-release') release()
       else if (data.type === 'doop:proto-shortcut' && topEntry()?.key === entry.key && screenHasFocus()) {
         const command = data.command
-        if (command === 'back' || command === 'forward' || command === 'reload' || command === 'address')
+        if (
+          command === 'back' ||
+          command === 'forward' ||
+          command === 'reload' ||
+          command === 'address' ||
+          command === 'annotate'
+        )
           shortcut(command)
       }
       /* Escape with the focus in a screen: the same overlay-first path as a
          key pressed on the player itself */
-      else if (data.type === 'doop:esc') escape()
+      else if (data.type === 'doop:esc' && topEntry()?.key === entry.key && screenHasFocus()) escape()
+      else if (data.type === 'doop:annotation-layout' && topEntry()?.key === entry.key) design.refreshPins()
     },
   })
 
@@ -507,6 +594,7 @@ export function PrototypePlayer({
         data-proto-window=""
       >
         <PreviewToolbar
+          annotationControls={design.allowed && <DesignModeControls mode={design} />}
           addressRef={addressRef}
           canvasId={canvasId}
           frameId={current.frameId}
@@ -533,6 +621,7 @@ export function PrototypePlayer({
           onToggleWindow={onClose && (() => setMinimized((value) => !value))}
           onClose={onClose}
         />
+        <DesignModeHint mode={design} />
         <div
           ref={viewportRef}
           className={`relative isolate min-h-0 flex-1 overflow-hidden ${minimized ? 'rounded-b-panel' : ''}`}
@@ -548,6 +637,7 @@ export function PrototypePlayer({
                   else wrappers.current.delete(entry.key)
                 }}
                 className={`absolute inset-0 grid ${screenPlacement}`}
+                data-proto-entry={entry.key}
                 data-proto-screen={entry.frameId}
                 data-proto-role={role}
                 style={{
@@ -559,7 +649,7 @@ export function PrototypePlayer({
                 <ProtoScreen
                   {...screenProps(entry)}
                   layout={frame ? screenLayout(frame, viewport, scaling) : undefined}
-                  interactive={role !== 'from' && !overlays.length}
+                  interactive={!design.enabled && role !== 'from' && !overlays.length}
                   onReady={onScreenReady}
                 />
               </div>
@@ -580,19 +670,28 @@ export function PrototypePlayer({
                     else wrappers.current.delete(entry.key)
                   }}
                   className="relative shadow-pop"
+                  data-proto-entry={entry.key}
                   data-proto-overlay={entry.frameId}
                   style={{ opacity: readyOverlays.has(entry.key) ? 1 : 0 }}
                 >
                   <ProtoScreen
                     {...screenProps(entry)}
                     layout={frame ? { width: frame.width, height: frame.height, scale } : undefined}
-                    interactive={index === overlays.length - 1}
+                    interactive={!design.enabled && index === overlays.length - 1}
                     onReady={() => onOverlayReady(entry)}
                   />
                 </div>
               </div>
             )
           })}
+          <DesignModeOverlay
+            mode={design}
+            frameId={annotationScreen.frameId}
+            screen={annotationScreen.key}
+            revision={documentRevision}
+            viewportRef={viewportRef}
+            getWindow={getAnnotationWindow}
+          />
         </div>
       </div>
       {notice && (
@@ -657,9 +756,11 @@ function ProtoScreen({
   frame,
   layout,
   interactive,
+  annotating,
   takeFocus,
   register,
   onReady,
+  onDocument,
   onMessage,
 }: {
   entry: Entry
@@ -667,19 +768,21 @@ function ProtoScreen({
   /** the document's size and draw scale; undefined while the frame is gone */
   layout: ScreenLayout | undefined
   interactive: boolean
+  annotating: boolean
   /** true once when the overlay closed over this screen held the focus */
   takeFocus: () => boolean
   register: (key: number, win: Window | null) => void
   onReady: (key: number) => void
+  onDocument: () => void
   onMessage: (data: { type?: string; interaction?: unknown; press?: boolean; command?: unknown }) => void
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [booted, setBooted] = useState(false)
   const [shown, setShown] = useState(false)
-  const latest = useRef({ onReady, onMessage, register, takeFocus })
+  const latest = useRef({ onReady, onDocument, onMessage, register, takeFocus })
   const t = useT()
   useLayoutEffect(() => {
-    latest.current = { onReady, onMessage, register, takeFocus }
+    latest.current = { onReady, onDocument, onMessage, register, takeFocus }
   })
 
   /* the `doop:proto` switch this screen is waiting on, when its reply is
@@ -697,6 +800,7 @@ function ProtoScreen({
         latest.current.register(key, win)
         setBooted(true)
       } else if (data.type === 'doop:html-result') {
+        latest.current.onDocument()
         if (!first) return
         first = false
         setShown(true)
@@ -744,6 +848,7 @@ function ProtoScreen({
     <div className="relative overflow-hidden bg-white" style={{ ...box, visibility: shown ? undefined : 'hidden' }}>
       <iframe
         ref={iframeRef}
+        tabIndex={annotating ? -1 : undefined}
         className="block border-none bg-white"
         title={frame.name}
         data-doop-proto-frame={frame.id}

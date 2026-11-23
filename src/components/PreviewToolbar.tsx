@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type KeyboardEvent, type RefObject } from 'react'
+import { useEffect, useId, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { useT } from '@/lib/i18n'
 import { prototypePath } from '../lib/prototype'
 import { isProtoScaling, matchPreviewFrames, previewFrameFromAddress, type ProtoScaling } from '../lib/prototypePlayer'
@@ -30,6 +30,7 @@ import {
 type Screen = { id: string; name: string }
 
 interface PreviewToolbarProps {
+  annotationControls?: ReactNode
   addressRef: RefObject<HTMLInputElement>
   canvasId?: string
   frameId: string
@@ -102,6 +103,7 @@ export function PreviewToolbar(props: PreviewToolbarProps) {
           </IconButton>
         )}
       </div>
+      {props.annotationControls}
       {onClose && (
         <div className="flex shrink-0 items-center gap-0.5 border-l border-line pl-1 sm:gap-1 sm:pl-2">
           {onToggleWindow && (

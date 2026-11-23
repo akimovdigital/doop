@@ -394,12 +394,22 @@ export async function requestFrame(
   )
     return null
   const win = windows.get(frameId)
-  if (!win) return Promise.resolve(null)
+  return win ? askFrameWindow(win, type, payload, timeoutMs) : null
+}
+
+/** Preview windows are separate from the editor's registered frame documents. */
+export function askFrameWindow(
+  win: Window,
+  type: `doop:${string}`,
+  payload: Record<string, unknown>,
+  timeoutMs = REPLY_TIMEOUT_MS,
+  replyType = `${type}-result`,
+): Promise<Record<string, unknown> | null> {
   listen()
   nextReq += 1
   const reqId = nextReq
   return new Promise((resolve) => {
-    pending.set(reqId, { win, replyType: `${type}-result`, resolve })
+    pending.set(reqId, { win, replyType, resolve })
     win.postMessage({ ...payload, type, reqId }, '*')
     /* a frame that unloads mid-request would leave the promise hanging */
     window.setTimeout(() => {

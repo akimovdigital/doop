@@ -8,10 +8,20 @@ export function PresentMode({
   frameId,
   interaction,
   onClose,
+  onOpenChat,
 }: {
   frameId: string
   interaction?: Interaction
   onClose: () => void
+  onOpenChat?: () => void
 }) {
-  return <PrototypePlayer key={frameId} startFrameId={frameId} initialInteraction={interaction} onClose={onClose} />
+  return (
+    <PrototypePlayer
+      key={frameId}
+      startFrameId={frameId}
+      initialInteraction={interaction}
+      onClose={onClose}
+      onOpenChat={onOpenChat}
+    />
+  )
 }

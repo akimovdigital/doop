@@ -110,3 +110,7 @@ inside the window. Standalone preview keeps the same bar layout with its editor 
 ## Development performance HUD
 
 The opt-in HUD sits in the lower-right corner above the canvas toolbar and moves below the top chrome on narrow windows. It uses the surface, ink, line, panel-radius and caption tokens with tabular mono figures. It does not capture pointer input. Its styles load with the development HUD and do not ship in the production entry.
+
+### Prototype annotations
+
+The preview toolbar includes Annotate, a pending-note send pill, and a queue button for editors. Design Mode adds a compact gesture row above the site. The sandboxed frame reports element bounds in design pixels. The player converts those to screen pixels for the 2 px brand outlines and the 22 px numbered pins. Notes and the queue use the shared surface, line, card and popover styles. Pending, sent and resolved notes live in local storage per canvas. Sent pins are dimmed and resolved pins are hidden.

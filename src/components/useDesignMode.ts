@@ -1,0 +1,434 @@
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import type { CardScope, Frame } from '../../shared/types'
+import type { ComponentDef } from '../../shared/components'
+import { askFrameWindow } from '../lib/frameBridge'
+import {
+  designEscape,
+  designNotesReducer,
+  emptyDesignNotes,
+  formatDesignNotes,
+  noteHtml,
+  readDesignNotes,
+  writeDesignNotes,
+  type DesignNote,
+  type DesignNotesAction,
+  type NoteElement,
+  type NoteRect,
+  type SavedDesignNotes,
+} from '../lib/designNotes'
+import { useStore } from '../lib/store'
+import { useAllowance } from './TeamAllowance'
+import { sendPrompt } from './sendPrompt'
+
+interface Target {
+  selector: string
+  tag: string
+  rect: NoteRect
+  componentId?: string
+  parent: string | null
+  child: string | null
+}
+
+type Details = Omit<NoteElement, 'label' | 'htmlExcerpt'> & Target
+export type DesignPoint = { x: number; y: number }
+type Draft = Pick<DesignNote, 'elements' | 'region' | 'comment'> & { id?: string }
+type LocatedPin = { rect: NoteRect; missing: boolean }
+type DraftTarget = { scope?: CardScope; label?: string }
+
+const subscribers = new Set<() => void>()
+const notesByCanvas = new Map<string, SavedDesignNotes>()
+function subscribe(listener: () => void) {
+  subscribers.add(listener)
+  return () => subscribers.delete(listener)
+}
+
+function savedFor(canvasId?: string): SavedDesignNotes {
+  if (!canvasId) return emptyDesignNotes
+  const saved = notesByCanvas.get(canvasId) ?? readDesignNotes(localStorage, canvasId)
+  notesByCanvas.set(canvasId, saved)
+  return saved
+}
+
+function changeSaved(canvasId: string, update: (previous: SavedDesignNotes) => SavedDesignNotes) {
+  const saved = update(savedFor(canvasId))
+  notesByCanvas.set(canvasId, saved)
+  writeDesignNotes(localStorage, canvasId, saved)
+  subscribers.forEach((notify) => notify())
+}
+
+export function useDesignMode({
+  canvasId,
+  canEdit,
+  frame,
+  screenKey,
+  documentRevision,
+  pageUrl,
+  components,
+  getWindow,
+  onDraft,
+  onNavigate,
+  onEnter,
+}: {
+  canvasId?: string
+  canEdit: boolean
+  frame?: Frame
+  screenKey: number
+  documentRevision: number
+  pageUrl: string
+  components?: ComponentDef[]
+  getWindow: () => Window | undefined
+  onDraft: (target: DraftTarget) => void
+  onNavigate: (frameId: string) => void
+  onEnter?: () => void
+}) {
+  const allowed = !!canvasId && canEdit
+  const saved = useSyncExternalStore(subscribe, () => (allowed ? savedFor(canvasId) : emptyDesignNotes))
+  const { allowance } = useAllowance(allowed)
+  const [active, setActive] = useState(false)
+  const [queueOpen, setQueueOpen] = useState(false)
+  const [draft, setDraft] = useState<Draft | null>(null)
+  const [hover, setHover] = useState<Target | null>(null)
+  const [region, setRegion] = useState<NoteRect>()
+  const [pins, setPins] = useState<Record<string, LocatedPin>>({})
+  const drag = useRef<{ start: DesignPoint; pointerId: number; rect?: NoteRect }>()
+  const hoverSequence = useRef(0)
+  const pickSequence = useRef(0)
+  const point = useRef<DesignPoint>()
+  const lastRects = useRef(new Map<string, NoteRect>())
+  const busy = useStore((s) => s.composerSend?.status === 'busy')
+  const sendError = useStore((s) =>
+    s.composerSend?.canvasId === canvasId && s.composerSend?.status === 'error' ? s.composerSend.message : null,
+  )
+  const enabled = allowed && active
+  const frameId = frame?.id
+  const pendingCount = saved.notes.filter((note) => note.status === 'pending').length
+
+  const dispatch = (action: DesignNotesAction) => {
+    if (allowed) changeSaved(canvasId!, (prev) => ({ ...prev, notes: designNotesReducer(prev.notes, action) }))
+  }
+
+  function clearHover() {
+    hoverSequence.current++
+    point.current = undefined
+    setHover(null)
+  }
+
+  function clearInteraction() {
+    clearHover()
+    pickSequence.current++
+    drag.current = undefined
+    setRegion(undefined)
+    setDraft(null)
+  }
+
+  function exit() {
+    clearInteraction()
+    setActive(false)
+    setQueueOpen(false)
+  }
+
+  function enter() {
+    setActive(true)
+    onEnter?.()
+  }
+
+  function toggle() {
+    if (!allowed) return
+    if (enabled) exit()
+    else enter()
+  }
+
+  function escape() {
+    if (allowed && queueOpen) {
+      setQueueOpen(false)
+      return true
+    }
+    switch (designEscape({ active: enabled, dragging: !!drag.current, noteOpen: !!draft })) {
+      case 'drag':
+        cancelDrag()
+        return true
+      case 'note':
+        setDraft(null)
+        pickSequence.current++
+        return true
+      case 'mode':
+        exit()
+        return true
+      default:
+        return false
+    }
+  }
+
+  function label(target: Pick<Target, 'componentId' | 'tag'>) {
+    return components?.find((component) => component.id === target.componentId)?.name ?? `<${target.tag}>`
+  }
+
+  async function ask<T>(type: 'doop:hover' | 'doop:select', payload: Record<string, unknown>) {
+    const win = getWindow()
+    if (!win) return null
+    const reply = await askFrameWindow(win, type, { ...payload, annotation: true })
+    return getWindow() === win ? ((reply?.hit as T | null | undefined) ?? null) : null
+  }
+
+  async function probe(at: DesignPoint) {
+    if (!enabled || drag.current) return
+    const seq = ++hoverSequence.current
+    point.current = at
+    const hit = await ask<Target>('doop:hover', at)
+    if (seq === hoverSequence.current) setHover(hit)
+  }
+
+  async function moveHighlight(direction: 'parent' | 'child') {
+    const selector = hover?.[direction]
+    if (!enabled || !selector) return
+    const seq = ++hoverSequence.current
+    const hit = await ask<Target>('doop:select', { selector, ...point.current })
+    if (seq === hoverSequence.current && hit) setHover(hit)
+  }
+
+  function asNote(value: Draft, comment: string): DesignNote {
+    const stored = value.id && savedFor(canvasId).notes.find((note) => note.id === value.id)
+    return {
+      id: crypto.randomUUID(),
+      canvasId: canvasId!,
+      frameId: frame!.id,
+      frameName: frame!.name,
+      pageUrl,
+      number: 1,
+      status: 'pending',
+      createdAt: Date.now(),
+      kind: value.region ? 'region' : 'element',
+      ...(stored || {}),
+      elements: value.elements,
+      region: value.region,
+      comment,
+    }
+  }
+
+  function scopeOf(note: DesignNote): CardScope | undefined {
+    const first = note.elements[0]
+    return first && { frameId: note.frameId, selector: first.selector }
+  }
+
+  function draftToChat(value: Draft) {
+    if (!frame || !allowed) return
+    const note = asNote(value, value.comment.trim())
+    const text = formatDesignNotes([note])
+    const store = useStore.getState()
+    const previous = store.composerDrafts[canvasId!]
+    store.setComposerDraft(canvasId!, previous ? `${previous}\n\n${text}` : text)
+    exit()
+    onDraft({ scope: scopeOf(note), label: note.elements[0]?.label })
+  }
+
+  async function pick(at: DesignPoint, shift: boolean, alt: boolean) {
+    const seq = ++pickSequence.current
+    const previous = point.current
+    const selected = previous && Math.hypot(at.x - previous.x, at.y - previous.y) < 3 ? hover : null
+    const hit = selected ?? (await ask<Target>('doop:hover', at))
+    if (!hit || pickSequence.current !== seq) return
+    const detail = await ask<Details>('doop:select', { selector: hit.selector, ...at })
+    if (!detail || pickSequence.current !== seq) return
+    const element = { ...detail, label: label(detail), htmlExcerpt: noteHtml(detail) }
+    if (alt) return draftToChat({ elements: [element], comment: '' })
+    setDraft((current) => {
+      if (shift && current && !current.region) {
+        if (current.elements.some((el) => el.selector === element.selector)) return current
+        return { ...current, elements: [...current.elements, element] }
+      }
+      return { elements: [element], comment: '' }
+    })
+    setHover(null)
+  }
+
+  function pointerDown(at: DesignPoint, pointerId: number) {
+    if (!busy) drag.current = { start: at, pointerId }
+  }
+
+  function pointerMove(at: DesignPoint, shift: boolean, alt: boolean) {
+    const current = drag.current
+    if (!current) {
+      void probe(at)
+      return
+    }
+    const dx = at.x - current.start.x
+    const dy = at.y - current.start.y
+    if (!current.rect && Math.hypot(dx, dy) < 6) return
+    const width = Math.max(1, shift && Math.abs(dy) > Math.abs(dx) ? 1 : Math.abs(dx))
+    const height = Math.max(1, shift && Math.abs(dx) >= Math.abs(dy) ? 1 : Math.abs(dy))
+    current.rect = {
+      x: current.start.x - (alt || dx < 0 ? width : 0),
+      y: current.start.y - (alt || dy < 0 ? height : 0),
+      width: width * (alt ? 2 : 1),
+      height: height * (alt ? 2 : 1),
+    }
+    setHover(null)
+    setRegion(current.rect)
+  }
+
+  function cancelDrag() {
+    drag.current = undefined
+    setRegion(undefined)
+  }
+
+  function pointerUp(at: DesignPoint, pointerId: number, shift: boolean, alt: boolean) {
+    const current = drag.current
+    if (!current || current.pointerId !== pointerId) return
+    cancelDrag()
+    if (current.rect) {
+      pickSequence.current++
+      setDraft({ region: current.rect, elements: [], comment: '' })
+    } else void pick(at, shift, alt)
+  }
+
+  function openNote(note: DesignNote) {
+    if (!allowed || busy) return
+    enter()
+    setQueueOpen(false)
+    if (note.frameId !== frameId) onNavigate(note.frameId)
+    setDraft({ id: note.id, comment: note.comment, elements: note.elements, region: note.region })
+  }
+
+  function deleteNote(id: string) {
+    dispatch({ type: 'remove', ids: [id] })
+    if (draft?.id === id) setDraft(null)
+  }
+
+  async function sendNotes(notes: DesignNote[]) {
+    if (!canvasId || !allowed || !notes.length || busy) return false
+    const result = await sendPrompt({
+      canvasId,
+      text: formatDesignNotes(notes),
+      scope: scopeOf(notes[0]!),
+      allowance,
+      clearDraft: false,
+    })
+    if (!result) return false
+    const sentAt = Date.now()
+    const ids = new Set(notes.map((note) => note.id))
+    changeSaved(canvasId, (prev) => ({
+      ...prev,
+      notes: prev.notes.map((note) =>
+        ids.has(note.id) ? { ...note, status: 'sent', sentAt, resolvedAt: undefined, cardId: result.cardId } : note,
+      ),
+    }))
+    return true
+  }
+
+  async function submit() {
+    if (!draft?.comment.trim() || !frame || !allowed || useStore.getState().composerSend?.status === 'busy') return
+    const note = asNote(draft, draft.comment.trim())
+    if (draft.id) {
+      dispatch({
+        type: 'update',
+        id: draft.id,
+        changes: { comment: note.comment, elements: note.elements, region: note.region },
+      })
+    } else {
+      dispatch({ type: 'add', note })
+      if (!saved.batch) {
+        const queued = savedFor(canvasId).notes.find((item) => item.id === note.id)!
+        setDraft({ ...draft, id: note.id })
+        if (!(await sendNotes([queued]))) return
+      }
+    }
+    setDraft(null)
+  }
+
+  async function sendPending() {
+    const notes = savedFor(canvasId).notes.filter((note) => note.status === 'pending')
+    if (await sendNotes(notes)) exit()
+  }
+
+  const watching = allowed && saved.notes.some((note) => note.frameId === frameId && note.status !== 'resolved')
+  useEffect(() => {
+    const win = getWindow()
+    if (!win || !watching) return
+    win.postMessage({ type: 'doop:annotation-watch', on: true }, '*')
+    return () => win.postMessage({ type: 'doop:annotation-watch', on: false }, '*')
+  }, [screenKey, documentRevision, watching, getWindow])
+
+  const [windowRevision, refreshWindow] = useState(0)
+  const refreshPins = useCallback(() => refreshWindow((value) => value + 1), [])
+  useEffect(() => {
+    const win = getWindow()
+    if (!win || !watching || !canvasId) return
+    let cancelled = false
+    let saveTimer: number | undefined
+    const notes = saved.notes.filter((n) => n.frameId === frameId && n.status !== 'resolved')
+    void Promise.all(
+      notes.map(async (note) => {
+        const first = note.elements[0]
+        const last = lastRects.current.get(note.id) ?? note.lastRect ?? first?.rect ?? note.region
+        if (!first || !last) return [note.id, last && { rect: last, missing: false }] as const
+        const selector = first.doopId ? `[data-doop-id="${CSS.escape(first.doopId)}"]` : first.selector
+        const reply = await askFrameWindow(win, 'doop:locate', { selector }, 1000, 'doop:located')
+        const rect = reply?.rect as NoteRect | null | undefined
+        if (!cancelled && rect) lastRects.current.set(note.id, rect)
+        return [note.id, { rect: rect ?? last, missing: !rect }] as const
+      }),
+    ).then((entries) => {
+      if (cancelled) return
+      const located = Object.fromEntries(entries.filter((entry): entry is [string, LocatedPin] => !!entry[1]))
+      setPins(located)
+      saveTimer = window.setTimeout(() => {
+        const previous = savedFor(canvasId)
+        let changed = false
+        const notes = previous.notes.map((note) => {
+          const position = located[note.id]
+          if (!note.elements.length || !position || position.missing) return note
+          const last = note.lastRect ?? note.elements[0]!.rect
+          const rect = position.rect
+          if (last.x === rect.x && last.y === rect.y && last.width === rect.width && last.height === rect.height)
+            return note
+          changed = true
+          return { ...note, lastRect: rect }
+        })
+        if (changed) changeSaved(canvasId, (saved) => ({ ...saved, notes }))
+      }, 200)
+    })
+    return () => {
+      cancelled = true
+      window.clearTimeout(saveTimer)
+    }
+  }, [screenKey, documentRevision, frameId, watching, saved.notes, windowRevision, getWindow, canvasId])
+
+  return {
+    enabled,
+    allowed,
+    busy,
+    hover,
+    label,
+    draft,
+    region,
+    pins,
+    saved,
+    pendingCount,
+    sendError,
+    toggle,
+    clearInteraction,
+    exit,
+    escape,
+    queueOpen: allowed && queueOpen,
+    setQueueOpen,
+    enter,
+    clearHover,
+    moveHighlight,
+    pointerDown,
+    pointerMove,
+    pointerUp,
+    cancelDrag,
+    openNote,
+    deleteNote,
+    submit,
+    sendPending,
+    sendNotes,
+    asNote,
+    draftToChat,
+    refreshPins,
+    setComment: (comment: string) => setDraft((value) => value && { ...value, comment }),
+    setBatch: (batch: boolean) => changeSaved(canvasId!, (prev) => ({ ...prev, batch })),
+    clearPending: () => dispatch({ type: 'clear' }),
+    resolve: (id: string) => dispatch({ type: 'update', id, changes: { status: 'resolved', resolvedAt: Date.now() } }),
+  }
+}

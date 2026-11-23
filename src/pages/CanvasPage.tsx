@@ -1407,6 +1407,7 @@ export function CanvasPage({
             frameId={presenting.frameId}
             interaction={presenting.interaction}
             onClose={() => setPresenting(null)}
+            onOpenChat={openAgent}
           />
         </Suspense>
       )}
@@ -1461,6 +1462,7 @@ export function CanvasPage({
       )}
       {limitWall && (
         <LimitWall
+          overPreview={!!presenting}
           canvasId={canvasId}
           onClose={() => useStore.getState().setLimitWall(false)}
           onOpenConnect={() => {
