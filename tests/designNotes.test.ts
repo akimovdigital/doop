@@ -49,6 +49,11 @@ describe('design notes', () => {
   it('formats a single selection and its context exactly', () => {
     expect(formatDesignNotes([note])).toBe('<button> — “Open now”: Move this\n\nElement context:\n' + context)
   })
+  it('prefixes even a single browser-frame annotation with its source URL', () => {
+    expect(formatDesignNotes([{ ...note, source: 'browser' }])).toBe(
+      'On https://example.test/a:\n<button> — “Open now”: Move this\n\nElement context:\n' + context,
+    )
+  })
   it('joins targets, sorts notes and groups pages', () => {
     const empty = { ...element, label: 'SearchBox', text: '' }
     const a = { ...note, elements: [element, empty] }

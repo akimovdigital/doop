@@ -120,3 +120,7 @@ The note pill and queue use the toolbar's solid dark `--surface`, light `--ink`,
 ### Prototype chat capsule
 
 At the bottom center of the preview, an 80 × 16 px button presents a textless 70 × 5 px grabber. The pending count and working indicator sit beside it. A short hover or click opens the shared draft composer, up to 560 px wide, with the latest reply and selected element when available. The composer uses the same solid dark surface as the note pill and queue. It slides into place in 150 ms when motion is allowed.
+
+## Browser frame Design Mode
+
+Present and side surfaces use the prototype's Annotate control and replace the address row with the selection hint during Design Mode. The existing accent ring, note card, numbered pins and send queue sit over the browser viewport. Exiting restores the website address and direct browsing.

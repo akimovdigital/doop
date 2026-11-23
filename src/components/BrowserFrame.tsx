@@ -1,5 +1,12 @@
 import { MOBILE_QUERY } from '../hooks/use-mobile'
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { ArrowLeft, ArrowRight, Laptop, LoaderCircle, Minimize2, RotateCw, Smartphone, Tablet, X } from 'lucide-react'
 import {
   BROWSER_DEVICES,
@@ -30,6 +37,11 @@ import { BrowserSideResize, FrameBrowserChrome } from './FrameBrowserChrome'
 import { counterZoom, FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY } from '../lib/layoutZoom'
 import { canEditOpenCanvas, useStore } from '../lib/store'
 import { cn } from '../lib/utils'
+import { onFrameMessage } from '../lib/frameBridge'
+import { DesignModeControls, DesignModeHint, DesignModeOverlay, DesignModeToggle } from './DesignModeOverlay'
+import { PreviewChatCapsule, usePreviewChat } from './PreviewChatCapsule'
+import { useAllowance } from './TeamAllowance'
+import { useDesignMode } from './useDesignMode'
 import { BrowserAddressField } from './BrowserAddressField'
 import { FrameResizeHandles } from './FrameResizeHandles'
 import { Button } from './ui/button'
@@ -98,6 +110,13 @@ export function BrowserFrame({
   const shell = useRef<HTMLDivElement>(null)
   const surface = useRef<HTMLDialogElement>(null)
   const iframe = useRef<HTMLIFrameElement>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const annotationWindow = useRef<Window>()
+  const getAnnotationWindow = useCallback(() => annotationWindow.current, [])
+  const [documentRevision, documentChanged] = useState(0)
+  const [proxyPage, setProxyPage] = useState<{ key: string; url?: string }>()
+  const canvasId = useStore((s) => s.canvas?.id)
+  const components = useStore((s) => s.canvas?.components)
   const overlayAddress = useRef<HTMLInputElement>(null)
   const exitButton = useRef<HTMLButtonElement>(null)
   const [active, setActive] = useState(false)
@@ -120,6 +139,83 @@ export function BrowserFrame({
   const canInteract = soleSelected && canvasInput && !mode
   const interactions = active && canInteract && !!address
   const overlay = mode ?? topMode
+  const canAnnotate = !!mode && editable && !!address && canvasId === frame.canvasId
+  const chat = usePreviewChat(canvasId, canAnnotate)
+  const { allowance } = useAllowance(canAnnotate)
+  const proxyKey = JSON.stringify([canvasId, address, reload])
+  const resolvedAddress = proxyPage?.key === proxyKey ? proxyPage.url : undefined
+  const design = useDesignMode({
+    canvasId,
+    canEdit: canAnnotate,
+    allowance,
+    frame,
+    screenKey: 0,
+    documentRevision,
+    pageUrl: resolvedAddress ?? address,
+    source: 'browser',
+    components,
+    getWindow: getAnnotationWindow,
+    onNavigate: (_frameId, url) => navigateBrowser(frame, url),
+    onDraft: chat.expand,
+    onEnter: chat.collapse,
+  })
+  const proxySrc = design.enabled
+    ? `/api/browse-proxy?${new URLSearchParams({ canvasId: frame.canvasId, url: address })}`
+    : ''
+  const designHandlers = useRef({ design, frame })
+  useLayoutEffect(() => {
+    designHandlers.current = { design, frame }
+  })
+  useEffect(() => {
+    if (!canAnnotate) designHandlers.current.design.exit()
+  }, [canAnnotate])
+  useLayoutEffect(() => {
+    const win = proxySrc && iframe.current?.contentWindow
+    if (!win) return
+    let port: MessagePort | undefined
+    setProxyPage(undefined)
+    const timer = window.setTimeout(() => setProxyPage({ key: proxyKey }), 17_000)
+    const unsubscribe = onFrameMessage(win, (event) => {
+      if (event.origin !== 'null' || !event.data) return
+      const { type, url } = event.data as { type?: string; url?: unknown }
+      const { design, frame } = designHandlers.current
+      if (type === 'doop:browse-ready' && !port && isAbsoluteBrowserUrl(url) && url) {
+        window.clearTimeout(timer)
+        annotationWindow.current = win
+        setProxyPage({ key: proxyKey, url })
+        documentChanged((value) => value + 1)
+        const channel = new MessageChannel()
+        port = channel.port1
+        port.onmessage = ({ data }) => {
+          if (data?.event !== 'keydown' || data.repeat || document.activeElement !== iframe.current) return
+          if ((data.metaKey || data.ctrlKey) && data.shiftKey && !data.altKey && data.code === 'KeyD') {
+            designHandlers.current.design.toggle()
+            viewportRef.current?.focus({ preventScroll: true })
+          }
+        }
+        win.postMessage({ type: 'doop:runtime-port', browseMode: true }, '*', [channel.port2])
+      } else if (annotationWindow.current === win) {
+        if (type === 'doop:annotation-layout') design.refreshPins()
+        if (type === 'doop:proto-space-up') design.releasePage()
+        if (type === 'doop:esc' && document.activeElement === iframe.current) {
+          design.escape()
+          viewportRef.current?.focus({ preventScroll: true })
+        }
+        if (type === 'doop:browse-navigate' && isAbsoluteBrowserUrl(url) && url) {
+          design.clearInteraction()
+          design.releasePage()
+          navigateBrowser(frame, url)
+          viewportRef.current?.focus({ preventScroll: true })
+        }
+      }
+    })
+    return () => {
+      unsubscribe()
+      port?.close()
+      window.clearTimeout(timer)
+      annotationWindow.current = undefined
+    }
+  }, [proxySrc, proxyKey])
   if (active && (!canInteract || !address)) setActive(false)
   if (editing && !canInteract) setEditing(false)
   if (mode && mode !== topMode) setTopMode(mode)
@@ -152,7 +248,7 @@ export function BrowserFrame({
   }, [address])
 
   useEffect(() => {
-    if (!shouldLoad || !address) return
+    if (!shouldLoad || !address || proxySrc) return
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), 5000)
     let current = true
@@ -186,7 +282,7 @@ export function BrowserFrame({
       controller.abort()
       clearTimeout(timeout)
     }
-  }, [address, reload, shouldLoad])
+  }, [address, reload, shouldLoad, proxySrc])
 
   useLayoutEffect(() => {
     const element = surface.current
@@ -200,7 +296,10 @@ export function BrowserFrame({
         exitButton.current?.focus()
       } else {
         if (element.open) element.close()
-        if (!element.matches(':popover-open')) element.showPopover?.()
+        if (!element.matches(':popover-open')) {
+          element.showPopover?.()
+          exitButton.current?.focus()
+        }
       }
       const animation = mode === 'present' ? animateBrowserSurface(element, rect, true) : undefined
       return () => animation?.cancel()
@@ -242,6 +341,7 @@ export function BrowserFrame({
     const url = visited.entries[index]
     if (!editable || url === undefined) return
     targetIndex.current = index
+    design.clearInteraction()
     navigateBrowser(frame, url)
   }
 
@@ -250,6 +350,23 @@ export function BrowserFrame({
     function onKey(event: KeyboardEvent) {
       const target = event.target
       if (overlay === 'side' && (!(target instanceof Node) || !surface.current?.contains(target))) return
+      if (mode && design.allowed) {
+        const element = target instanceof Element ? target : null
+        const annotate = (event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey && event.code === 'KeyD'
+        if (
+          (annotate && !event.isComposing) ||
+          design.handleKey(event, element) ||
+          (event.key === 'Escape' && (design.escape() || chat.escape()))
+        ) {
+          if (annotate && !event.repeat) {
+            design.toggle()
+            viewportRef.current?.focus({ preventScroll: true })
+          }
+          event.preventDefault()
+          event.stopImmediatePropagation()
+          return
+        }
+      }
       const typing = target instanceof HTMLInputElement
       if (event.key === 'Escape' && (!typing || overlay)) {
         event.preventDefault()
@@ -281,7 +398,19 @@ export function BrowserFrame({
       }
     }
     window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    function onKeyUp(event: KeyboardEvent) {
+      if (event.code === 'Space' && design.usingPage) design.releasePage()
+    }
+    function onBlur() {
+      if (!document.hasFocus()) design.releasePage()
+    }
+    window.addEventListener('keyup', onKeyUp, true)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('keyup', onKeyUp, true)
+      window.removeEventListener('blur', onBlur)
+    }
   })
 
   const nextDevice = (device?: BrowserDevice) =>
@@ -297,8 +426,8 @@ export function BrowserFrame({
   const viewport = browserViewport(size.width, size.height, zoom)
   const iframeScale = zoom * fit * (!overlay && !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY ? layoutZoom : 1)
   const settledRequest = page.request?.address === address && page.request.reload === reload
-  const busy = !!address && (!settledRequest || page.status === 'loading')
-  const failed = settledRequest && page.status === 'error'
+  const busy = proxySrc ? proxyPage?.key !== proxyKey : !!address && (!settledRequest || page.status === 'loading')
+  const failed = proxySrc ? proxyPage?.key === proxyKey && !resolvedAddress : settledRequest && page.status === 'error'
   const ReloadIcon = busy ? LoaderCircle : RotateCw
   const reloadControl = (
     <IconButton
@@ -325,6 +454,7 @@ export function BrowserFrame({
   )
   const commit = (value: string) => {
     if (!navigateBrowser(frame, value)) return false
+    design.clearInteraction()
     setEditing(false)
     return true
   }
@@ -416,7 +546,7 @@ export function BrowserFrame({
         role={overlay === 'side' ? 'complementary' : overlay === 'present' ? 'dialog' : 'presentation'}
         onCancel={(event) => {
           event.preventDefault()
-          closeBrowserSurface(frame.id)
+          if (!design.escape()) closeBrowserSurface(frame.id)
         }}
         aria-modal={overlay === 'present' ? true : undefined}
         aria-label={overlay ? frame.name : undefined}
@@ -427,39 +557,54 @@ export function BrowserFrame({
       >
         {overlay && (
           <div className="browser-overlay-bar">
-            <div className="browser-chrome min-w-0 flex-1">
-              {overlay === 'present' && (
-                <>
-                  <IconButton
-                    size="sm"
-                    aria-label={t('canvas.browserBack')}
-                    disabled={!editable || visited.index <= 0}
-                    onClick={() => go(-1)}
-                  >
-                    <ArrowLeft size={15} />
-                  </IconButton>
-                  <IconButton
-                    size="sm"
-                    aria-label={t('canvas.browserForward')}
-                    disabled={!editable || visited.index >= visited.entries.length - 1}
-                    onClick={() => go(1)}
-                  >
-                    <ArrowRight size={15} />
-                  </IconButton>
-                </>
+            {design.enabled ? (
+              <DesignModeHint mode={design} />
+            ) : (
+              <div className="browser-chrome min-w-0 flex-1">
+                {overlay === 'present' && (
+                  <>
+                    <IconButton
+                      size="sm"
+                      aria-label={t('canvas.browserBack')}
+                      disabled={!editable || visited.index <= 0}
+                      onClick={() => go(-1)}
+                    >
+                      <ArrowLeft size={15} />
+                    </IconButton>
+                    <IconButton
+                      size="sm"
+                      aria-label={t('canvas.browserForward')}
+                      disabled={!editable || visited.index >= visited.entries.length - 1}
+                      onClick={() => go(1)}
+                    >
+                      <ArrowRight size={15} />
+                    </IconButton>
+                  </>
+                )}
+                {reloadControl}
+                <BrowserAddressField
+                  inputRef={overlayAddress}
+                  url={address}
+                  readOnly={!editable}
+                  className="h-6 flex-1"
+                  onCommit={commit}
+                />
+                {(overlay === 'side' || availableWidth > 390) && deviceControl}
+                {busy && <div className="browser-progress" aria-hidden="true" />}
+              </div>
+            )}
+            <div className="browser-chrome z-10">
+              {design.enabled && reloadControl}
+              {design.allowed && <DesignModeControls mode={design} />}
+              {design.allowed && !design.pendingCount && (
+                <DesignModeToggle
+                  enabled={design.enabled}
+                  onToggle={() => {
+                    design.toggle()
+                    viewportRef.current?.focus({ preventScroll: true })
+                  }}
+                />
               )}
-              {reloadControl}
-              <BrowserAddressField
-                inputRef={overlayAddress}
-                url={address}
-                readOnly={!editable}
-                className="h-6 flex-1"
-                onCommit={commit}
-              />
-              {(overlay === 'side' || availableWidth > 390) && deviceControl}
-              {busy && <div className="browser-progress" aria-hidden="true" />}
-            </div>
-            <div className="browser-chrome">
               {overlay === 'present' && (
                 <IconButton
                   size="sm"
@@ -482,7 +627,10 @@ export function BrowserFrame({
           </div>
         )}
         <div
+          ref={viewportRef}
           data-browser-viewport=""
+          tabIndex={overlay ? -1 : undefined}
+          aria-busy={proxySrc ? busy : undefined}
           className={cn(
             'browser-viewport',
             !overlay && (interactions ? 'browser-live' : selected ? 'browser-selected' : 'browser-hover'),
@@ -497,15 +645,17 @@ export function BrowserFrame({
               opacity: overlay ? 1 : (browser.opacity ?? 1),
             }}
           >
-            {page.src && address && (
+            {(proxySrc || page.src) && address && (
               <iframe
+                key={proxySrc ? proxyKey : 'direct'}
                 ref={iframe}
-                src={page.src}
+                data-design-screen={proxySrc ? 0 : undefined}
+                src={proxySrc || page.src}
                 title={frame.name}
                 // An external URL can redirect back to the editor's origin.
-                sandbox="allow-scripts allow-forms allow-popups allow-modals"
+                sandbox={proxySrc ? 'allow-scripts' : 'allow-scripts allow-forms allow-popups allow-modals'}
                 referrerPolicy="no-referrer"
-                tabIndex={interactions || overlay ? 0 : -1}
+                tabIndex={(interactions || overlay) && (!design.enabled || design.usingPage) ? 0 : -1}
                 style={{
                   ...viewport,
                   ...(!overlay && !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY ? { zoom: counterZoom(layoutZoom) } : null),
@@ -515,7 +665,7 @@ export function BrowserFrame({
                 }}
                 className="absolute top-0 left-0 origin-top-left border-0 bg-surface"
                 onLoad={() => {
-                  if (!awaitingLoad.current || pageRequest.current !== address) return
+                  if (proxySrc || !awaitingLoad.current || pageRequest.current !== address) return
                   awaitingLoad.current = false
                   setPage((previous) => ({ ...previous, status: 'ready' }))
                 }}
@@ -592,6 +742,24 @@ export function BrowserFrame({
               </div>
             )}
           </div>
+          {design.enabled && resolvedAddress && (
+            <DesignModeOverlay
+              mode={design}
+              screen={0}
+              revision={documentRevision}
+              viewportRef={viewportRef}
+              getWindow={getAnnotationWindow}
+            />
+          )}
+          {chat.open && canvasId && (
+            <PreviewChatCapsule
+              chat={chat}
+              canvasId={canvasId}
+              pending={design.pendingCount}
+              allowance={allowance}
+              onShowQueue={() => design.setQueueOpen(true)}
+            />
+          )}
         </div>
         {overlay === 'side' && overlayWidth !== undefined && <BrowserSideResize width={overlayWidth} />}
       </dialog>

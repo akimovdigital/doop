@@ -2,6 +2,7 @@ import { useEffect, useId, useState, type KeyboardEvent, type ReactNode, type Re
 import { useT } from '@/lib/i18n'
 import { prototypePath } from '../lib/prototype'
 import { isProtoScaling, matchPreviewFrames, previewFrameFromAddress, type ProtoScaling } from '../lib/prototypePlayer'
+import { DesignModeToggle } from './DesignModeOverlay'
 import { IconButton } from './ui/icon-button'
 import { Input } from './ui/input'
 import { cn } from '@/lib/utils'
@@ -99,17 +100,7 @@ export function PreviewToolbar(props: PreviewToolbarProps) {
           <HistoryIcon size="rail" />
         </IconButton>
         {props.onDesignMode ? (
-          <IconButton
-            size="sm"
-            aria-label={t('panels.designAnnotate')}
-            title={t('panels.designAnnotateShortcut')}
-            aria-pressed={props.designModeOn ?? false}
-            on={props.designModeOn}
-            data-design-toggle=""
-            onClick={props.onDesignMode}
-          >
-            <HotspotIcon size="rail" />
-          </IconButton>
+          <DesignModeToggle enabled={!!props.designModeOn} onToggle={props.onDesignMode} />
         ) : (
           <IconButton size="sm" aria-label={t('panels.protoHotspots')} onClick={props.onHotspots}>
             <HotspotIcon size="rail" />

@@ -421,37 +421,10 @@ export function PrototypePlayer({
       wrappers.current.get(entry.key)?.animate(incoming, { duration: entry.duration, easing: EASING, fill: 'both' })
   }
 
-  function designKey(event: KeyboardEvent, target: Element | null) {
-    if (!design.allowed) return false
-    const field = target?.closest('[data-design-note-field]')
-    if (field && design.draft && !event.isComposing) {
-      if (event.metaKey && !event.shiftKey && event.key.toLowerCase() === 'l') {
-        design.draftToChat(design.draft)
-        return true
-      }
-      if (event.key === 'Enter' && !event.shiftKey) {
-        if (!event.repeat) void design.submit()
-        return true
-      }
-    }
-    if (!design.enabled) return false
-    if (event.code === 'Space' && !event.isComposing && !event.metaKey && !event.ctrlKey && !event.altKey) {
-      if (target?.closest('input,textarea,select,button,[contenteditable],[role="switch"]')) return false
-      if (!event.repeat) design.holdPage()
-      return true
-    }
-    if (design.usingPage || field || target?.closest('[data-preview-toolbar],[data-design-card]')) return false
-    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-      void design.moveHighlight(event.key === 'ArrowUp' ? 'parent' : 'child')
-      return true
-    }
-    return false
-  }
-
   /* the latest handlers for the listeners below, which subscribe once */
-  const handlers = useRef({ escape, back, jumpTo, release, topWindow, shortcut, design, designKey, chat })
+  const handlers = useRef({ escape, back, jumpTo, release, topWindow, shortcut, design, chat })
   useLayoutEffect(() => {
-    handlers.current = { escape, back, jumpTo, release, topWindow, shortcut, design, designKey, chat }
+    handlers.current = { escape, back, jumpTo, release, topWindow, shortcut, design, chat }
   })
 
   useEffect(() => {
@@ -461,7 +434,7 @@ export function PrototypePlayer({
          Escape on the button still leaves the player */
       const target = e.target instanceof Element ? e.target : null
       if (target?.closest('[data-proto-menu],[data-slot=modal]')) return
-      if (handlers.current.designKey(e, target)) {
+      if (handlers.current.design.handleKey(e, target)) {
         e.preventDefault()
         e.stopPropagation()
         return
@@ -733,7 +706,6 @@ export function PrototypePlayer({
           })}
           <DesignModeOverlay
             mode={design}
-            frameId={annotationScreen.frameId}
             screen={annotationScreen.key}
             revision={documentRevision}
             viewportRef={viewportRef}

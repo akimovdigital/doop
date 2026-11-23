@@ -261,6 +261,7 @@ const schema = {
   PEXELS_API_KEY: str({ default: undefined }),
   BRANDFETCH_CLIENT_ID: str({ default: undefined }),
   ONEPAGELOVE_API_KEY: str({ default: undefined }),
+  BROWSE_PROXY_ALLOW_ORIGINS: str({ default: '' }),
   CONTEXT_DEV_API_KEY: str({ default: undefined }),
 
   /* ------------------------------------------------- object storage */
