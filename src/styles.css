@@ -2,6 +2,11 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
+/* Diagnostics carry their own styles and do not contribute production utilities. */
+@source not './perf';
+@source not '../tests/perf';
+@source not '../scripts/bench';
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* Key symbols (⌘ ⌥ ⇧ ⌃ ⌫ ↩ ⇥ ⎋ and the arrows) cut from the full Inter: the

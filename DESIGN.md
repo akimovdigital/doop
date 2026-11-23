@@ -106,3 +106,7 @@ The editor can shrink the player into a centered 80% window with a 300 px minimu
 space permits, a panel radius, an edge and `shadow-pop`. The 150 ms ease-out resize follows the
 reduced-motion preference. The site and its overlays share a separately measured, clipped viewport
 inside the window. Standalone preview keeps the same bar layout with its editor actions hidden.
+
+## Development performance HUD
+
+The opt-in HUD sits in the lower-right corner above the canvas toolbar and moves below the top chrome on narrow windows. It uses the surface, ink, line, panel-radius and caption tokens with tabular mono figures. It does not capture pointer input. Its styles load with the development HUD and do not ship in the production entry.
