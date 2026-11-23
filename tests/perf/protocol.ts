@@ -38,6 +38,7 @@ export interface Sample {
   drag: { expected: number; moved: number } | null
   commits: { count: number; actualDuration: number }
   live: { before: ReturnType<typeof liveDocuments>; after: ReturnType<typeof liveDocuments> }
+  snapshots?: { ready: number; elapsedMs: number | null; captureMs: number[] }
   heapBytes: number | null
   memory: { before: Memory; after: Memory }
 }

@@ -45,6 +45,7 @@ import { sendWs } from '../lib/ws'
 import { throttle } from '../lib/throttle'
 import { getIdentity } from '../lib/identity'
 import { FRAME_BOOTSTRAP } from '../lib/frameRuntime'
+import { canSnapshotFrame, type FrameSnapshots } from '../lib/frameSnapshots'
 import { MOD_KEY } from '../lib/keys'
 import { isDesktopShell } from '../lib/shell'
 import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY, counterZoom } from '../lib/layoutZoom'
@@ -341,6 +342,35 @@ interface HoverHit {
   linkRect?: { x: number; y: number; width: number; height: number } | null
 }
 
+function FrameSnapshotLayer({
+  snapshots,
+  frame,
+  blocked,
+  changing,
+}: {
+  snapshots: FrameSnapshots
+  frame: Frame
+  blocked: boolean
+  changing: boolean
+}) {
+  const image = useRef<HTMLImageElement>(null)
+  const id = frame.id
+  useLayoutEffect(() => () => snapshots.remove(id), [snapshots, id])
+  useLayoutEffect(() => {
+    if (image.current) snapshots.update(frame, image.current, changing)
+  }, [snapshots, frame, blocked, changing])
+  return (
+    <img
+      ref={image}
+      alt=""
+      aria-hidden="true"
+      decoding="async"
+      data-frame-snapshot=""
+      data-frame-snapshot-blocked={blocked ? '' : undefined}
+    />
+  )
+}
+
 /* Counter-scaled overlays (labels, pins, popovers) get their scale from the
    `--zoom` CSS variable the Stage sets, so a viewport change never re-renders
    this component — memo holds as long as the frame and layout zoom are unchanged. */
@@ -349,6 +379,7 @@ export const FrameView = memo(function FrameView({
   stack,
   layoutZoom,
   loadDocument = true,
+  snapshots,
   compactSectionTitles = false,
   requestDocument,
   onFollowLink,
@@ -360,6 +391,7 @@ export const FrameView = memo(function FrameView({
   stack?: number
   layoutZoom: number
   loadDocument?: boolean
+  snapshots?: FrameSnapshots
   compactSectionTitles?: boolean
   requestDocument?: (frameId: string) => void
   onFollowLink?: (source: Frame, href: string) => void
@@ -2385,6 +2417,22 @@ export const FrameView = memo(function FrameView({
               leaveHover()
             }}
           >
+            {snapshots && mountRuntime && !standalone && !bleed && runtimeDocument?.html === frame.html && (
+              <FrameSnapshotLayer
+                snapshots={snapshots}
+                frame={frame}
+                changing={editing || !!stream || !!remoteEditor || !!pageMode || !!pathEdit}
+                blocked={
+                  !canSnapshotFrame(frame, {
+                    selected,
+                    editing: editing || suspendPost || !!remoteEditor,
+                    streaming: !!stream,
+                    interacting: !!pageMode || !!pathEdit || contextMenuOpen,
+                    presenting,
+                  })
+                }
+              />
+            )}
             {/* always there, so the iframe never moves in the DOM (that reloads
                 it): it carries the iframe out by the bleed margin */}
             <div
