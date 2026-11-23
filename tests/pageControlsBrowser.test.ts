@@ -103,8 +103,8 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
       }
     })
     await page.waitForFunction(() => {
-      const stage = document.querySelector<HTMLElement>('.stage')
-      return Number(stage?.style.getPropertyValue('--zoom')) === 0.01
+      const world = document.querySelector<HTMLElement>('.stage .world')
+      return Number(world?.style.getPropertyValue('--zoom')) === 0.01
     })
     const paper = await page.screenshot({ clip: { x: 650, y: 150, width: 80, height: 80 } })
     const colours = (await sharp(paper).stats()).channels.slice(0, 3)

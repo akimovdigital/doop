@@ -57,6 +57,47 @@ describe.skipIf(!findBrowserPath())('frame size badge', { timeout: 30_000 }, () 
     expect(errors).toEqual([])
   })
 
+  it('keeps inherited camera styles off the stage and updates the badge on pan', async () => {
+    await page.evaluate(() => window.rulersHarness.select(['above']))
+    await page.waitForSelector('[data-frame-size]')
+    const result = await page.evaluate(() => {
+      const stage = document.querySelector<HTMLElement>('.stage')!
+      const world = stage.querySelector<HTMLElement>('.world')!
+      const badge = stage.querySelector<HTMLElement>('[data-frame-size]')!
+      const labelLayer = badge.parentElement!
+      const before = badge.getBoundingClientRect()
+      const panWrites: string[] = []
+      const original = CSSStyleDeclaration.prototype.setProperty
+      CSSStyleDeclaration.prototype.setProperty = function (name, value, priority) {
+        if (name.startsWith('--')) panWrites.push(name)
+        return original.call(this, name, value, priority)
+      }
+      try {
+        window.rulersHarness.viewport({ x: 125, y: 115, zoom: 0.25 })
+      } finally {
+        CSSStyleDeclaration.prototype.setProperty = original
+      }
+      const after = badge.getBoundingClientRect()
+      const variables = ['--zoom', '--vx', '--vy', '--pixel-grid']
+      return {
+        root: variables.map((name) => stage.style.getPropertyValue(name)),
+        worldZoom: world.style.getPropertyValue('--zoom'),
+        labelZoom: labelLayer.style.getPropertyValue('--zoom'),
+        frameGrid: world.style.getPropertyValue('--pixel-grid'),
+        panWrites,
+        badgeMovement: [after.x - before.x, after.y - before.y],
+      }
+    })
+    expect(result).toEqual({
+      root: ['', '', '', ''],
+      worldZoom: '0.25',
+      labelZoom: '0.25',
+      frameGrid: '0',
+      panWrites: [],
+      badgeMovement: [25, 15],
+    })
+  })
+
   it('paints above a later frame it overlaps', async () => {
     await page.evaluate(() => window.rulersHarness.select(['above']))
     const badge = await page.waitForSelector('[data-frame-size]')
