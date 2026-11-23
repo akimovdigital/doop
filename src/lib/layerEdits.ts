@@ -166,8 +166,8 @@ export function setFramesLocked(frames: Frame[], locked: boolean) {
   if (!changed.length) return
   recordUpdates(changed.map((f) => ({ frameId: f.id, before: { locked: !!f.locked }, after: { locked } })))
   const store = useStore.getState()
+  store.patchFramesLocal(changed.map((f) => [f.id, { locked }]))
   for (const f of changed) {
-    store.patchFrameLocal(f.id, { locked })
     /* as for the eye: undo waits for the save, and a save the server refused
        is rolled back so the lock shows what everyone else sees */
     trackSave(
@@ -387,8 +387,8 @@ export function setFramesHidden(frames: Frame[], hidden: boolean) {
   if (!changed.length) return
   recordUpdates(changed.map((f) => ({ frameId: f.id, before: { hidden: !!f.hidden }, after: { hidden } })))
   const store = useStore.getState()
+  store.patchFramesLocal(changed.map((f) => [f.id, { hidden }]))
   for (const f of changed) {
-    store.patchFrameLocal(f.id, { hidden })
     /* undo waits for the save, as it does for a drag — an immediate ⌘Z must
        not land before the hide it reverses. A save the server refused is
        rolled back, so the eye and the stage show what everyone else sees. */
@@ -762,9 +762,15 @@ export function transferLayer(pressed: Frame, selector: string, over: Frame, tar
   const destAfter = { ...dest, html: placed.html }
   const sourceAfter = shell ? null : { ...source, html: emptied }
   const store = useStore.getState()
-  store.patchFrameLocal(dest.id, { html: placed.html })
-  if (shell) store.removeFrame(source.id)
-  else store.patchFrameLocal(source.id, { html: emptied })
+  if (shell) {
+    store.patchFrameLocal(dest.id, { html: placed.html })
+    store.removeFrame(source.id)
+  } else {
+    store.patchFramesLocal([
+      [dest.id, { html: placed.html }],
+      [source.id, { html: emptied }],
+    ])
+  }
   store.select(dest.id)
   store.setSelectedElement({ frameId: dest.id, selector: placed.selector })
   /* the entry goes in now, in its place among the edits around it; a move
@@ -802,9 +808,15 @@ export function transferLayer(pressed: Frame, selector: string, over: Frame, tar
           return
         }
         dropEntry(entry)
-        s.patchFrameLocal(dest.id, { html: dest.html })
-        if (shell) s.upsertFrame(source)
-        else s.patchFrameLocal(source.id, { html: source.html })
+        if (shell) {
+          s.patchFrameLocal(dest.id, { html: dest.html })
+          s.upsertFrame(source)
+        } else {
+          s.patchFramesLocal([
+            [dest.id, { html: dest.html }],
+            [source.id, { html: source.html }],
+          ])
+        }
         if (remote) s.upsertFrame(remote)
         s.pushNotice(errorMessage(err, `Couldn’t move the layer to “${dest.name}”`))
         if (!saved) return
@@ -879,11 +891,13 @@ export function transferLayers(
   }
   const destAfter = { ...dest, html }
   const store = useStore.getState()
-  store.patchFrameLocal(dest.id, { html })
-  for (const src of srcs) {
-    if (src.shell) store.removeFrame(src.before.id)
-    else store.patchFrameLocal(src.before.id, { html: src.emptied! })
-  }
+  store.patchFramesLocal([
+    [dest.id, { html }],
+    ...srcs.flatMap<[string, Partial<Frame>]>((src) =>
+      src.shell ? [] : [[src.before.id, { html: src.emptied! }]],
+    ),
+  ])
+  for (const src of srcs) if (src.shell) store.removeFrame(src.before.id)
   store.select(dest.id)
   store.pickElements(dest.id, placedSelectors)
   /* the entry goes in now, in its place among the edits around it; a move
@@ -934,11 +948,13 @@ export function transferLayers(
         const s = useStore.getState()
         const remote = err instanceof ApiError && err.status === 409 ? (err.body.frame as Frame | undefined) : undefined
         dropEntry(entry)
-        s.patchFrameLocal(dest.id, { html: dest.html })
-        for (const src of srcs) {
-          if (src.shell) s.upsertFrame(src.before)
-          else s.patchFrameLocal(src.before.id, { html: src.before.html })
-        }
+        s.patchFramesLocal([
+          [dest.id, { html: dest.html }],
+          ...srcs.flatMap<[string, Partial<Frame>]>((src) =>
+            src.shell ? [] : [[src.before.id, { html: src.before.html }]],
+          ),
+        ])
+        for (const src of srcs) if (src.shell) s.upsertFrame(src.before)
         if (remote) s.upsertFrame(remote)
         s.pushNotice(errorMessage(err, `Couldn’t move the layers to “${dest.name}”`))
       },

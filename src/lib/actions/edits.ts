@@ -120,7 +120,7 @@ export function patchFrames(changes: { frame: Frame; patch: FramePatch }[]) {
     }),
   )
   const store = useStore.getState()
-  for (const { frame, patch } of real) store.patchFrameLocal(frame.id, patch)
+  store.patchFramesLocal(real.map(({ frame, patch }) => [frame.id, patch]))
   trackSave(
     Promise.all(
       real.map(({ frame, patch }) =>
@@ -968,6 +968,6 @@ export function saveFramesHtml(changes: { frame: Frame; html: string }[]) {
   if (!real.length) return
   recordUpdates(real.map(({ frame, html }) => ({ frameId: frame.id, before: { html: frame.html }, after: { html } })))
   const store = useStore.getState()
-  for (const { frame, html } of real) store.patchFrameLocal(frame.id, { html })
+  store.patchFramesLocal(real.map(({ frame, html }) => [frame.id, { html }]))
   trackSave(Promise.all(real.map(({ frame, html }) => api.updateFrame(frame.id, { html }))).catch(console.error))
 }

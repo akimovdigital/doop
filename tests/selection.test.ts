@@ -12,6 +12,7 @@ vi.mock('../src/lib/api', () => ({ api }))
 vi.mock('../src/lib/posthog', () => ({ posthog: { capture: vi.fn() } }))
 
 const { useStore } = await import('../src/lib/store')
+const frameStack = await import('../shared/frameStack')
 const history = await import('../src/lib/history')
 
 function frame(id: string, x = 0, y = 0): Frame {
@@ -39,6 +40,41 @@ beforeEach(() => {
 })
 
 describe('multi-selection in the store', () => {
+  it('applies a frame batch atomically and sorts only when the stack changes', () => {
+    seed({ ...frame('a'), z: 0 }, { ...frame('b'), z: 1 }, { ...frame('c'), z: 2 })
+    const untouched = useStore.getState().canvas!.frames[2]
+    const listener = vi.fn()
+    const off = useStore.subscribe(listener)
+    const sort = vi.spyOn(frameStack, 'sortByStack')
+    const s = useStore.getState()
+    try {
+      s.patchFramesLocal([
+        ['a', { x: 10, z: 0 }],
+        ['a', { y: 15 }],
+        ['b', { x: 20 }],
+        ['missing', { x: 30 }],
+      ])
+      const frames = useStore.getState().canvas!.frames
+      expect(listener).toHaveBeenCalledTimes(1)
+      expect(frames[0]).toMatchObject({ id: 'a', x: 10, y: 15, z: 0 })
+      expect(frames[1]).toMatchObject({ id: 'b', x: 20 })
+      expect(frames[2]).toBe(untouched)
+      s.upsertFrame({ ...frames[0]!, x: 40 })
+      expect(sort).not.toHaveBeenCalled()
+      s.patchFramesLocal(
+        new Map([
+          ['a', { z: 3 }],
+          ['b', { z: 4 }],
+        ]),
+      )
+      expect(useStore.getState().canvas!.frames.map((f) => f.id)).toEqual(['c', 'a', 'b'])
+      expect(sort).toHaveBeenCalledTimes(1)
+    } finally {
+      off()
+      sort.mockRestore()
+    }
+  })
+
   it('a plain select collapses to one frame and makes it primary', () => {
     useStore.getState().selectMany(['a', 'b'])
     useStore.getState().select('c')

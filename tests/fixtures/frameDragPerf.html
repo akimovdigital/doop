@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      import React from 'react'
+      import { createRoot } from 'react-dom/client'
+      import { FrameView } from '/src/components/FrameView.tsx'
+      import { useFrameAdmission } from '/src/components/frameAdmission.ts'
+      import { TooltipProvider } from '/src/components/ui/tooltip.tsx'
+      import { useStore } from '/src/lib/store.ts'
+      import { usePageCanvas } from '/src/lib/pages.ts'
+      import { undo, redo } from '/src/lib/history.ts'
+      import { connect } from '/src/lib/ws.ts'
+      import '/src/styles.css'
+
+      window.frameDragPerf = { store: useStore, frameView: FrameView, undo, redo, connect }
+
+      const empty = []
+      function Fixture() {
+        const frames = usePageCanvas()?.frames ?? empty
+        const stage = React.useRef(null)
+        const layer = React.useRef(null)
+        const { eager, admitted, request } = useFrameAdmission(frames, stage, layer)
+        return React.createElement(
+          TooltipProvider,
+          null,
+          React.createElement(
+            'div',
+            { ref: stage, className: 'stage', style: { position: 'fixed', inset: 0 } },
+            React.createElement(
+              'div',
+              { ref: layer, className: 'world' },
+              frames.map((frame, i) =>
+                React.createElement(FrameView, {
+                  key: frame.id,
+                  frame,
+                  stack: i + 1,
+                  layoutZoom: 1,
+                  loadDocument: eager || admitted.has(frame.id),
+                  requestDocument: request,
+                }),
+              ),
+            ),
+          ),
+        )
+      }
+      createRoot(document.getElementById('root')).render(React.createElement(Fixture))
+    </script>
+  </body>
+</html>
