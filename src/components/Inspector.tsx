@@ -1,3 +1,7 @@
+import { Globe } from 'lucide-react'
+import { BROWSER_DEVICES, BROWSER_ZOOMS, type BrowserDevice } from '../../shared/browserFrame'
+import { changeBrowserDevice, navigateBrowser, updateBrowser } from '../lib/browserFrames'
+import { BrowserAddressField } from './BrowserAddressField'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { Frame } from '../../shared/types'
 import { useStore } from '../lib/store'
@@ -230,7 +234,11 @@ export function Inspector({
     >
       <PanelHeader className="pl-2.5">
         <span className="flex min-w-0 flex-1 items-center gap-1.5">
-          <FrameIcon className="size-3.5 flex-none text-ink-faint" />
+          {frame.browser ? (
+            <Globe className="size-3.5 flex-none text-ink-faint" />
+          ) : (
+            <FrameIcon className="size-3.5 flex-none text-ink-faint" />
+          )}
           <NameInput key={frame.id} value={frame.name} onCommit={(v) => v.trim() && commitMeta({ name: v.trim() })} />
         </span>
         <PanelClose onClick={() => select(null)} />
@@ -257,6 +265,7 @@ export function Inspector({
         <InspectorGroup title={t('inspector.groupDevelopment')}>
           <FrameApprovalControl key={frame.id} frame={frame} hasUnsavedChanges={saveState === 'dirty'} />
         </InspectorGroup>
+        {frame.browser && <BrowserProperties key={frame.id} frame={{ ...frame, browser: frame.browser }} />}
         <PropertyScrubContext.Provider value={boxScrub}>
           <InspectorGroup title={t('inspector.sectionPosition')}>
             <div className="grid grid-cols-2 gap-1.5">
@@ -312,7 +321,7 @@ export function Inspector({
             </div>
           </InspectorGroup>
         </PropertyScrubContext.Provider>
-        {!frame.locked && !isCanvasElement(frame.html) && <FrameFillSection frame={frame} />}
+        {!frame.browser && !frame.locked && !isCanvasElement(frame.html) && <FrameFillSection frame={frame} />}
         <InspectorGroup title={t('inspector.groupExport')}>
           <div className="grid grid-cols-2 gap-1.5">
             <div className="col-span-2">
@@ -369,50 +378,52 @@ export function Inspector({
         </InspectorGroup>
         {/* a frame is its HTML: the editor is always there, last in the panel,
             so nobody has to find a toggle to see or change the code */}
-        <section className="flex min-h-0 flex-col">
-          <div className="border-b border-line-soft px-3 py-2">
-            <h3 className="mb-1.5 flex h-5 items-center text-[12px] font-normal text-ink-soft">
-              {t('inspector.code')}
-            </h3>
-            <div className="grid grid-cols-2 gap-1.5">
-              <Button
-                variant="bare"
-                className={cn(fillBtn, 'gap-1.5')}
-                title={t('inspector.copyHtmlTitle')}
-                onClick={copyHtml}
-              >
-                <CopyIcon className="size-3.5" />
-                {htmlCopy === 'copied' ? t('common.copied') : t('common.copy')}
-              </Button>
-              <Button
-                variant="bare"
-                className={cn(fillBtn, 'gap-1.5')}
-                title={t('inspector.exportHtmlTitle')}
-                onClick={() => downloadFrameHtml(frame, draft)}
-              >
-                <DownloadIcon className="size-3.5" />
-                {t('inspector.export')}
-              </Button>
+        {!frame.browser && (
+          <section className="flex min-h-0 flex-col">
+            <div className="border-b border-line-soft px-3 py-2">
+              <h3 className="mb-1.5 flex h-5 items-center text-[12px] font-normal text-ink-soft">
+                {t('inspector.code')}
+              </h3>
+              <div className="grid grid-cols-2 gap-1.5">
+                <Button
+                  variant="bare"
+                  className={cn(fillBtn, 'gap-1.5')}
+                  title={t('inspector.copyHtmlTitle')}
+                  onClick={copyHtml}
+                >
+                  <CopyIcon className="size-3.5" />
+                  {htmlCopy === 'copied' ? t('common.copied') : t('common.copy')}
+                </Button>
+                <Button
+                  variant="bare"
+                  className={cn(fillBtn, 'gap-1.5')}
+                  title={t('inspector.exportHtmlTitle')}
+                  onClick={() => downloadFrameHtml(frame, draft)}
+                >
+                  <DownloadIcon className="size-3.5" />
+                  {t('inspector.export')}
+                </Button>
+              </div>
+              {htmlCopy === 'failed' && (
+                <p className="pt-2 text-[11px] text-accent-ink">{t('inspector.copyHtmlFailed')}</p>
+              )}
             </div>
-            {htmlCopy === 'failed' && (
-              <p className="pt-2 text-[11px] text-accent-ink">{t('inspector.copyHtmlFailed')}</p>
-            )}
-          </div>
-          <div className="relative flex min-h-0 flex-col">
-            <Textarea
-              ref={textareaRef}
-              aria-label={t('inspector.editHtml')}
-              variant="code"
-              className="h-[320px] flex-none max-md:h-auto max-md:min-h-[160px] max-md:flex-1"
-              value={draft}
-              spellCheck={false}
-              placeholder="<!doctype html>…"
-              onChange={(e) => onHtmlChange(e.target.value)}
-              onFocus={() => setEditing(true)}
-              onBlur={() => setEditing(false)}
-            />
-          </div>
-        </section>
+            <div className="relative flex min-h-0 flex-col">
+              <Textarea
+                ref={textareaRef}
+                aria-label={t('inspector.editHtml')}
+                variant="code"
+                className="h-[320px] flex-none max-md:h-auto max-md:min-h-[160px] max-md:flex-1"
+                value={draft}
+                spellCheck={false}
+                placeholder="<!doctype html>…"
+                onChange={(e) => onHtmlChange(e.target.value)}
+                onFocus={() => setEditing(true)}
+                onBlur={() => setEditing(false)}
+              />
+            </div>
+          </section>
+        )}
       </div>
       <footer className="flex flex-none items-center justify-between gap-2 border-t border-line-soft py-2 pr-2 pl-3">
         <span className="min-w-0 truncate text-[11px] text-ink-faint">
@@ -449,6 +460,90 @@ export function Inspector({
 }
 
 /* a burst of render and font-load events shares one read, as the element panel's does */
+function BrowserProperties({ frame }: { frame: Frame & { browser: NonNullable<Frame['browser']> } }) {
+  const t = useT()
+  const disabled = !!frame.locked
+  const { browser } = frame
+  const deviceLabels = {
+    laptop: t('canvas.browserLaptop'),
+    tablet: t('canvas.browserTablet'),
+    phone: t('canvas.browserPhone'),
+  }
+  const selectClass =
+    'h-7 min-w-0 rounded-row border border-line bg-sub px-2 text-label text-ink focus-visible:ring-2 focus-visible:ring-ring/40'
+  const labelClass = 'grid grid-cols-[55px_minmax(0,1fr)] items-center gap-2 text-label text-ink-soft'
+  return (
+    <>
+      <InspectorGroup title={t('canvas.toolBrowser')}>
+        <div className="grid gap-1.5">
+          <label className={labelClass}>
+            {t('canvas.browserUrl')}
+            <BrowserAddressField
+              url={browser.url}
+              readOnly={disabled}
+              className="h-7"
+              onCommit={(url) => navigateBrowser(frame, url)}
+            />
+          </label>
+          <label className={labelClass}>
+            {t('canvas.browserDevice')}
+            <select
+              className={selectClass}
+              disabled={disabled}
+              value={browser.deviceId ?? ''}
+              onChange={(e) => changeBrowserDevice(frame, (e.target.value || undefined) as BrowserDevice | undefined)}
+            >
+              <option value="">{t('canvas.browserDesktop')}</option>
+              {BROWSER_DEVICES.map((id) => (
+                <option key={id} value={id}>
+                  {deviceLabels[id]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={labelClass}>
+            {t('canvas.browserZoom')}
+            <select
+              className={selectClass}
+              disabled={disabled}
+              value={browser.zoom ?? 1}
+              onChange={(e) => updateBrowser(frame, { zoom: Number(e.target.value) })}
+            >
+              {BROWSER_ZOOMS.map((zoom) => (
+                <option key={zoom} value={zoom}>
+                  {zoom * 100}%
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </InspectorGroup>
+      {!disabled && (
+        <InspectorGroup title={t('canvas.browserAppearance')}>
+          <div className="grid grid-cols-2 gap-1.5">
+            <NumberField
+              label={t('canvas.browserOpacity')}
+              unit="%"
+              value={Math.round((browser.opacity ?? 1) * 100)}
+              min={0}
+              max={100}
+              onCommit={(value) => updateBrowser(frame, { opacity: value / 100 })}
+            />
+            <NumberField
+              label={t('canvas.browserRadius')}
+              unit="px"
+              value={browser.cornerRadius ?? 12}
+              min={0}
+              max={1000}
+              onCommit={(cornerRadius) => updateBrowser(frame, { cornerRadius })}
+            />
+          </div>
+        </InspectorGroup>
+      )}
+    </>
+  )
+}
+
 const FILL_READ_DELAY_MS = 120
 
 type FillRead = { frameId: string; fill: FrameFill }

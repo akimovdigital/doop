@@ -1,3 +1,4 @@
+import { openBrowserSurface, selectedBrowser, useBrowserUi } from '../lib/browserFrames'
 import { CAPTURE_PREFIX, pasteWebCapture } from '../lib/webCapture'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { canEditOpenCanvas, pickedSelectors, roleOf, useStore } from '../lib/store'
@@ -304,8 +305,12 @@ export function CanvasPage({
   const [showShare, setShowShare] = useState(false)
   /* the frame the player was launched on, while presenting */
   const [presenting, setPresenting] = useState<string | null>(null)
+  const browserSurface = useBrowserUi((s) => s.surface?.mode)
+  const browserPresenting = browserSurface === 'present'
+  const browserSideWidth = useBrowserUi((s) => s.sideWidth)
+  const sideBrowserOpen = browserSurface === 'side'
   /* ⌘. acts only over the canvas view, outside PresentMode */
-  const hideUiActive = canHideUi({ view: 'canvas', presenting: !!presenting })
+  const hideUiActive = canHideUi({ view: 'canvas', presenting: !!presenting || browserPresenting })
   const activePageId = useStore((s) => s.activePageId)
   /* Play starts on the selected frame, or on the page's flow start */
   const playFrom = useMemo(
@@ -424,6 +429,7 @@ export function CanvasPage({
      selection walk on ↩ and Tab, the arrow nudge and Esc */
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (useBrowserUi.getState().surface?.mode === 'present') return
       const typing = isTypingTarget(e.target)
       if (dispatchActionKey(e, typing)) return
       if (typing) return
@@ -664,7 +670,7 @@ export function CanvasPage({
     const host: ActionHost = {
       canvasId,
       guest,
-      presenting: !!presenting,
+      presenting: !!presenting || browserPresenting,
       hideUiActive,
       agentsOpen: showActivity,
       openPalette: () => setPaletteOpen(true),
@@ -702,6 +708,8 @@ export function CanvasPage({
           .catch((err: Error) => showToast(err.message))
       },
       present: () => {
+        const browser = selectedBrowser()
+        if (browser) return openBrowserSurface(browser, 'present')
         const state = useStore.getState()
         const from = presentStartFrame(state.canvas, state.selectedId, state.activePageId)
         if (from) setPresenting(from)
@@ -844,6 +852,11 @@ export function CanvasPage({
   }, [rulers, uiHidden, hideUiActive, layersOpen, showActivity, hasSelection])
   useEffect(() => () => syncViewMenu(NO_CANVAS), [])
   const chromeVars = {
+    ...(browserSideWidth === undefined
+      ? {}
+      : {
+          '--browser-side-width': `clamp(min(180px, 100vw), ${browserSideWidth}px, min(70vw, 900px))`,
+        }),
     '--chrome-top': isMobile ? '0px' : `${(docked ? DOCKED_BAR_H : BAR_H) + rulerInset}px`,
     '--rail-left': `${chrome.toolRail + rulerInset}px`,
     /* what floats over the canvas (the zoom pill, toasts) keeps clear of a
@@ -1000,7 +1013,11 @@ export function CanvasPage({
                   className={barPillIconBtn}
                   aria-label={t('canvas.presentPrototypeLabel')}
                   disabled={!playFrom}
-                  onClick={() => setPresenting(playFrom)}
+                  onClick={() => {
+                    const browser = selectedBrowser()
+                    if (browser) openBrowserSurface(browser, 'present')
+                    else setPresenting(playFrom)
+                  }}
                 >
                   <PlayIcon className="size-3.5" />
                 </Button>
@@ -1069,7 +1086,10 @@ export function CanvasPage({
           {t('canvas.showInterface')}
         </Button>
       )}
-      <div className="absolute inset-0 overflow-hidden" style={chromeVars}>
+      <div
+        className="absolute inset-0 overflow-hidden"
+        style={{ ...chromeVars, right: sideBrowserOpen ? 'var(--browser-side-width)' : undefined }}
+      >
         {find && !presenting && !uiHidden && <FindBar mode={find} step={findStep} onClose={() => setFind(null)} />}
         <Stage onAddFrame={addFrame} insets={stageInsets} bounds={stageBounds} />
         <div

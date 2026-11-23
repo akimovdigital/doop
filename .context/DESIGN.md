@@ -213,3 +213,15 @@ density="rail"` (the group caption with its chevron) and `DashNavItem density="r
 
 - `--breakpoint-xs`: `30rem`, `--breakpoint-md`: `56.25rem` - custom additions on top of
   Tailwind's defaults.
+
+## Live Browser frame
+
+A globe identifies Browser in the tool rail, Layers and the Inspector. On the canvas, a
+28 px pill uses the surface and line tokens, small quiet IconButtons and the label text scale.
+It follows the frame's layout scale. The brand outline distinguishes selection and the wider
+brand halo marks interaction. The active Esc keycap is also a button. The browser page is
+clipped to its corner radius. The selected frame uses the normal canvas grips.
+
+Present uses a full-window page with a navigation pill and a separate exit pill. The side panel
+uses the same navigation controls where applicable and the standard panel resize handle. Both use the editor's paper and surface
+tokens. Present animates from the frame rect and respects reduced motion.

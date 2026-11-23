@@ -1348,3 +1348,27 @@ The shared font library serves public font assets with CORS so sandboxed frames 
 Migrations 0040 (agent feedback) and 0041 (custom fonts) retain their shared timestamps; their OSS
 snapshots omit the deferred Figma `integrations.refresh_token` column, as does the credential
 encryption backfill. Desktop downloads use the platform-neutral `https://doop.design/download` page.
+
+## Live Browser frames
+
+A Browser is a regular frame with empty HTML and an optional `browser` descriptor. Its
+address, device preset, zoom and appearance persist in the frame row and travel in regular
+room updates, duplicate and clipboard payloads. MCP `get_canvas` and `get_frame` expose the
+descriptor. Use `update_frame` with `browser: { url }` to navigate an existing Browser frame.
+Raster, PDF and HTML exports render a static address reference without fetching the target
+from the server. Browser frames use the same position, resize and stacking logic as HTML frames.
+
+The canvas keeps the iframe in the frame's original DOM position. Present uses a modal
+dialog and the side panel uses a manual popover. Both promote the same surface to the
+top layer. Deselecting, reordering, panning and closing the overlay leave the browsing
+context intact. Page switches and editor reloads re-create the browsing context. The
+descriptor accepts scroll coordinates for round trips, but the sandboxed iframe does not
+expose them to the editor.
+
+The renderer accepts HTTP(S) URLs only and opens them with a no-referrer policy and
+an opaque sandbox origin. This rule also covers cross-origin addresses that may
+redirect to Doop. A credential-free, timed HEAD request checks viewer-side reachability.
+Framing restrictions (CSP and X-Frame-Options) and browser network policy still apply.
+The iframe handles its own links, form input and scrolling. Editor navigation controls
+track addresses entered in Doop. Events focused inside an external document are isolated
+from the editor, including shortcuts and gesture events intercepted by the child.

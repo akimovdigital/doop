@@ -89,7 +89,7 @@ export function drawingTarget(point: Point, tool: DrawingTool): DrawingTarget | 
   return {
     canvasId: canvas.id,
     pageId: useStore.getState().activePageId,
-    frameId: tool !== 'frame' && hit && !hit.locked && !isCanvasElement(hit.html) ? hit.id : undefined,
+    frameId: tool !== 'frame' && hit && !hit.browser && !hit.locked && !isCanvasElement(hit.html) ? hit.id : undefined,
   }
 }
 

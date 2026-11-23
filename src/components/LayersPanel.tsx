@@ -1,3 +1,4 @@
+import { Globe } from 'lucide-react'
 import {
   useEffect,
   useMemo,
@@ -1154,7 +1155,7 @@ function FrameRow({
             drop={row.empty && drop === 'inside' ? undefined : drop}
             caret={<Caret open={row.open} present />}
             onCaret={onToggle}
-            icon={<FrameIcon className="size-3.5" />}
+            icon={frame.browser ? <Globe size={14} /> : <FrameIcon className="size-3.5" />}
             label={label}
             className={cn(current && !selected && 'text-ink', dragging && 'opacity-40')}
             selected={selected}
