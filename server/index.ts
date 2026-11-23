@@ -3474,7 +3474,33 @@ app.get('/api/frames/:id/screenshot.png', async (req, res) => {
         return res.status(429).json({ error: 'too many captures — wait a minute' })
       }
       const coordinate = (value: unknown) => Math.max(0, Math.min(1_000_000, Number(value) || 0))
-      const png = await captureFramePng(frame, capture, { x: coordinate(req.query.x), y: coordinate(req.query.y) })
+      let crop
+      if (req.query.crop !== undefined) {
+        const values = typeof req.query.crop === 'string' ? req.query.crop.split(',').map(Number) : []
+        const [x = -1, y = -1, width = 0, height = 0] = values
+        const scale = parseExportScale(req.query.scale)
+        if (
+          capture !== 'visible' ||
+          values.length !== 4 ||
+          values.some((value) => !Number.isInteger(value)) ||
+          x < 0 ||
+          y < 0 ||
+          width < 1 ||
+          height < 1 ||
+          Math.max(x, y, width, height) > 16_384 ||
+          !scale ||
+          scale > 2 ||
+          Math.max(width, height) * scale > 1210
+        )
+          return res.status(400).json({ error: 'invalid screenshot crop' })
+        crop = { x, y, width, height, scale }
+      }
+      const png = await captureFramePng(
+        frame,
+        capture,
+        { x: coordinate(req.query.x), y: coordinate(req.query.y) },
+        crop,
+      )
       res.set('Cache-Control', 'no-store')
       return res.type('png').send(png)
     }

@@ -1,3 +1,4 @@
+import { discardDesignCrop, MAX_PROMPT_ATTACHMENTS, readDesignCrop } from '../lib/designCrop'
 import { serializeContextPrompt, type UiElementContext } from '../../shared/uiElementContext'
 import { formatComposerContexts } from '../lib/designNotes'
 import { useStore, type ComposerSend } from '../lib/store'
@@ -80,7 +81,6 @@ export async function sendPrompt(args: {
   const contexts = args.contexts ?? (clearDraft ? draft?.contexts : undefined) ?? []
   const first = contexts.find((entry) => entry.selector)
   const cardScope = first ? { frameId: first.frameId, selector: first.selector } : scope
-  const wireText = serializeContextPrompt(args.agentText ?? formatComposerContexts(text, contexts), text, contexts)
   setSend({ canvasId, status: 'busy' })
   /* known-doomed send: no free tasks and no model account. Open the wall
      up front instead of uploading attachments only to 403 — but confirm
@@ -100,7 +100,29 @@ export async function sendPrompt(args: {
        the card carries the frame ids so the agent views them before
        designing. Known-ids include them so the camera saves its flight for
        the agent's deliverable, not the user's own screenshots. */
-    const refFrames = files.length ? await uploadImageFrames(canvasId, files, { fallbackName: 'Attached image' }) : []
+    const noteIds = [...new Set(contexts.map((context) => context.noteId))]
+    const room = Math.max(0, MAX_PROMPT_ATTACHMENTS - files.length)
+    const crops: { id: string; file: File }[] = []
+    for (const id of noteIds) {
+      if (crops.length >= room) break
+      const png = await readDesignCrop(id)
+      if (png) crops.push({ id, file: new File([png], `Design note ${crops.length + 1}.png`, { type: 'image/png' }) })
+    }
+    const allFiles = [...files, ...crops.map((crop) => crop.file)].slice(0, MAX_PROMPT_ATTACHMENTS)
+    const refFrames = allFiles.length
+      ? await uploadImageFrames(canvasId, allFiles, { fallbackName: 'Attached image' })
+      : []
+    const thumbnails = new Map<string, string>()
+    crops.forEach(({ id }, index) => {
+      const image = new DOMParser().parseFromString(refFrames[files.length + index]?.html ?? '', 'text/html')
+      const source = image.querySelector('img[data-doop-drawing="image"]')?.getAttribute('src')
+      if (source) thumbnails.set(id, source)
+    })
+    const wireText = serializeContextPrompt(
+      args.agentText ?? formatComposerContexts(text, contexts),
+      text,
+      contexts.map((context) => ({ ...context, thumbnail: thumbnails.get(context.noteId) })),
+    )
     /* the composer's pick rides on the card, so the task runs on what the
        picker beside the send button shows */
     const runner = currentRunnerPick()
@@ -125,6 +147,7 @@ export async function sendPrompt(args: {
       canvasId,
       refFrames.map((f) => f.id),
     )
+    for (const id of noteIds) void discardDesignCrop(id)
     if (clearDraft && useStore.getState().composerDrafts[canvasId] === draft) store.setComposerDraft(canvasId, '', [])
     const sent: ComposerSend = { canvasId, status: 'sent', at: Date.now() }
     setSend(sent)

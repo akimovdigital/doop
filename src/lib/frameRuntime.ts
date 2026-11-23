@@ -501,7 +501,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
      pixels (tainted) or a blob cannot be read, so the parent lets the
      server render instead. Live and clone are walked by the same
      selectors, so they pair by index. */
-  function exportSnapshot() {
+  function exportSnapshot(textEdit) {
     var live = document.documentElement
     var root = live.cloneNode(true)
     var reads = []
@@ -559,6 +559,10 @@ export function frameRuntime(browse?: { token: string; url: string }) {
        add its loader to the live document during the reads); the reads only
        set src on image clones the cleaning leaves alone */
     cleanClone(root)
+    if (textEdit && typeof textEdit.selector === 'string' && typeof textEdit.after === 'string') {
+      var textNode = root.matches(textEdit.selector) ? root : root.querySelector(textEdit.selector)
+      if (textNode && textNode.textContent === textEdit.before) textNode.textContent = textEdit.after
+    }
     return Promise.all(reads).then(
       function () { return '<!doctype html>\\n' + root.outerHTML },
       function () { return null },
@@ -2330,6 +2334,18 @@ export function frameRuntime(browse?: { token: string; url: string }) {
         scrollX: scrollX, scrollY: scrollY
       }, '*')
     }
+    if (d.type === 'doop:annotation-crop') {
+      var cropRects = Array.isArray(d.selectors) ? d.selectors.flatMap(function (selector) {
+        try {
+          var node = document.querySelector(selector)
+          return node ? [designRect(node)] : []
+        } catch (e) { return [] }
+      }) : []
+      postToEditor({ type: 'doop:annotation-crop-result', reqId: d.reqId, metrics: {
+        width: innerWidth - 2 * bleed, height: innerHeight - 2 * bleed,
+        scrollX: scrollX, scrollY: scrollY, dpr: devicePixelRatio, rects: cropRects
+      } })
+    }
     if (d.type === 'doop:snapshot') {
       /* the document as it stands, script-made elements included, for an
          export of what the person sees */
@@ -2337,7 +2353,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
         parent.postMessage({ type: 'doop:snapshot-result', reqId: d.reqId, html: html }, '*')
       }
       try {
-        exportSnapshot().then(answer, function () { answer(null) })
+        exportSnapshot(d.textEdit).then(answer, function () { answer(null) })
       } catch (e) {
         answer(null)
       }

@@ -22,6 +22,9 @@ const contextSchema = z.object({
   number: z.number(),
   frameId: z.string(),
   frameName: z.string(),
+  thumbnail: z.string().optional(),
+  changes: z.array(z.string()).optional(),
+  source: z.literal('browser').optional(),
 })
 
 export type UiElementContext = z.infer<typeof contextSchema>

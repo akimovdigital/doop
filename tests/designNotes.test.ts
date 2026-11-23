@@ -4,6 +4,7 @@ import {
   designEscape,
   designNotePrompt,
   designNotesReducer,
+  formatComposerContexts,
   formatDesignNotes,
   readDesignNotes,
   writeDesignNotes,
@@ -83,6 +84,28 @@ describe('design notes', () => {
       '<button> text edit: change text to “Read↵more” (was “Open now”)\n\nElement context:\n' + context,
     )
   })
+  it('keeps text and CSS changes in removable chips through serialization', () => {
+    const edited: DesignNote = {
+      ...note,
+      source: 'browser',
+      comment: '',
+      textEdit: { before: 'Open now', after: 'Read more' },
+      cssEdits: [{ prop: 'color', before: 'red', after: 'blue' }],
+    }
+    const { contexts, text } = designNotePrompt([edited])
+    const agentText = formatComposerContexts(text, contexts)
+    const wire = serializeContextPrompt(agentText, text, contexts)
+    const decoded = readContextPrompt(wire)
+    expect(decoded.text).toBe('')
+    expect(decoded.contexts[0]?.changes).toEqual([
+      'change text to “Read more” (was “Open now”)',
+      'CSS edits — color: red → blue',
+    ])
+    expect(agentPromptText(wire)).toContain(decoded.contexts[0]!.changes!.join('\n'))
+    expect(agentText).toContain(`On ${note.pageUrl}:\n[1] DOM Path: #go`)
+    expect(formatComposerContexts(text, [])).toBe('')
+  })
+
   it('keeps late changes inside the text edit excerpt', () => {
     const shared = 'a'.repeat(180)
     const edit: DesignNote = {

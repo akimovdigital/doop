@@ -1,3 +1,4 @@
+import { MAX_PROMPT_ATTACHMENTS } from '../lib/designCrop'
 import { ComposerContextChips } from './ContextChip'
 import { sendPrompt } from './sendPrompt'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
@@ -31,7 +32,6 @@ import { cn } from '@/lib/utils'
  * carries their ids so the agent looks at them before designing.
  */
 
-const MAX_ATTACHMENTS = 4
 /** the scope chip's label is cut here so a long text node never eats the row */
 const MAX_SCOPE_LABEL = 24
 /** the field grows with the draft up to this many lines, then scrolls */
@@ -158,9 +158,9 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
     if (!images.length) return
     const oversize = images.find((f) => f.size > MAX_ATTACHMENT_BYTES)
     const fitting = images.filter((f) => f.size <= MAX_ATTACHMENT_BYTES)
-    const room = MAX_ATTACHMENTS - attachments.length
+    const room = MAX_PROMPT_ATTACHMENTS - attachments.length
     if (oversize) showError(t('panels.promptTooBig', { name: oversize.name }))
-    else if (fitting.length > room) showError(t('panels.promptTooMany', { count: MAX_ATTACHMENTS }))
+    else if (fitting.length > room) showError(t('panels.promptTooMany', { count: MAX_PROMPT_ATTACHMENTS }))
     const ok = fitting.slice(0, Math.max(0, room))
     if (ok.length)
       setAttachments((cur) => [...cur, ...ok.map((file) => ({ file, preview: URL.createObjectURL(file) }))])

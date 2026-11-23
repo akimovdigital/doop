@@ -1,9 +1,41 @@
+import { useEffect, useState } from 'react'
+import { discardDesignCrop, readDesignCrop } from '../lib/designCrop'
 import { useT } from '@/lib/i18n'
 import type { UiElementContext } from '../../shared/uiElementContext'
 import { useStore, type ComposerDraft } from '../lib/store'
 import { Button } from './ui/button'
 import { XIcon } from './ui/icons'
 import { Tooltip } from './ui/tooltip'
+
+function safeThumbnail(value: string | undefined) {
+  if (!value) return
+  try {
+    const url = new URL(value, location.href)
+    if (url.origin === location.origin && url.pathname.startsWith('/a/')) return url.href
+  } catch {
+    // Only use stored URLs that point at a Doop asset on this origin.
+  }
+}
+
+function useThumbnail(context: UiElementContext, composer: boolean) {
+  const [local, setLocal] = useState<{ id: string; url: string }>()
+  const id = context.noteId
+  useEffect(() => {
+    if (!composer) return
+    let current = true
+    let url: string | undefined
+    void readDesignCrop(id).then((blob) => {
+      if (!current || !blob) return
+      url = URL.createObjectURL(blob)
+      setLocal({ id, url })
+    })
+    return () => {
+      current = false
+      if (url) URL.revokeObjectURL(url)
+    }
+  }, [id, composer])
+  return composer && local?.id === id ? local.url : safeThumbnail(context.thumbnail)
+}
 
 export function ContextChip({
   context,
@@ -16,6 +48,7 @@ export function ContextChip({
 }) {
   const t = useT()
   const { width, height } = context.rect
+  const thumbnail = useThumbnail(context, !!onRemove)
   return (
     <span
       data-context-chip={context.kind}
@@ -27,10 +60,23 @@ export function ContextChip({
             {context.component && <span className="block">{context.component}</span>}
             {context.selector && <span className="block">{context.selector}</span>}
             {Math.round(width)} × {Math.round(height)} px
+            {context.changes?.map((change) => (
+              <span key={change} className="block">
+                {change}
+              </span>
+            ))}
           </span>
         }
       >
         <span tabIndex={0} className="max-w-56 truncate py-0.5">
+          {thumbnail && (
+            <img
+              data-context-thumbnail=""
+              src={thumbnail}
+              alt=""
+              className="mr-1 inline-block h-4 w-6 rounded-row object-cover"
+            />
+          )}
           {context.label}
         </span>
       </Tooltip>
@@ -88,6 +134,9 @@ export function ComposerContextChips({
     const store = useStore.getState()
     const current = store.composerDrafts[canvasId]
     if (!current) return
+    const removed = current.contexts[index]
+    if (removed && current.contexts.filter((item) => item.noteId === removed.noteId).length === 1)
+      void discardDesignCrop(removed.noteId)
     store.setComposerDraft(
       canvasId,
       current.text,

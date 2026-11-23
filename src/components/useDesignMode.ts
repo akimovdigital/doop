@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { captureDesignCrop, discardDesignCrop } from '../lib/designCrop'
 import type { CardScope, Frame } from '../../shared/types'
 import type { ComponentDef } from '../../shared/components'
 import { constrainMarkup, markupPath, undoMarkup, type MarkupStroke, type MarkupTool } from '../lib/designMarkup'
@@ -7,7 +8,6 @@ import {
   designEscape,
   designNotesReducer,
   emptyDesignNotes,
-  designDraftText,
   designNotePrompt,
   noteContexts,
   noteHtml,
@@ -307,16 +307,38 @@ export function useDesignMode({
     return first && { frameId: note.frameId, selector: first.selector }
   }
 
+  function capture(note: DesignNote) {
+    const win = getWindow()
+    if (win && frame && frame.id === note.frameId) return captureDesignCrop(win, frame, note)
+  }
+
   function draftToChat(value: Draft) {
     if (!frame || !allowed) return
-    const note = asNote(value, value.comment.trim())
-    const store = useStore.getState()
-    const previous = store.composerDrafts[canvasId!]
-    const text = [previous?.text, designDraftText(note)].filter(Boolean).join('\n\n')
-    store.setComposerDraft(canvasId!, text, [...(previous?.contexts ?? []), ...noteContexts(note)])
-    if (value.id && value.textEdit && note.status === 'pending') dispatch({ type: 'remove', ids: [value.id] })
-    exit()
-    onDraft({ scope: scopeOf(note), label: note.elements[0]?.label })
+    const note = asNote({ ...value, id: undefined }, value.comment.trim())
+    const win = getWindow()
+    const sequence = ++pickSequence.current
+    const captureReady = capture(note)
+    function openChat() {
+      if (sequence !== pickSequence.current || getWindow() !== win) {
+        void discardDesignCrop(note.id)
+        return
+      }
+      const store = useStore.getState()
+      const previous = store.composerDrafts[canvasId!]
+      const text = [previous?.text, note.comment].filter(Boolean).join('\n\n')
+      store.setComposerDraft(canvasId!, text, [...(previous?.contexts ?? []), ...noteContexts(note)])
+      if (
+        value.id &&
+        value.textEdit &&
+        savedFor(canvasId).notes.some((item) => item.id === value.id && item.status === 'pending')
+      )
+        deleteNote(value.id)
+      exit()
+      onDraft({ scope: scopeOf(note), label: note.elements[0]?.label })
+    }
+    // Exiting a browser frame replaces its proxy iframe. Wait for its live capture inputs.
+    if (source === 'browser' && captureReady) void captureReady.then(openChat)
+    else openChat()
   }
 
   async function startTextEdit(at: DesignPoint) {
@@ -354,10 +376,16 @@ export function useDesignMode({
     const element = existing?.elements[0] ?? { ...detail, label: label(detail), htmlExcerpt: noteHtml(detail) }
     const value = { id: existing?.id, elements: [element], comment: existing?.comment ?? '', textEdit }
     closeDraft()
-    if (textEdit.before === after && existing) dispatch({ type: 'remove', ids: [existing.id] })
-    else if (mode === 'chat') draftToChat(value)
-    else if (existing) dispatch({ type: 'update', id: existing.id, changes: { textEdit } })
-    else dispatch({ type: 'add', note: asNote(value, '') })
+    if (textEdit.before === after && existing) {
+      deleteNote(existing.id)
+    } else if (mode === 'chat') {
+      draftToChat(value)
+    } else {
+      const note = asNote(value, value.comment)
+      void capture(note)
+      if (existing) dispatch({ type: 'update', id: existing.id, changes: { textEdit } })
+      else dispatch({ type: 'add', note })
+    }
   }
 
   useEffect(() => {
@@ -625,6 +653,7 @@ export function useDesignMode({
 
   function deleteNote(id: string) {
     dispatch({ type: 'remove', ids: [id] })
+    void discardDesignCrop(id)
     if (draft?.id === id) closeDraft()
   }
 
@@ -659,6 +688,7 @@ export function useDesignMode({
     )
       return
     const note = asNote(draft, draft.comment.trim())
+    void capture(note)
     if (draft.id) {
       dispatch({
         type: 'update',
@@ -860,6 +890,7 @@ export function useDesignMode({
     clearPending: () => {
       const ids = saved.notes.filter((note) => note.status === 'pending').map((note) => note.id)
       if (draft?.id && ids.includes(draft.id)) closeDraft()
+      for (const id of ids) void discardDesignCrop(id)
       dispatch({ type: 'remove', ids })
     },
     resolve: (id: string) => dispatch({ type: 'update', id, changes: { status: 'resolved', resolvedAt: Date.now() } }),
