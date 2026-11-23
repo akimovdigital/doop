@@ -259,18 +259,36 @@ export function finishFrameSettle(win: Window, reqId: number) {
   finishRequest(win, 'doop:settle-result', reqId, { type: 'doop:settle-result', reqId })
 }
 
-export function registerFrameWindow(frameId: string, win: Window) {
+const pausedFrameAnimations = new Set<string>()
+const frameElements = new Map<string, HTMLIFrameElement>()
+
+/** The canvas owns the policy. Remember it across a deferred runtime boot. */
+export function setFrameAnimationsPaused(frameId: string, paused: boolean) {
+  if (paused) pausedFrameAnimations.add(frameId)
+  else pausedFrameAnimations.delete(frameId)
+  frameElements.get(frameId)?.toggleAttribute('data-frame-animation-paused', paused)
+  windows.get(frameId)?.postMessage({ type: 'doop:pause-animations', paused }, '*')
+}
+
+export function forgetFrameAnimationPolicy(frameId: string) {
+  pausedFrameAnimations.delete(frameId)
+}
+
+export function registerFrameWindow(frameId: string, win: Window, iframe?: HTMLIFrameElement) {
   const old = windows.get(frameId)
   if (old) frameByWindow.delete(old)
   windows.set(frameId, win)
   frameByWindow.set(win, frameId)
   if (outlines) win.postMessage({ type: 'doop:outlines', on: true }, '*')
+  if (iframe) frameElements.set(frameId, iframe)
+  if (pausedFrameAnimations.has(frameId)) setFrameAnimationsPaused(frameId, true)
   changeListeners.get(frameId)?.forEach((cb) => cb())
 }
 
 export function unregisterFrameWindow(frameId: string, win: Window) {
   if (windows.get(frameId) !== win) return
   windows.delete(frameId)
+  frameElements.delete(frameId)
   frameByWindow.delete(win)
   shownDocuments.delete(frameId)
   initialDocuments.delete(frameId)

@@ -1,3 +1,4 @@
+import { FRAME_ANIMATION_RUNTIME } from './frameAnimationRuntime'
 import { FRAME_REPLAY_RUNTIME } from './frameReplayRuntime'
 import { FRAME_DROP_RUNTIME } from './frameDropRuntime'
 import { FRAME_PROTO_RUNTIME } from './frameProtoRuntime'
@@ -26,6 +27,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
   ${FRAME_REPLAY_RUNTIME}
   ${FRAME_DROP_RUNTIME}
   ${FRAME_PROTO_RUNTIME}
+  ${FRAME_ANIMATION_RUNTIME}
   /* horizontal overscroll inside a frame must not chain to the parent page,
      where the browser turns it into a history back/forward swipe. A frame
      is an artboard, so it never wears a scrollbar either (its content still
@@ -548,7 +550,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
     }
     var adopted = document.adoptedStyleSheets || []
     for (var t = 0; t < adopted.length; t++) {
-      if (adopted[t] === vSheet || adopted[t] === vOutlineSheet || adopted[t] === vCursorSheet || adopted[t] === bleedSheet || adopted[t] === stillSheet) continue // the runtime's own
+      if (adopted[t] === vSheet || adopted[t] === vOutlineSheet || adopted[t] === vCursorSheet || adopted[t] === bleedSheet || adopted[t] === stillSheet || adopted[t] === animationSheet) continue // the runtime's own
       var adoptedText = rulesText(adopted[t])
       if (adoptedText === null) continue
       var adoptedStyle = document.createElement('style')
@@ -2131,6 +2133,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
     if (d.type === 'doop:root-fill') {
       parent.postMessage({ type: 'doop:root-fill-result', reqId: d.reqId, fill: rootFill() }, '*')
     }
+    if (d.type === 'doop:pause-animations') setAnimationsPaused(d.paused === true)
     if (d.type === 'doop:outlines') setOutlines(d.on === true)
     if (d.type === 'doop:bleed' && typeof d.px === 'number') setBleed(d.px)
     if (d.type === 'doop:computed' && Array.isArray(d.properties)) {

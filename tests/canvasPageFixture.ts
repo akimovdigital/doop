@@ -9,6 +9,7 @@ declare global {
       /** the page list as the room would send it after someone's edit */
       setPages: (pages: CanvasPageInfo[]) => void
       camera: () => { zoom: number }
+      select: (id: string | null) => void
       setCamera: (viewport: { x: number; y: number; zoom: number }) => void
       componentTypes: { stage: unknown; frame: unknown }
     }

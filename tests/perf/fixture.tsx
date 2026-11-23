@@ -78,15 +78,30 @@ function recordFrames() {
   return { times, stop: () => cancelAnimationFrame(handle) }
 }
 
+function liveBudget() {
+  return Number(document.querySelector('[data-live-frame-budget]')?.getAttribute('data-live-frame-budget')) || undefined
+}
+
+function animationAllowedDocuments() {
+  return [...document.querySelectorAll('iframe[data-doop-frame]:not([data-frame-animation-paused])')].filter(
+    (iframe) => {
+      const id = iframe.closest('[data-doop-frame-shell]')?.getAttribute('data-doop-frame-shell')
+      return !!id && hasFrameDocument(id)
+    },
+  ).length
+}
+
 async function waitGeneratedReady(scene: ReturnType<typeof makeScene>) {
   const until = performance.now() + 23_000
   while (performance.now() < until) {
     const counts = liveDocuments()
+    const budget = liveBudget()
+    const expected = Math.min(budget ?? Infinity, scene.live)
     if (
       document.querySelectorAll('[data-doop-frame-shell]').length === scene.frames.length &&
-      counts.mounted === scene.live &&
-      counts.ready === scene.live &&
-      scene.frames.slice(0, scene.live).every((frame) => hasFrameDocument(frame.id))
+      counts.mounted === expected &&
+      counts.ready === expected &&
+      (budget !== undefined || scene.frames.slice(0, scene.live).every((frame) => hasFrameDocument(frame.id)))
     ) {
       await nextFrame()
       await nextFrame()
@@ -95,8 +110,9 @@ async function waitGeneratedReady(scene: ReturnType<typeof makeScene>) {
     await sleep(30)
   }
   const stage = document.querySelector('.stage')
+  const expected = Math.min(liveBudget() ?? Infinity, scene.live)
   throw new Error(
-    `Expected ${scene.frames.length} shells and ${scene.live} live documents; found ${document.querySelectorAll('[data-doop-frame-shell]').length} shells and ${JSON.stringify(liveDocuments())} at camera ${JSON.stringify(harness.getCamera())}, stage ${stage?.clientWidth}×${stage?.clientHeight}`,
+    `Expected ${scene.frames.length} shells and ${expected} live documents; found ${document.querySelectorAll('[data-doop-frame-shell]').length} shells and ${JSON.stringify(liveDocuments())} at camera ${JSON.stringify(harness.getCamera())}, stage ${stage?.clientWidth}×${stage?.clientHeight}`,
   )
 }
 
@@ -275,12 +291,16 @@ function prepareGesture(scenario: Scenario, scene: Scene, duration: number) {
 async function measureSettle(scenario: 'zoom' | 'zoom-wide'): Promise<Sample['settle']> {
   const warm = scenario === 'zoom'
   const world = document.querySelector<HTMLElement>('.world')!
-  const iframe = world.querySelector<HTMLIFrameElement>('[data-doop-frame-shell="f0"] iframe')!
-  if (!iframe) throw new Error('Settle probe requires the first live iframe')
   const target = warm ? 1.5 : 2
   const from = warm ? 2 : 0.7
   harness.setCamera({ x: 50, y: 50, zoom: from })
   await sleep(600)
+  // The overview can spend all its slots elsewhere. Let admission settle
+  // at the probe's starting camera before measuring the same iframe.
+  const until = performance.now() + 6500
+  while (!hasFrameDocument('f0') && performance.now() < until) await sleep(25)
+  const iframe = world.querySelector<HTMLIFrameElement>('[data-doop-frame-shell="f0"] iframe')
+  if (!iframe || !hasFrameDocument('f0')) throw new Error('Settle probe requires the first live iframe')
   for (let step = 1; step < 8; step++) {
     harness.setCamera({ x: 50, y: 50, zoom: from + ((target - from) * step) / 8 })
     await nextFrame()
@@ -359,6 +379,7 @@ async function run(): Promise<Sample> {
   createRoot(document.getElementById('root')!).render(tree)
   const initialLive = await waitReady(scene, 'after opening')
   const openReadyMs = real ? performance.now() : undefined
+  const budget = liveBudget()
 
   const sceneMeta = (expectedLive: number): Sample['scene'] =>
     'seed' in scene
@@ -370,6 +391,7 @@ async function run(): Promise<Sample> {
     phase('sampling open counters')
     const openMs = openReadyMs ?? performance.now()
     const counts = liveDocuments()
+    const animationAllowed = animationAllowedDocuments()
     endOpenFrames.stop()
     const stats = intervalStats(endOpenFrames.times)
     const commits = { ...harness.commits }
@@ -379,6 +401,7 @@ async function run(): Promise<Sample> {
       scenario,
       scene: sceneMeta(initialLive),
       browser,
+      liveBudget: budget,
       elapsedMs: openMs,
       openMs,
       frames: stats,
@@ -394,13 +417,14 @@ async function run(): Promise<Sample> {
       drag: null,
       commits,
       live: { before: counts, after: counts },
+      animationAllowed: { before: animationAllowed, after: animationAllowed },
       heapBytes: heap(),
       memory: { before, after },
     }
   }
 
   const cameraGesture = scenario === 'pan' || scenario === 'zoom' || scenario === 'zoom-wide'
-  if (cameraGesture && !real) await warmSnapshots(initialLive)
+  if (cameraGesture && !real) await warmSnapshots(Math.min(budget ?? Infinity, initialLive))
   phase('warm-up gesture')
   const warm = prepareGesture(scenario, scene, 900)
   warm.select()
@@ -424,6 +448,7 @@ async function run(): Promise<Sample> {
   const startCamera = harness.getCamera()
   const observed = [startCamera]
   const liveBefore = liveDocuments()
+  const animationAllowedBefore = animationAllowedDocuments()
   harness.commits.count = 0
   harness.commits.actualDuration = 0
   const recordRealSettle = real && cameraGesture
@@ -445,6 +470,7 @@ async function run(): Promise<Sample> {
   const actualCamera = cameraRange(observed)
   const commits = { ...harness.commits }
   const liveAfter = liveDocuments()
+  const animationAllowedAfter = animationAllowedDocuments()
   phase('sampling gesture counters')
   const heapBytes = heap()
   let settle: Sample['settle']
@@ -470,6 +496,7 @@ async function run(): Promise<Sample> {
     scenario,
     scene: sceneMeta(expectedLive),
     browser,
+    liveBudget: budget,
     ...(settle ? { settle } : {}),
     elapsedMs,
     openMs: null,
@@ -479,6 +506,7 @@ async function run(): Promise<Sample> {
     camera: { actual: actualCamera, expected: gesture.expected, final, expectedFinal: gesture.expectedFinal },
     commits,
     live: { before: liveBefore, after: liveAfter },
+    animationAllowed: { before: animationAllowedBefore, after: animationAllowedAfter },
     heapBytes,
     snapshots,
     ...(snapshotDiagnostics ? { snapshotDiagnostics } : {}),

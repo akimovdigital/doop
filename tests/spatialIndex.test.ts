@@ -40,6 +40,23 @@ function makeFrames(count: number) {
 }
 
 describe('page frame spatial index', () => {
+  it('looks up a far live frame by id and drops it when hidden or moved to another page', () => {
+    const { canvas } = makeFrames(5)
+    const frame = canvas.frames[1]!
+    const index = new SpatialIndex().update(canvas)
+    expect(index.get('home', frame.id)).toBe(frame)
+    expect(index.get('page-2', frame.id)).toBeUndefined()
+
+    const moved = { ...frame, x: 50_000, pageId: 'page-2' }
+    index.update({ ...canvas, frames: [moved] })
+    expect(index.intersect('page-2', { x: 0, y: 0, width: 1000, height: 1000 })).toEqual([])
+    expect(index.get('page-2', frame.id)).toBe(moved)
+    expect(index.get('home', frame.id)).toBeUndefined()
+
+    index.update({ ...canvas, frames: [{ ...moved, hidden: true }] })
+    expect(index.get('page-2', frame.id)).toBeUndefined()
+  })
+
   it('finds the source frame under an in-frame drawing drag after the canvas is seeded', () => {
     const source: Frame = {
       id: 'source',
