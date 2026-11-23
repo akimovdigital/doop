@@ -14,10 +14,10 @@ export function memoryDelta(sample: Sample) {
   }
 }
 
-export function rejectionReasons(sample: Sample, maxSwapins: number): string[] {
+export function rejectionReasons(sample: Sample, maxSwapins: number, maxSwapouts = 0): string[] {
   const reasons: string[] = []
   const swap = memoryDelta(sample)
-  if (swap.Swapouts > 0) reasons.push(`Swapouts grew by ${swap.Swapouts} pages`)
+  if (swap.Swapouts > maxSwapouts) reasons.push(`Swapouts grew by ${swap.Swapouts} pages`)
   if (swap.Swapins > maxSwapins) reasons.push(`Swapins grew by ${swap.Swapins} pages (limit ${maxSwapins})`)
   if (swap.Swapins < 0 || swap.Swapouts < 0) reasons.push('Swap counters went backwards')
 
@@ -36,7 +36,10 @@ export function rejectionReasons(sample: Sample, maxSwapins: number): string[] {
     }
   }
   for (const [boundary, counts] of Object.entries(live)) {
-    if (counts.ready !== scene.expectedLive || counts.mounted !== scene.expectedLive) {
+    if ('sha256' in scene) {
+      if (counts.mounted !== counts.ready)
+        reasons.push(`Live documents ${boundary}: ${counts.mounted} mounted, ${counts.ready} ready`)
+    } else if (counts.ready !== scene.expectedLive || counts.mounted !== scene.expectedLive) {
       reasons.push(`Live documents ${boundary}: ${counts.mounted}/${counts.ready}, expected ${scene.expectedLive}`)
     }
   }
@@ -51,13 +54,20 @@ export function rejectionReasons(sample: Sample, maxSwapins: number): string[] {
 
 export function pairRejectionReasons(a: Sample, b: Sample) {
   const reasons: string[] = []
-  if (a.live.before.ready !== b.live.before.ready || a.live.after.ready !== b.live.after.ready) {
+  const real = 'sha256' in a.scene || 'sha256' in b.scene
+  if (!real && (a.live.before.ready !== b.live.before.ready || a.live.after.ready !== b.live.after.ready)) {
     reasons.push('A/B ready-document counts differ')
   }
+  const sameScene =
+    'sha256' in a.scene && 'sha256' in b.scene
+      ? a.scene.sha256 === b.scene.sha256
+      : 'seed' in a.scene &&
+        'seed' in b.scene &&
+        a.scene.seed === b.scene.seed &&
+        a.scene.expectedLive === b.scene.expectedLive
   if (
-    a.scene.seed !== b.scene.seed ||
+    !sameScene ||
     a.scene.frames !== b.scene.frames ||
-    a.scene.expectedLive !== b.scene.expectedLive ||
     a.scenario !== b.scenario ||
     a.plannedInputs !== b.plannedInputs
   ) {

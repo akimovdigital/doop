@@ -5,6 +5,7 @@ import { access, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
+import { makeRealScene } from '../../tests/perf/scene'
 import type { Memory } from '../../tests/perf/protocol'
 
 export const exec = promisify(execFile)
@@ -120,7 +121,16 @@ const contentTypes: Record<string, string> = {
 const csp =
   "default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; worker-src 'self' blob:"
 
-export async function serve(dir: string) {
+export async function loadScene(path: string) {
+  const data = await readFile(path)
+  const sha256 = createHash('sha256').update(data).digest('hex')
+  const { frames, source } = makeRealScene(JSON.parse(data.toString('utf8')), sha256)
+  return { data, sha256, source, ids: new Set(frames.map((frame) => frame.id)) }
+}
+type ExportedScene = Awaited<ReturnType<typeof loadScene>>
+const realCsp = csp.replace(/(?:style|img|font)-src [^;]+/g, '$& https:') + "; media-src 'self' https:"
+
+export async function serve(dir: string, scene?: ExportedScene) {
   let navigationMemory: Memory | undefined
   const root = await realpath(dir)
   const server = createServer((req, res) => {
@@ -137,7 +147,16 @@ export async function serve(dir: string) {
         res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(memory))
         return
       }
-      if (req.method === 'PATCH' && /^\/api\/frames\/f\d+$/.test(path)) {
+      if (scene && path === '/__scene.json' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'X-Scene-SHA256': scene.sha256 }).end(scene.data)
+        return
+      }
+      if (
+        req.method === 'PATCH' &&
+        (scene
+          ? path.startsWith('/api/frames/') && scene.ids.has(decodeURIComponent(path.slice('/api/frames/'.length)))
+          : /^\/api\/frames\/f\d+$/.test(path))
+      ) {
         req.resume()
         res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}')
         return
@@ -156,7 +175,7 @@ export async function serve(dir: string) {
       res
         .writeHead(200, {
           'Content-Type': contentTypes[file.split('.').at(-1) ?? ''] ?? 'application/octet-stream',
-          'Content-Security-Policy': csp,
+          'Content-Security-Policy': scene ? realCsp : csp,
         })
         .end(data)
     })().catch((error: unknown) => {

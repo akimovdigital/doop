@@ -45,7 +45,23 @@ final class Probe: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             name: NSWorkspace.didActivateApplicationNotification, object: nil)
         panel.orderBack(nil)
         Timer.scheduledTimer(withTimeInterval: timeout, repeats: false) { _ in
-            self.fail("WKWebView probe timed out")
+            guard URLComponents(url: self.url, resolvingAgainstBaseURL: false)?.queryItems?
+                .contains(where: { $0.name == "scene" && $0.value == "real" }) == true else {
+                self.fail("WKWebView probe timed out")
+            }
+            view.evaluateJavaScript("""
+                JSON.stringify({
+                    phase: window.perfBenchPhase ?? document.readyState,
+                    shells: document.querySelectorAll('[data-doop-frame-shell]').length,
+                    live: window.perfBench?.liveDocuments(),
+                    camera: window.perfBench?.getCamera()
+                })
+                """) { value, error in
+                self.fail("WKWebView real scene timed out: \(value ?? error?.localizedDescription ?? "no renderer state")")
+            }
+            Timer.scheduledTimer(withTimeInterval: 1, repeats: false) { _ in
+                self.fail("WKWebView real scene timed out; renderer did not return state")
+            }
         }
         view.load(URLRequest(url: url))
     }
@@ -69,6 +85,15 @@ final class Probe: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 const errors = window.perfBenchLoadErrors?.join('; ');
                 throw new Error('Performance fixture did not initialize at ' + location.href +
                     ' (' + document.readyState + '): ' + (errors || document.title || document.body?.textContent?.slice(0, 500)));
+            }
+            if (new URLSearchParams(location.search).get('scene') === 'real') {
+                try {
+                    return JSON.stringify(await window.perfBenchResult);
+                } catch (error) {
+                    return JSON.stringify({
+                        benchError: (window.perfBenchPhase || 'starting fixture') + ': ' + String(error)
+                    });
+                }
             }
             return JSON.stringify(await window.perfBenchResult);
             """, arguments: [:], in: nil, in: .page) { result in

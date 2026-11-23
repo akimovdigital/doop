@@ -12,15 +12,16 @@ import {
   cameraRange,
   defaultDuration,
   initialCamera,
+  realReadyTimeout,
   scenarios,
   type Memory,
   type Sample,
   type Scenario,
 } from './protocol'
-import { canvasId, framePresets, makeScene } from './scene'
+import { canvasId, framePresets, makeRealScene, makeScene } from './scene'
 import '../../src/styles.css'
 
-type Scene = ReturnType<typeof makeScene>
+type Scene = ReturnType<typeof makeScene> | ReturnType<typeof makeRealScene>
 const harness = {
   seed: ({ frames }: Scene) =>
     useStore
@@ -41,6 +42,7 @@ declare global {
   interface Window {
     perfBench: typeof harness
     perfBenchResult: Promise<Sample>
+    perfBenchPhase?: string
   }
 }
 window.perfBench = harness
@@ -52,6 +54,7 @@ const recordCommit: ProfilerOnRenderCallback = (_id, _phase, actualDuration) => 
 
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms))
 const nextFrame = () => new Promise<number>((resolve) => requestAnimationFrame(resolve))
+const settleWindowMs = 600
 
 function FixtureCamera({ viewport }: { viewport: Viewport }) {
   // Stage fits the page in its layout effect. Run after it, before admission's first rAF.
@@ -72,13 +75,10 @@ function recordFrames() {
     times.push(time)
     handle = requestAnimationFrame(tick)
   }
-  return () => {
-    cancelAnimationFrame(handle)
-    return intervalStats(times)
-  }
+  return { times, stop: () => cancelAnimationFrame(handle) }
 }
 
-async function waitReady(scene: Scene) {
+async function waitGeneratedReady(scene: ReturnType<typeof makeScene>) {
   const until = performance.now() + 23_000
   while (performance.now() < until) {
     const counts = liveDocuments()
@@ -114,10 +114,61 @@ function snapshotStats(): NonNullable<Sample['snapshots']> {
   }
 }
 
-async function warmSnapshots(expected: number) {
-  const deadline = performance.now() + 3500
+async function warmSnapshots(expected: number, timeout = 3500) {
+  const deadline = performance.now() + timeout
   while (document.querySelectorAll('[data-frame-snapshot-ready]').length < expected && performance.now() < deadline)
     await sleep(25)
+}
+
+const realSnapshotTimeout = 8_000
+
+async function waitReady(scene: Scene, phase: string) {
+  if ('seed' in scene) {
+    await waitGeneratedReady(scene)
+    return scene.live
+  }
+
+  const until = performance.now() + realReadyTimeout
+  let stableSince = performance.now()
+  let previous: HTMLIFrameElement[] | null = null
+  let shells = 0
+  let counts = liveDocuments()
+  let pending: (string | null)[] = []
+  while (performance.now() < until) {
+    const now = performance.now()
+    shells = document.querySelectorAll('[data-doop-frame-shell]').length
+    const documents = Array.from(document.querySelectorAll<HTMLIFrameElement>('iframe[data-doop-frame]'))
+    pending = documents
+      .map((iframe) => iframe.closest('[data-doop-frame-shell]')?.getAttribute('data-doop-frame-shell') ?? null)
+      .filter((id) => !id || !hasFrameDocument(id))
+    counts = { mounted: documents.length, ready: documents.length - pending.length }
+    if (
+      shells !== scene.frames.length ||
+      pending.length ||
+      !previous ||
+      documents.length !== previous.length ||
+      documents.some((iframe, index) => iframe !== previous![index])
+    ) {
+      stableSince = now
+    } else if (now - stableSince >= 1500) {
+      return counts.ready
+    }
+    previous = documents
+    await sleep(50)
+  }
+  throw new Error(
+    `Real scene ${phase} did not settle within ${realReadyTimeout} ms: ${shells}/${scene.frames.length} shells, ` +
+      `${counts.mounted} mounted and ${counts.ready} ready; pending IDs: ${pending.join(', ') || 'none'}; ` +
+      `camera ${JSON.stringify(harness.getCamera())}`,
+  )
+}
+
+async function fetchScene() {
+  const response = await fetch('/__scene.json', { cache: 'no-store' })
+  if (!response.ok) throw new Error(`Scene export request failed: HTTP ${response.status}`)
+  const sha256 = response.headers.get('X-Scene-SHA256')
+  if (!sha256) throw new Error('Scene export has no SHA-256 identity')
+  return makeRealScene(await response.json(), sha256)
 }
 
 function pointer(target: EventTarget, type: string, x: number, y: number) {
@@ -147,7 +198,10 @@ function prepareGesture(scenario: Scenario, scene: Scene, duration: number) {
   const plan = trajectory(scenario, duration, initial, { x: client.x - box.left, y: client.y - box.top })
   const dragCount = scenario === 'drag10' ? 10 : scenario === 'drag1' ? 1 : 0
   const originals = scene.frames.slice(0, dragCount)
-  const title = dragCount ? stage.querySelector('[data-doop-frame-shell="f0"] [data-frame-title]') : null
+  if (originals.length !== dragCount) throw new Error(`Drag needs ${dragCount} frames; export has ${originals.length}`)
+  const title = dragCount
+    ? stage.querySelector(`[data-doop-frame-shell="${CSS.escape(originals[0]!.id)}"] [data-frame-title]`)
+    : null
   if (dragCount && !title) throw new Error('Drag title did not mount')
   const titleBox = title?.getBoundingClientRect()
   const origin = { x: Math.round(titleBox?.left ?? 0) + 4, y: Math.round(titleBox?.top ?? 0) + 4 }
@@ -237,7 +291,7 @@ async function measureSettle(scenario: 'zoom' | 'zoom-wide'): Promise<Sample['se
   let maxDriftPx = 0
   let deferredPeak = 0
   const times = [first]
-  while (times.at(-1)! < release + 600) {
+  while (times.at(-1)! < release + settleWindowMs) {
     times.push(await nextFrame())
     if (world.style.zoom === layout) continue
     layout = world.style.zoom
@@ -261,10 +315,19 @@ async function run(): Promise<Sample> {
   const scenario = scenarios.find((value) => value === query.get('scenario')) ?? 'zoom'
   const frames = framePresets.find((value) => value === Number(query.get('frames'))) ?? 68
   const duration = Number(query.get('duration') ?? defaultDuration)
-  const scene = makeScene(frames)
+  const real = query.get('scene') === 'real'
+  const diagnostics = query.has('diagnoseSnapshots')
+    ? (await import('./snapshotDiagnostics')).traceSnapshots()
+    : undefined
   const initial = initialCamera(scenario)
   const open = scenario === 'open'
+  const phase = (name: string) => {
+    if (real) window.perfBenchPhase = name
+  }
+  const generated = real ? null : makeScene(frames)
   const endOpenFrames = open ? recordFrames() : null
+  phase('fetching export')
+  const scene = generated ?? (await fetchScene())
   const browser = {
     userAgent: navigator.userAgent,
     width: innerWidth,
@@ -288,21 +351,30 @@ async function run(): Promise<Sample> {
       {canvas}
     </Profiler>
   )
+  phase('opening canvas')
   createRoot(document.getElementById('root')!).render(tree)
-  await waitReady(scene)
+  const initialLive = await waitReady(scene, 'after opening')
+  const openReadyMs = real ? performance.now() : undefined
 
-  const meta = { scenario, scene: { frames, expectedLive: scene.live, seed: scene.seed }, browser }
+  const sceneMeta = (expectedLive: number): Sample['scene'] =>
+    'seed' in scene
+      ? { frames, expectedLive, seed: scene.seed }
+      : { frames: scene.frames.length, expectedLive, source: scene.source, sha256: scene.sha256, openReadyMs }
   const heap = () =>
     (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? null
   if (endOpenFrames) {
-    const openMs = performance.now()
+    phase('sampling open counters')
+    const openMs = openReadyMs ?? performance.now()
     const counts = liveDocuments()
-    const stats = endOpenFrames()
+    endOpenFrames.stop()
+    const stats = intervalStats(endOpenFrames.times)
     const commits = { ...harness.commits }
     const after = await vmStat()
     const before = await vmStat(true)
     return {
-      ...meta,
+      scenario,
+      scene: sceneMeta(initialLive),
+      browser,
       elapsedMs: openMs,
       openMs,
       frames: stats,
@@ -324,15 +396,23 @@ async function run(): Promise<Sample> {
   }
 
   const cameraGesture = scenario === 'pan' || scenario === 'zoom' || scenario === 'zoom-wide'
-  if (cameraGesture) await warmSnapshots(scene.live)
+  if (cameraGesture && !real) await warmSnapshots(initialLive)
+  phase('warm-up gesture')
   const warm = prepareGesture(scenario, scene, 900)
   warm.select()
   await nextFrame()
   await warm.drive()
   warm.reset()
   await sleep(500)
-  await waitReady(scene)
+  phase('settling after warm-up')
+  const expectedLive = await waitReady(scene, 'after warm-up reset')
+  if (cameraGesture && real) {
+    phase('warming snapshots before measurement')
+    await warmSnapshots(expectedLive, realSnapshotTimeout)
+  }
   const snapshots = cameraGesture ? snapshotStats() : undefined
+  diagnostics?.beforeGesture()
+  phase('measured gesture')
   const gesture = prepareGesture(scenario, scene, duration)
   const before = await vmStat()
   const start = performance.now()
@@ -341,36 +421,68 @@ async function run(): Promise<Sample> {
   const liveBefore = liveDocuments()
   harness.commits.count = 0
   harness.commits.actualDuration = 0
-  const off = harness.watchCamera((point) => observed.push(point))
-  const endFrames = recordFrames()
+  const recordRealSettle = real && cameraGesture
+  let lastCameraUpdate: number | undefined
+  const off = harness.watchCamera((point) => {
+    observed.push(point)
+    if (recordRealSettle) lastCameraUpdate = performance.now()
+  })
+  const measuredFrames = recordFrames()
   const input = await gesture.drive()
-  const stats = endFrames()
-  off()
+  const stats = intervalStats(measuredFrames.times)
+  if (!recordRealSettle) {
+    measuredFrames.stop()
+    off()
+  }
   const elapsedMs = performance.now() - start
   const final = harness.getCamera()
+  const cameraSteps = observed.length - 1
+  const actualCamera = cameraRange(observed)
   const commits = { ...harness.commits }
   const liveAfter = liveDocuments()
+  phase('sampling gesture counters')
   const heapBytes = heap()
-  const settle = scenario === 'zoom' || scenario === 'zoom-wide' ? await measureSettle(scenario) : undefined
+  let settle: Sample['settle']
+  if (recordRealSettle) {
+    phase('sampling camera settle')
+    // Observe the actual release, including frames that arrived while drive() was finishing.
+    while (lastCameraUpdate !== undefined && measuredFrames.times.at(-1)! < lastCameraUpdate + settleWindowMs)
+      await nextFrame()
+    measuredFrames.stop()
+    off()
+    const releasedAt = lastCameraUpdate ?? Infinity
+    const windowEnd = measuredFrames.times.findIndex((time) => time >= releasedAt + settleWindowMs)
+    const settleTimes = measuredFrames.times.slice(0, windowEnd + 1).filter((time) => time >= releasedAt)
+    const { max, intervals } = intervalStats(settleTimes)
+    settle = { maxMs: max, intervals }
+  } else if (scenario === 'zoom' || scenario === 'zoom-wide') {
+    settle = await measureSettle(scenario)
+  }
   const after = await vmStat()
+  if (diagnostics) phase('diagnosing snapshots')
+  const snapshotDiagnostics = diagnostics ? await diagnostics.finish(scene.frames) : undefined
   return {
-    ...meta,
+    scenario,
+    scene: sceneMeta(expectedLive),
+    browser,
     ...(settle ? { settle } : {}),
     elapsedMs,
     openMs: null,
     frames: stats,
     ...input,
-    cameraSteps: observed.length - 1,
-    camera: { actual: cameraRange(observed), expected: gesture.expected, final, expectedFinal: gesture.expectedFinal },
+    cameraSteps,
+    camera: { actual: actualCamera, expected: gesture.expected, final, expectedFinal: gesture.expectedFinal },
     commits,
     live: { before: liveBefore, after: liveAfter },
     heapBytes,
     snapshots,
+    ...(snapshotDiagnostics ? { snapshotDiagnostics } : {}),
     memory: { before, after },
   }
 }
 
 window.perfBenchResult = run().then(async (sample) => {
+  if (window.perfBenchPhase) window.perfBenchPhase = 'painting HUD or returning sample'
   // Let the readout paint its latest sample before a driver takes a picture.
   if (new URLSearchParams(location.search).get('perfHud') === '1') {
     await sleep(300)

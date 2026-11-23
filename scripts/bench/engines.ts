@@ -56,13 +56,20 @@ async function webkit(): Promise<Driver> {
       const { stdout } = await exec(probe, [url.href, String(timeout / 1000), screenshot ?? ''], {
         timeout: timeout + 2000,
       })
-      return JSON.parse(stdout) as Sample
+      const result = JSON.parse(stdout) as Sample | { benchError: string }
+      if ('benchError' in result) throw new Error(result.benchError)
+      return result
     },
     async close() {},
   }
 }
 
-async function launchChromium(executablePath: string, headed: boolean, profile: string): Promise<Browser> {
+async function launchChromium(
+  executablePath: string,
+  headed: boolean,
+  profile: string,
+  realScene: boolean,
+): Promise<Browser> {
   const args = [
     '--no-first-run',
     '--no-default-browser-check',
@@ -74,11 +81,18 @@ async function launchChromium(executablePath: string, headed: boolean, profile: 
     '--disable-background-timer-throttling',
     '--disable-renderer-backgrounding',
     '--disable-backgrounding-occluded-windows',
-    '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',
+    ...(realScene ? [] : ['--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1']),
     '--window-size=1280,888',
   ]
   if (!headed) {
-    return puppeteer.launch({ executablePath, headless: true, userDataDir: profile, timeout: 15_000, args })
+    return puppeteer.launch({
+      executablePath,
+      headless: true,
+      userDataDir: profile,
+      timeout: 15_000,
+      args,
+      ...(realScene ? { protocolTimeout: 300_000 } : {}),
+    })
   }
   if (process.platform !== 'darwin') throw new Error('--headed requires the background macOS launcher')
   const app = executablePath.match(/^(.*\.app)\/Contents\/MacOS\//)?.[1]
@@ -105,17 +119,21 @@ async function launchChromium(executablePath: string, headed: boolean, profile: 
     const active = await readFile(join(profile, 'DevToolsActivePort'), 'utf8').catch(() => '')
     const [port, path] = active.trim().split('\n')
     if (port && path) {
-      return puppeteer.connect({ browserWSEndpoint: `ws://127.0.0.1:${port}${path}`, defaultViewport: null })
+      return puppeteer.connect({
+        browserWSEndpoint: `ws://127.0.0.1:${port}${path}`,
+        defaultViewport: null,
+        ...(realScene ? { protocolTimeout: 300_000 } : {}),
+      })
     }
     await sleep(100)
   }
   throw new Error('Background Chrome did not start its DevTools endpoint')
 }
 
-async function chromium(headed: boolean, profile: string): Promise<Driver> {
+async function chromium(headed: boolean, profile: string, realScene: boolean): Promise<Driver> {
   const path = findBrowserPath()
   if (!path) throw new Error('No local Chrome/Chromium found. Set CHROME_PATH to an executable.')
-  const browser = await launchChromium(path, headed, profile)
+  const browser = await launchChromium(path, headed, profile, realScene)
   try {
     const version = await browser.version()
     const native = headed ? await browser.target().createCDPSession() : null
@@ -186,6 +204,6 @@ async function chromium(headed: boolean, profile: string): Promise<Driver> {
   }
 }
 
-export function startEngine(engine: Engine, headed: boolean, profile: string) {
-  return engine === 'webkit' ? webkit() : chromium(headed, profile)
+export function startEngine(engine: Engine, headed: boolean, profile: string, realScene = false) {
+  return engine === 'webkit' ? webkit() : chromium(headed, profile, realScene)
 }

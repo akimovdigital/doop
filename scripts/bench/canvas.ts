@@ -1,8 +1,16 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { arch, homedir, release, tmpdir } from 'node:os'
+import { arch, homedir, loadavg, release, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import { defaultDuration, scenarios, windowSize, type Sample, type Scenario } from '../../tests/perf/protocol'
+import {
+  defaultDuration,
+  realReadyTimeout,
+  scenarios,
+  windowSize,
+  type Sample,
+  type Scenario,
+  type SceneIdentity,
+} from '../../tests/perf/protocol'
 import { framePresets } from '../../tests/perf/scene'
 import {
   median,
@@ -13,7 +21,7 @@ import {
   verdict,
 } from '../../tests/perf/judgment'
 import { startEngine, type Driver, type Engine } from './engines'
-import { serve, siteFrom, vmStat } from './site'
+import { loadScene, serve, siteFrom, vmStat } from './site'
 
 const outputRoot = join(homedir(), 'Library/Application Support/Doop Test/bench')
 const stamp = () => new Date().toISOString().replace(/[:.]/g, '-')
@@ -26,6 +34,9 @@ function options() {
       frames: { type: 'string', default: '68' },
       pairs: { type: 'string', default: '5' },
       duration: { type: 'string', default: String(defaultDuration) },
+      scene: { type: 'string' },
+      'diagnose-snapshots': { type: 'boolean' },
+      'max-swapouts': { type: 'string', default: '0' },
       'max-swapins': { type: 'string', default: '256' },
       site: { type: 'string' },
       base: { type: 'string' },
@@ -41,9 +52,10 @@ function options() {
   if (values.help) {
     console.log(
       'bun run bench:canvas [--engine webkit|chromium|both] [--scenario pan|zoom|zoom-wide|drag1|drag10|open|all]\n' +
-        '  [--frames 20|68|200] [--pairs N] [--duration ms] [--max-swapins pages] [--out dir]\n' +
+        '  [--frames 20|68|200 | --scene canvas.json] [--pairs N] [--duration ms] [--out dir]\n' +
+        '  [--max-swapins pages] [--max-swapouts pages]\n' +
         '  [--site dir | --base worktree-or-site --candidate worktree-or-site] [--noise result.json]\n' +
-        '  [--headed] [--hud] [--screenshot path.png]',
+        '  [--headed] [--hud] [--screenshot path.png] [--diagnose-snapshots]',
     )
     return null
   }
@@ -64,16 +76,23 @@ function options() {
     throw new Error('Provide either --site or both --base and --candidate')
   if (values.noise && !values.base) throw new Error('--noise requires A/B mode')
   if (values.screenshot && !values.hud) throw new Error('--screenshot requires --hud')
+  if (values['diagnose-snapshots'] && (!values.scene || scenario !== 'pan' || values.base || values.site))
+    throw new Error('--diagnose-snapshots requires a single build with --scene and --scenario pan')
   return {
     engines: (engine === 'both' ? ['webkit', 'chromium'] : [engine]) as Engine[],
     scenarios: scenario ? [scenario] : scenarios,
     frames,
     pairs: integer('pairs', values.pairs, 1, 50),
     duration: integer('duration', values.duration, 400, 30_000),
+    scene: values.scene ? resolve(values.scene) : undefined,
+    diagnoseSnapshots: !!values['diagnose-snapshots'],
+    maxSwapouts: integer('max-swapouts', values['max-swapouts'], 0, Number.MAX_SAFE_INTEGER),
     maxSwapins: integer('max-swapins', values['max-swapins'], 0, Number.MAX_SAFE_INTEGER),
     sourceA: values.base ?? values.site ?? '.',
     sourceB: values.candidate,
-    out: resolve(values.out ?? join(outputRoot, `${stamp()}-${engine}-${scenario ?? 'all'}`)),
+    out: resolve(
+      values.out ?? join(outputRoot, `${stamp()}-${engine}-${scenario ?? 'all'}${values.scene ? '-real' : ''}`),
+    ),
     headed: !!values.headed,
     hud: !!values.hud,
     screenshot: values.screenshot ? resolve(values.screenshot) : values.hud ? join(outputRoot, 'hud.png') : undefined,
@@ -85,6 +104,7 @@ type Options = NonNullable<ReturnType<typeof options>>
 type Side = 'A' | 'B'
 type Run = {
   side: Side
+  load?: { before: number[]; after: number[] }
   sample: Sample | null
   swapDelta: ReturnType<typeof memoryDelta> | null
   rejected: boolean
@@ -112,6 +132,7 @@ type Result = {
   window: typeof windowSize
   builds: { A: Build; B?: Build }
   config: Options
+  scene?: SceneIdentity
   screenshot: string | null
   series: Series[]
   errors: string[]
@@ -150,7 +171,32 @@ function summary(result: Result) {
     [
       '# Doop Canvas',
       '',
+      ...(result.scene ? [`Сцена · ${result.scene.source}`, ''] : []),
       ...rows,
+      ...(result.scene
+        ? [
+            '',
+            'Документы (готовые/смонтированные) до → после, дельта swap (чтение/запись в страницах), снимки до жеста и settle по попыткам.',
+            ...result.series.flatMap((series) =>
+              series.pairs.flatMap((pair) =>
+                pair.runs.map(({ side, sample, swapDelta, load }) => {
+                  const documents = sample?.live
+                  const counts = documents
+                    ? `${documents.before.ready}/${documents.before.mounted} → ${documents.after.ready}/${documents.after.mounted}`
+                    : '—'
+                  const swap = swapDelta ? `${swapDelta.Swapins}/${swapDelta.Swapouts}` : '—'
+                  return (
+                    `- ${series.engine} / ${series.scenario} / ${series.kind} / ${side} / ${pair.pair}.${pair.attempt} · ` +
+                    `${counts} · ${swap}` +
+                    (sample?.snapshots ? ` · снимки ${sample.snapshots.ready}` : '') +
+                    (sample?.settle ? ` · settle ${number(sample.settle.maxMs)} мс` : '') +
+                    (load ? ` · load ${load.before.map(number).join('/')} → ${load.after.map(number).join('/')}` : '')
+                  )
+                }),
+              ),
+            ),
+          ]
+        : []),
       '',
       ...result.series
         .filter((series) => series.kind !== 'single')
@@ -184,6 +230,7 @@ async function collect(
   a: URL,
   b: URL | undefined,
   kind: Series['kind'],
+  scene: SceneIdentity | undefined,
   capture: () => string | undefined,
   checkpoint: () => Promise<void>,
   register: (series: Series) => void,
@@ -201,9 +248,10 @@ async function collect(
   }
   register(series)
   const urls = { A: a, B: b ?? a }
+  const attempts = scene && settings.pairs === 1 ? 1 : 3
   for (let index = 0; index < settings.pairs; index++) {
     const sides: Side[] = kind === 'single' ? ['A'] : index % 2 ? ['B', 'A'] : ['A', 'B']
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
       const runs: Run[] = []
       for (const side of sides) {
         const url = new URL(urls[side])
@@ -211,14 +259,23 @@ async function collect(
           scenario,
           frames: String(settings.frames),
           duration: String(settings.duration),
+          ...(scene ? { scene: 'real' } : {}),
+          ...(settings.diagnoseSnapshots ? { diagnoseSnapshots: '1' } : {}),
           ...(settings.hud ? { perfHud: '1' } : {}),
         }).toString()
+        const loadBefore = scene ? loadavg() : null
+        const load = () => (loadBefore ? { load: { before: loadBefore, after: loadavg() } } : {})
         try {
-          const sample = await driver.run(url, settings.duration + 36_000, capture())
-          const reasons = rejectionReasons(sample, settings.maxSwapins)
-          runs.push({ side, sample, swapDelta: memoryDelta(sample), rejected: !!reasons.length, reasons })
+          const timeout = settings.duration + (scene ? realReadyTimeout * (scenario === 'open' ? 1 : 2) : 0) + 36_000
+          const sample = await driver.run(url, timeout, capture())
+          const reasons = rejectionReasons(sample, settings.maxSwapins, settings.maxSwapouts)
+          if (settings.diagnoseSnapshots) reasons.push('Snapshot diagnostics enabled')
+          if (scene && (!('sha256' in sample.scene) || sample.scene.sha256 !== scene.sha256)) {
+            reasons.push('Fixture did not load the requested export; both builds must support --scene')
+          }
+          runs.push({ side, ...load(), sample, swapDelta: memoryDelta(sample), rejected: !!reasons.length, reasons })
         } catch (error) {
-          runs.push({ side, sample: null, swapDelta: null, rejected: true, reasons: [errorText(error)] })
+          runs.push({ side, ...load(), sample: null, swapDelta: null, rejected: true, reasons: [errorText(error)] })
         }
       }
       const sampleA = runs.find((run) => run.side === 'A')?.sample
@@ -246,6 +303,8 @@ async function collect(
 async function main() {
   const config = options()
   if (!config) return
+  const exportFile = config.scene ? await loadScene(config.scene) : undefined
+  const scene = exportFile && { source: exportFile.source, sha256: exportFile.sha256 }
   const hostSwap = vmStat()
   const suppliedNoise = config.noise ? (JSON.parse(await readFile(config.noise, 'utf8')) as Result) : null
   const temporary = await mkdtemp(join(tmpdir(), 'doop-bench-'))
@@ -264,6 +323,7 @@ async function main() {
       window: windowSize,
       config,
       builds: { A: a, ...(b ? { B: b } : {}) },
+      ...(scene ? { scene } : {}),
       screenshot: null,
       series: [],
       errors: [],
@@ -273,9 +333,9 @@ async function main() {
       await writeFile(join(config!.out, 'result.json'), JSON.stringify(result, null, 2) + '\n')
       await writeFile(join(config!.out, 'summary.md'), summary(result))
     }
-    const serverA = await serve(a.dir)
+    const serverA = await serve(a.dir, exportFile)
     servers.push(serverA)
-    const serverB = b ? await serve(b.dir) : undefined
+    const serverB = b ? await serve(b.dir, exportFile) : undefined
     if (serverB) servers.push(serverB)
     await checkpoint()
     const capture = () => {
@@ -288,7 +348,7 @@ async function main() {
     }
     for (const engine of config.engines) {
       try {
-        const driver = await startEngine(engine, config.headed, join(temporary, 'chrome'))
+        const driver = await startEngine(engine, config.headed, join(temporary, 'chrome'), !!scene)
         try {
           const run = driver.run.bind(driver)
           driver.run = async (url, timeout, screenshot) => {
@@ -313,10 +373,13 @@ async function main() {
                 if (
                   suppliedNoise.arch !== result.arch ||
                   suppliedNoise.kernel !== result.kernel ||
-                  c.frames !== config.frames ||
+                  (scene
+                    ? suppliedNoise.scene?.sha256 !== scene.sha256
+                    : !!suppliedNoise.scene || c.frames !== config.frames) ||
                   c.duration !== config.duration ||
                   c.hud !== config.hud ||
                   c.maxSwapins !== config.maxSwapins ||
+                  (c.maxSwapouts ?? 0) !== config.maxSwapouts ||
                   !noise ||
                   accepted(noise).length < 3
                 ) {
@@ -332,6 +395,7 @@ async function main() {
                   serverA.url,
                   serverA.url,
                   'A/A',
+                  scene,
                   capture,
                   checkpoint,
                   register,
@@ -348,6 +412,7 @@ async function main() {
               serverA.url,
               serverB?.url,
               kind,
+              scene,
               capture,
               checkpoint,
               register,
@@ -385,6 +450,16 @@ async function main() {
   } finally {
     for (const server of servers) server.close()
     await rm(temporary, { recursive: true, force: true })
+  }
+  if (scene) {
+    // This CLI owns its browser and servers. Once they have closed and the
+    // artifacts are written, leftover driver handles must not hold the relay.
+    await Promise.all(
+      [process.stdout, process.stderr].map(
+        (stream) => new Promise<void>((resolve) => stream.write('', () => resolve())),
+      ),
+    )
+    process.exit()
   }
 }
 
