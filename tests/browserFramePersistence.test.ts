@@ -67,3 +67,27 @@ it('preserves a Browser frame over the update broadcast, database restart and ca
     server.stop()
   }
 }, 70_000)
+
+it('keeps local Browser URLs live-only when a canvas editor requests a server capture', async () => {
+  const server = await startServer()
+  try {
+    const user = new Client(server)
+    await user.signUp('browser-capture@test.dev', 'Browser Editor')
+    const canvas = await (await user.post('/api/canvases', { name: 'Browser capture' })).json()
+    const reference = await (
+      await user.post(`/api/canvases/${canvas.id}/frames`, {
+        name: 'Local reference',
+        width: 620,
+        height: 500,
+        browser: { url: 'http://127.0.0.1:8747/' },
+      })
+    ).json()
+    const capture = await user.get(`/api/frames/${reference.id}/screenshot.png?capture=full`)
+    expect(capture.status).toBe(500)
+    expect(await capture.json()).toMatchObject({ error: 'that host is not reachable from here' })
+    const after = await (await user.get(`/api/canvases/${canvas.id}`)).json()
+    expect(after.frames).toMatchObject([{ id: reference.id, browser: { url: 'http://127.0.0.1:8747/' } }])
+  } finally {
+    server.stop()
+  }
+})
