@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { CanvasPage } from '../../src/pages/CanvasPage'
 import { TooltipProvider } from '../../src/components/ui/tooltip'
 import { hasFrameDocument } from '../../src/lib/frameBridge'
+import { FrameSnapshots } from '../../src/lib/frameSnapshots'
 import { useStore, type Viewport } from '../../src/lib/store'
 import { liveDocuments } from '../../src/perf/documents'
 import { loadPerfHud } from '../../src/perf/hudFlag'
@@ -14,6 +15,8 @@ import {
   initialCamera,
   realReadyTimeout,
   scenarios,
+  type Capture,
+  type CaptureActivity,
   type Memory,
   type Sample,
   type Scenario,
@@ -43,6 +46,8 @@ declare global {
     perfBench: typeof harness
     perfBenchResult: Promise<Sample>
     perfBenchPhase?: string
+    perfBenchCaptures?: CaptureActivity
+    webkit?: { messageHandlers?: { perfCapture?: { postMessage: (value: object) => Promise<boolean> } } }
   }
 }
 window.perfBench = harness
@@ -208,14 +213,25 @@ function pointer(target: EventTarget, type: string, x: number, y: number) {
   )
 }
 
-function prepareGesture(scenario: Scenario, scene: Scene, duration: number) {
-  const initial = initialCamera(scenario)
+function prepareGesture(
+  scenario: Scenario,
+  scene: Scene,
+  duration: number,
+  initial: Viewport,
+  horizontalPan = false,
+) {
   const stage = document.querySelector<HTMLElement>('.stage')
   if (!stage) throw new Error('Stage did not mount')
   const wheelTarget = stage
   const box = stage.getBoundingClientRect()
-  const client = scenario === 'zoom-wide' ? { x: 520, y: 295 } : { x: 680, y: 420 }
-  const plan = trajectory(scenario, duration, initial, { x: client.x - box.left, y: client.y - box.top })
+  const client =
+    scenario === 'zoom-out-wide'
+      ? { x: box.left + 30, y: box.top + 105 }
+      : scenario === 'zoom-wide'
+        ? { x: 520, y: 295 }
+        : { x: 680, y: 420 }
+  const plan = trajectory(scenario, duration, initial, { x: client.x - box.left, y: client.y - box.top }, horizontalPan)
+  const panOrScroll = scenario === 'pan' || scenario === 'scroll'
   const dragCount = scenario === 'drag10' ? 10 : scenario === 'drag1' ? 1 : 0
   const originals = scene.frames.slice(0, dragCount)
   if (originals.length !== dragCount) throw new Error(`Drag needs ${dragCount} frames; export has ${originals.length}`)
@@ -252,8 +268,9 @@ function prepareGesture(scenario: Scenario, scene: Scene, duration: number) {
             cancelable: true,
             clientX: client.x,
             clientY: client.y,
-            ctrlKey: scenario !== 'pan',
-            deltaY: scenario === 'pan' ? delta * 80 : -delta * plan.zoomDelta * 100,
+            ctrlKey: !panOrScroll,
+            deltaX: horizontalPan ? delta * 120 : 0,
+            deltaY: horizontalPan ? 0 : panOrScroll ? delta * 80 : -delta * plan.zoomDelta * 100,
           }),
         )
       }
@@ -334,24 +351,84 @@ async function measureSettle(scenario: 'zoom' | 'zoom-wide'): Promise<Sample['se
   return { maxMs: max, intervals, layoutChanges, maxDriftPx, deferredPeak }
 }
 
+function captureRegions(): NonNullable<Capture['regions']> {
+  const stage = document.querySelector('.stage')?.getBoundingClientRect()
+  const panels = [...document.querySelectorAll<HTMLElement>('[data-slot="panel"]')]
+  const left = panels
+    .find(
+      (panel) =>
+        panel.querySelector('[data-slot="panel-tabs-root"]') && panel.getBoundingClientRect().right < innerWidth / 2,
+    )
+    ?.getBoundingClientRect()
+  const rightPanels = panels.filter((panel) => panel.getBoundingClientRect().left > innerWidth / 2)
+  const right = rightPanels
+    .find((panel) => panel.querySelector('[data-slot="panel-header"] input'))
+    ?.getBoundingClientRect()
+  if (!stage || !left || !right) throw new Error('Capture requires the stage, Layers panel and frame Inspector')
+  const inside = (box: DOMRect) => ({ x: box.left + 8, y: box.top + 8, width: box.width - 16, height: box.height - 16 })
+  const x = Math.max(stage.x + 8, left.right + 8)
+  const end = Math.min(stage.right - 8, ...rightPanels.map((panel) => panel.getBoundingClientRect().left - 8))
+  if (end <= x) throw new Error('No unobscured stage between the panels')
+  return {
+    left: inside(left),
+    right: inside(right),
+    stage: { x, y: stage.y + 86, width: end - x, height: stage.height - 156 },
+  }
+}
+
 async function run(): Promise<Sample> {
   const query = new URLSearchParams(location.search)
   const scenario = scenarios.find((value) => value === query.get('scenario')) ?? 'zoom'
   const frames = framePresets.find((value) => value === Number(query.get('frames'))) ?? 68
-  const duration = Number(query.get('duration') ?? defaultDuration)
+  const wideOut = scenario === 'zoom-out-wide'
+  const duration = Number(query.get('duration') ?? (wideOut ? 2000 : defaultDuration))
   const real = query.get('scene') === 'real'
+  const capture = query.has('capture') ? window.webkit?.messageHandlers?.perfCapture : undefined
+  if (query.has('capture') && !capture) throw new Error('WKProbe capture handler was not installed')
+  const horizontalPan = !!capture && scenario === 'pan'
+  const noSnapshots = query.get('renderMode') === 'no-snapshots'
+  const trace = query.has('webContentTrace')
+  if (trace && wideOut) {
+    const captures: CaptureActivity = { pending: 0, started: 0, maxPending: 0, maxRasterEdge: 0 }
+    window.perfBenchCaptures = captures
+    const producer = FrameSnapshots.prototype as unknown as { capture(slot: object): Promise<void> }
+    const captureSnapshot = producer.capture
+    producer.capture = async function (slot) {
+      captures.started++
+      captures.pending++
+      captures.maxPending = Math.max(captures.maxPending, captures.pending)
+      try {
+        await captureSnapshot.call(this, slot)
+      } finally {
+        captures.pending--
+      }
+    }
+    const draw = CanvasRenderingContext2D.prototype.drawImage
+    CanvasRenderingContext2D.prototype.drawImage = function (image: CanvasImageSource, ...args: number[]) {
+      if (captures.pending && image instanceof HTMLImageElement && image.src.startsWith('data:image/svg+xml;')) {
+        captures.maxRasterEdge = Math.max(captures.maxRasterEdge, image.naturalWidth, image.naturalHeight)
+      }
+      Reflect.apply(draw, this, [image, ...args])
+    }
+  }
   const diagnostics = query.has('diagnoseSnapshots')
     ? (await import('./snapshotDiagnostics')).traceSnapshots()
     : undefined
-  const initial = initialCamera(scenario)
   const open = scenario === 'open'
   const phase = (name: string) => {
-    if (real) window.perfBenchPhase = name
+    if (real || trace || capture) window.perfBenchPhase = name
   }
   const generated = real ? null : makeScene(frames)
   const endOpenFrames = open ? recordFrames() : null
   phase('fetching export')
   const scene = generated ?? (await fetchScene())
+  const mainFrame = wideOut
+    ? scene.frames.find(({ name, width }) => name === 'Главная · 1920 px' && width === 1920)
+    : null
+  if (wideOut && !mainFrame) throw new Error('zoom-out-wide requires the «Главная · 1920 px» frame')
+  const initial = mainFrame
+    ? { zoom: 0.57, x: 30 - mainFrame.x * 0.57, y: 105 - mainFrame.y * 0.57 }
+    : initialCamera(scenario)
   const browser = {
     userAgent: navigator.userAgent,
     width: innerWidth,
@@ -360,6 +437,18 @@ async function run(): Promise<Sample> {
     visibility: document.visibilityState,
   }
   harness.seed(scene)
+  if (query.get('renderMode') === 'no-settle') document.documentElement.setAttribute('data-perf-no-layout-settle', '')
+  if (noSnapshots) {
+    // The stack checks this marker before starting an asynchronous capture.
+    const observer = new MutationObserver(() => {
+      const stack = document.querySelector('.world [data-doop-frame-shell]')?.parentElement
+      if (!stack) return
+      stack.setAttribute('data-frame-snapshots-disabled', '')
+      observer.disconnect()
+    })
+    observer.observe(document.getElementById('root')!, { childList: true, subtree: true })
+  }
+  if (capture) useStore.getState().setLayersOpen(true)
   const canvas = (
     <TooltipProvider>
       <CanvasPage canvasId={canvasId} />
@@ -423,25 +512,49 @@ async function run(): Promise<Sample> {
     }
   }
 
-  const cameraGesture = scenario === 'pan' || scenario === 'zoom' || scenario === 'zoom-wide'
-  if (cameraGesture && !real) await warmSnapshots(Math.min(budget ?? Infinity, initialLive))
-  phase('warm-up gesture')
-  const warm = prepareGesture(scenario, scene, 900)
-  warm.select()
-  await nextFrame()
-  await warm.drive()
-  warm.reset()
-  await sleep(500)
-  phase('settling after warm-up')
-  const expectedLive = await waitReady(scene, 'after warm-up reset')
+  const cameraGesture =
+    wideOut || scenario === 'pan' || scenario === 'scroll' || scenario === 'zoom' || scenario === 'zoom-wide'
+  if (cameraGesture && !real) {
+    if (trace || noSnapshots) await sleep(3500)
+    else await warmSnapshots(Math.min(budget ?? Infinity, initialLive))
+  }
+  let expectedLive = initialLive
+  if (!wideOut) {
+    phase('warm-up gesture')
+    const warm = prepareGesture(scenario, scene, 900, initial, horizontalPan)
+    warm.select()
+    await nextFrame()
+    await warm.drive()
+    warm.reset()
+    await sleep(500)
+    phase('settling after warm-up')
+    expectedLive = await waitReady(scene, 'after warm-up reset')
+  }
   if (cameraGesture && real) {
     phase('warming snapshots before measurement')
-    // Admission can mount more documents after the camera has settled.
-    await warmSnapshots(() => Math.max(expectedLive, liveDocuments().mounted), realSnapshotTimeout)
+    if (wideOut) {
+      await sleep(1500)
+    } else if (trace || noSnapshots) {
+      await sleep(realSnapshotTimeout)
+    } else {
+      // Admission can mount more documents after the camera has settled.
+      await warmSnapshots(() => Math.max(expectedLive, liveDocuments().mounted), realSnapshotTimeout)
+    }
   }
-  phase('measured gesture')
-  const gesture = prepareGesture(scenario, scene, duration)
+  // Sample memory before starting native capture, and snapshots just before the gesture.
   const before = await vmStat()
+  if (capture) {
+    phase('capture baseline')
+    const store = useStore.getState()
+    store.select(scene.frames[0]!.id)
+    store.setInspectorOpen(true)
+    await nextFrame()
+    await nextFrame()
+    await sleep(250)
+    await capture.postMessage({ regions: captureRegions() })
+  }
+  const gesture = prepareGesture(scenario, scene, duration, initial, horizontalPan)
+  phase('measured gesture')
   const snapshots = cameraGesture ? snapshotStats() : undefined
   diagnostics?.beforeGesture()
   const start = performance.now()
@@ -460,6 +573,7 @@ async function run(): Promise<Sample> {
   const measuredFrames = recordFrames()
   const input = await gesture.drive()
   const stats = intervalStats(measuredFrames.times)
+  if (capture) await capture.postMessage({ stop: true })
   if (!recordRealSettle) {
     measuredFrames.stop()
     off()
@@ -486,8 +600,12 @@ async function run(): Promise<Sample> {
     const settleTimes = measuredFrames.times.slice(0, windowEnd + 1).filter((time) => time >= releasedAt)
     const { max, intervals } = intervalStats(settleTimes)
     settle = { maxMs: max, intervals }
-  } else if (scenario === 'zoom' || scenario === 'zoom-wide') {
+  } else if (!capture && (scenario === 'zoom' || scenario === 'zoom-wide')) {
     settle = await measureSettle(scenario)
+  }
+  if (wideOut) {
+    phase('holding overview')
+    await sleep(12_000)
   }
   const after = await vmStat()
   if (diagnostics) phase('diagnosing snapshots')
@@ -505,8 +623,11 @@ async function run(): Promise<Sample> {
     cameraSteps,
     camera: { actual: actualCamera, expected: gesture.expected, final, expectedFinal: gesture.expectedFinal },
     commits,
-    live: { before: liveBefore, after: liveAfter },
-    animationAllowed: { before: animationAllowedBefore, after: animationAllowedAfter },
+    live: { before: liveBefore, after: wideOut ? liveDocuments() : liveAfter },
+    animationAllowed: {
+      before: animationAllowedBefore,
+      after: wideOut ? animationAllowedDocuments() : animationAllowedAfter,
+    },
     heapBytes,
     snapshots,
     ...(snapshotDiagnostics ? { snapshotDiagnostics } : {}),

@@ -77,6 +77,7 @@ export function canSnapshotFrame(
 
 const NEAR_PX = 180
 export const FRAME_SNAPSHOT_TINY_PX = 160
+export const FRAME_OVERVIEW_MAX_ZOOM = 0.06
 const MAX_BITMAP_EDGE = 640
 const CAPTURE_TIMEOUT_MS = 4000
 const CAPTURE_DEADLINE = Symbol('snapshot deadline')
@@ -294,7 +295,11 @@ export class FrameSnapshots {
         scale,
         signal: abort.signal,
         documentBackground: true,
-        preview: { onResourceFailure: () => (resourceFailure = true) },
+        preview: {
+          onResourceFailure: () => (resourceFailure = true),
+          // The bridge normally wakes a deferred iframe to read its live DOM.
+          skipDeferredDocument: this.layer?.hasAttribute('data-frame-overview'),
+        },
       })
       abort.signal.throwIfAborted()
       url = URL.createObjectURL(blob)

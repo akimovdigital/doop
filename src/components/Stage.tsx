@@ -13,13 +13,15 @@ import { throttle } from '../lib/throttle'
 import { FrameView, HiddenFrameView } from './FrameView'
 import { useFrameAdmission } from './frameAdmission'
 import { ANIMATING_FRAME_BUDGET, LIVE_FRAME_BUDGET } from './frameBudget'
-import { FrameSnapshots } from '../lib/frameSnapshots'
+import { FRAME_OVERVIEW_MAX_ZOOM, FrameSnapshots } from '../lib/frameSnapshots'
 import { CanvasComments, type CanvasComposeAt } from './CanvasComments'
 import { placeComposer } from '../lib/composerPlacement'
 import { isCanvasComment, type CanvasComment } from '../../shared/comments'
 import { elementIdSelector, isElementId } from '../../shared/elementId'
 import { resolveFrameLink } from '../lib/elementLink'
 import { openExternal } from '../lib/desktop'
+import { saveDesktopPageCamera, takeDesktopPageCamera } from '../lib/desktopPageCamera'
+import { desktopPlatform } from '../lib/shell'
 import { canvasPages, framePageId } from '../../shared/pages'
 import { FlowOverlay } from './FlowOverlay'
 import { PrototypeOverlay } from './PrototypeOverlay'
@@ -351,6 +353,7 @@ export function Stage({
      raster stays sharp and nothing needs a relayout; the ref serves the
      per-frame viewport writes */
   const layoutZoomRef = useRef(1)
+  const restoringDesktopCamera = useRef(false)
   const [frameLayoutQueue] = useState(createFrameLayoutQueue)
   const framesNearViewport = useCallback((vp: Viewport, size: { width: number; height: number }) => {
     const { selectedIds, ctxMenu, selectedElement } = useStore.getState()
@@ -471,6 +474,7 @@ export function Stage({
        Deferred wrappers already have the new counter-zoom before they
        become visible, and no paint sees a mixed scale. */
     function settleLayout() {
+      if (import.meta.env.DOOP_BENCH_ONLY && document.documentElement.hasAttribute('data-perf-no-layout-settle')) return
       const world = worldRef.current
       if (!world) return
       const { viewport } = useStore.getState()
@@ -513,6 +517,21 @@ export function Stage({
     apply(useStore.getState().viewport)
     let settle = 0
     let cameraIdleTimer = 0
+    const saveForDesktopReload =
+      desktopPlatform() === 'macos' && !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY
+        ? throttle((canvasId: string, pageId: string) => {
+            const state = useStore.getState()
+            if (
+              state.canvas?.id !== canvasId ||
+              state.activePageId !== pageId ||
+              state.following ||
+              cameraPage.current !== pageId ||
+              location.pathname !== `/c/${encodeURIComponent(canvasId)}`
+            )
+              return
+            saveDesktopPageCamera(history, { canvasId, pageId, viewport: state.viewport })
+          }, 500)
+        : null
     const stage = ref.current
     const mountedWorld = worldRef.current
     const unsub = useStore.subscribe((s, prev) => {
@@ -537,11 +556,12 @@ export function Stage({
       if (s.connected && !prev.connected && ref.current) sendViewport(s.viewport, stageSize.current)
       if (s.viewOptions.pixelGrid !== prev.viewOptions.pixelGrid) apply(s.viewport)
       if (s.viewport === prev.viewport) return
+      const cameraChanged =
+        s.viewport.x !== prev.viewport.x || s.viewport.y !== prev.viewport.y || s.viewport.zoom !== prev.viewport.zoom
+      if (cameraChanged && saveForDesktopReload && !restoringDesktopCamera.current && s.canvas && s.activePageId)
+        saveForDesktopReload(s.canvas.id, s.activePageId)
       apply(s.viewport)
-      if (
-        stage &&
-        (s.viewport.x !== prev.viewport.x || s.viewport.y !== prev.viewport.y || s.viewport.zoom !== prev.viewport.zoom)
-      ) {
+      if (stage && cameraChanged) {
         if (!cameraIdleTimer) stage.setAttribute('data-frame-camera-moving', '')
         window.clearTimeout(cameraIdleTimer)
         cameraIdleTimer = window.setTimeout(() => {
@@ -848,6 +868,24 @@ export function Stage({
     }
     const params = deepLinkHandled.current ? null : new URLSearchParams(linkSearch)
     deepLinkHandled.current = true
+    if (
+      params &&
+      desktopPlatform() === 'macos' &&
+      !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY &&
+      location.pathname === `/c/${encodeURIComponent(canvas.id)}`
+    ) {
+      const recovered = takeDesktopPageCamera(history, canvas.id, activePageId)
+      if (recovered) {
+        cameraPage.current = activePageId
+        restoringDesktopCamera.current = true
+        try {
+          setViewport(recovered)
+        } finally {
+          restoringDesktopCamera.current = false
+        }
+        return
+      }
+    }
     /* a thread moved since its link was made is where it is now: the
        linked root's own frame wins over the one the link names */
     const linkedId = params?.get('comment')
@@ -1774,6 +1812,11 @@ function byCreation(a: Frame, b: Frame) {
   return a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 }
 
+// At DPR 2 this much design area is already 1 GiB at one RGBA layer per frame.
+const FRAME_OVERVIEW_MIN_PIXELS = 64 * 1024 * 1024
+const WEBKIT_FRAME_OVERVIEW =
+  !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY && typeof navigator !== 'undefined' && /AppleWebKit\//.test(navigator.userAgent)
+
 /** The page's frames, `frames` in paint order (back to front, as the store
  *  keeps them). They mount in creation order and stack by z-index: moving
  *  an iframe in the DOM reloads it, so a restack must not move any. The
@@ -1797,10 +1840,22 @@ function FrameStack({
   const mounted = useMemo(() => [...frames].sort(byCreation), [frames])
   const rank = useMemo(() => new Map(frames.map((f, i) => [f.id, i + 1])), [frames])
   const layer = useRef<HTMLDivElement>(null)
-  const { admitted, request, protect } = useFrameAdmission(frames, stage, layer, presenting)
   const [snapshots] = useState(() => new FrameSnapshots())
   const prototypeMode = useStore((s) => s.prototypeMode)
   const snapshotsDisabled = presenting || uiHidden || prototypeMode
+  const heavyPage = useMemo(
+    () =>
+      WEBKIT_FRAME_OVERVIEW &&
+      frames.reduce(
+        (pixels, frame) =>
+          frame.hidden || frame.browser || !frame.html ? pixels : pixels + frame.width * frame.height,
+        0,
+      ) >= FRAME_OVERVIEW_MIN_PIXELS,
+    [frames],
+  )
+  const limitOverview = heavyPage && !snapshotsDisabled
+  const overview = useStore((s) => limitOverview && s.viewport.zoom <= FRAME_OVERVIEW_MAX_ZOOM)
+  const { admitted, request, protect } = useFrameAdmission(frames, stage, layer, presenting, limitOverview)
   useLayoutEffect(() => {
     const root = layer.current
     const target = stage.current ?? root?.closest<HTMLElement>('.stage')
@@ -1816,6 +1871,7 @@ function FrameStack({
       data-live-frame-budget={LIVE_FRAME_BUDGET}
       data-animating-frame-budget={ANIMATING_FRAME_BUDGET}
       data-frame-snapshots-disabled={snapshotsDisabled ? '' : undefined}
+      data-frame-overview={overview ? '' : undefined}
     >
       {mounted.map((f) =>
         f.hidden && !f.browser ? (
@@ -1828,6 +1884,7 @@ function FrameStack({
             loadDocument={admitted.has(f.id)}
             protectDocument={protect}
             snapshots={snapshots}
+            overview={overview}
             compactSectionTitles={compactSectionTitles}
             requestDocument={request}
             onFollowLink={onFollowLink}

@@ -1526,6 +1526,7 @@ body[data-panel-resizing] * {
 [data-frame-snapshot-ready][data-frame-snapshot-waiting],
 :is(
   .stage[data-frame-camera-moving] [data-frame-snapshot-ready],
+  .stage [data-frame-overview] [data-frame-snapshot-ready],
   .stage [data-frame-snapshot-ready][data-frame-snapshot-tiny]
 ):not([data-frame-snapshot-blocked], [data-frame-snapshots-disabled] *) {
   visibility: visible;
@@ -1539,4 +1540,11 @@ body[data-panel-resizing] * {
   + div
   > iframe[data-doop-frame] {
   visibility: hidden;
+}
+
+/* A WebKit overview can expose dozens of full-size layer trees at once.
+   Keep the iframe and its state, but take its live layer out of the render tree. */
+[data-frame-overview]:not([data-frame-snapshots-disabled])
+  [data-frame-snapshot]:not([data-frame-snapshot-blocked]) + div > iframe[data-doop-frame] {
+  display: none;
 }

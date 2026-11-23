@@ -78,6 +78,37 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
     expect(await live!.evaluate((iframe) => getComputedStyle(iframe).visibility)).toBe('hidden')
   })
 
+  it('draws deferred frames as images on a large WebKit overview and preserves loaded documents', async () => {
+    const page = await pages.open()
+    await page.setViewport({ width: 1280, height: 800 })
+    await page.setUserAgent('Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 (KHTML, like Gecko)')
+    const deferred = [
+      canvasFrame({ id: 'long-a', name: 'Long A', x: 18000, y: 0, width: 4000, height: 12000 }),
+      canvasFrame({ id: 'long-b', name: 'Long B', x: 23000, y: 0, width: 4000, height: 12000 }),
+    ]
+    await openCanvasPage(page, [sample, ...deferred])
+    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 30, y: 105, zoom: 0.57 }))
+    const live = await page.waitForSelector('[data-doop-frame-shell="cached"] iframe[data-doop-frame]')
+    const child = await live!.contentFrame()
+    await child!.waitForSelector('input')
+    await child!.evaluate(() => {
+      document.querySelector('input')!.value = 'kept'
+    })
+    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 30, y: 105, zoom: 0.015 }))
+    for (const { id } of deferred) {
+      await page.waitForSelector(`[data-doop-frame-shell="${id}"] img[data-frame-snapshot-ready]`, { visible: true })
+      expect(await page.$(`[data-doop-frame-shell="${id}"] iframe[data-doop-frame]`)).toBeNull()
+    }
+    expect(await live!.evaluate((iframe) => getComputedStyle(iframe).display)).toBe('none')
+
+    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 30, y: 105, zoom: 0.57 }))
+    await page.waitForFunction(() => {
+      const frame = document.querySelector('[data-doop-frame-shell="cached"] iframe[data-doop-frame]')
+      return frame && getComputedStyle(frame).visibility === 'visible'
+    })
+    expect(await child!.evaluate(() => document.querySelector('input')!.value)).toBe('kept')
+  })
+
   it('paints the same pixels as the live-only view at rest above the size cutoff', async () => {
     const page = await pages.open()
     await page.setViewport({ width: 1440, height: 800 })

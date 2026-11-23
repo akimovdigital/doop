@@ -1,6 +1,6 @@
 import type { Frame } from '../../shared/types'
 import { colorAlpha } from './cssValues'
-import { computedStyles, snapshotFrame } from './frameBridge'
+import { computedStyles, hasFrameDocument, snapshotFrame } from './frameBridge'
 
 /**
  * Render a frame to an image in this browser: the document is inlined into
@@ -35,7 +35,7 @@ export interface RasterOptions {
   /** Preserve the live document's opaque canvas color beneath the SVG content. */
   documentBackground?: boolean
   /** Canvas snapshots can draw with missing resources. Exports use strict mode. */
-  preview?: { onResourceFailure?: () => void }
+  preview?: { onResourceFailure?: () => void; skipDeferredDocument?: boolean }
   /** the part of the frame to keep; the whole frame when unset. The
    *  document is still laid out and painted whole, so an element keeps
    *  every style its ancestors give it and whatever paints behind it. */
@@ -49,10 +49,13 @@ export async function rasterizeFrame(frame: Frame, opts: RasterOptions): Promise
   const signal = opts.signal ?? AbortSignal.timeout(RESOURCE_FETCH_MS)
   signal.throwIfAborted()
   const bridgeSignal = opts.preview ? signal : undefined
-  const [snapshot, background] = await Promise.all([
-    snapshotFrame(frame.id, bridgeSignal),
-    opts.documentBackground ? documentBackground(frame.id, bridgeSignal) : undefined,
-  ])
+  const useLiveDocument = !opts.preview?.skipDeferredDocument || hasFrameDocument(frame.id)
+  const [snapshot, background] = useLiveDocument
+    ? await Promise.all([
+        snapshotFrame(frame.id, bridgeSignal),
+        opts.documentBackground ? documentBackground(frame.id, bridgeSignal) : undefined,
+      ])
+    : [null, undefined]
   signal.throwIfAborted()
   /* an unmounted frame renders from its saved HTML; a mounted one whose
      pixels cannot all be read is for the server */

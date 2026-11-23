@@ -10,7 +10,12 @@ import app from '../vite.config.ts'
 const benchOnly = process.env.DOOP_BENCH_ONLY === '1'
 const pages: UserConfig = {
   // React's ordinary production renderer omits Profiler callbacks.
-  ...(benchOnly ? { resolve: { alias: [{ find: /^react-dom$/, replacement: 'react-dom/profiling' }] } } : {}),
+  ...(benchOnly
+    ? {
+        resolve: { alias: [{ find: /^react-dom$/, replacement: 'react-dom/profiling' }] },
+        define: { 'import.meta.env.DOOP_BENCH_ONLY': 'true' },
+      }
+    : {}),
   logLevel: 'error',
   envDir: false,
   build: {

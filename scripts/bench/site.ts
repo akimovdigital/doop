@@ -18,7 +18,7 @@ export function revision(cwd: string) {
 }
 
 export function worktreeDirty(cwd: string) {
-  return !!execFileSync('git', ['status', '--porcelain'], { cwd, encoding: 'utf8' }).trim()
+  return !!execFileSync('git', ['--no-optional-locks', 'status', '--porcelain'], { cwd, encoding: 'utf8' }).trim()
 }
 
 export async function buildSite(source: string, output: string) {
