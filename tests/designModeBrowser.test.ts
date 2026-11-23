@@ -370,6 +370,71 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     expect((await sent())[0]?.[1]).toContain('CSS edits — color: rgb(0, 0, 0) → red')
   })
 
+  it('draws outside the region, undoes a stroke, cancels another and saves an ellipse with the pin', async () => {
+    await page.setViewport({ width: 1440, height: 960 })
+    const frame = await mount()
+    await enter()
+    const at = await page.$eval('[data-design-shield]', (el) => {
+      const rect = el.getBoundingClientRect()
+      return { x: rect.left + rect.width * 0.61, y: rect.top + rect.height * 0.25 }
+    })
+    const draw = async (x: number, y: number, dx: number, dy: number) => {
+      await page.mouse.move(x, y)
+      await page.mouse.down()
+      await page.mouse.move(x + dx, y + dy, { steps: 5 })
+      await page.mouse.up()
+    }
+    await draw(at.x, at.y, 190, 140)
+    await page.waitForSelector('[data-design-region]')
+    const tools = '[data-design-markup-tool]'
+    expect(await page.$$eval(tools, (buttons) => buttons.map((button) => button.getAttribute('aria-label')))).toEqual([
+      'Draw',
+      'Ellipse',
+      'Rectangle',
+      'Arrow',
+    ])
+    expect(await page.$(`${tools}[aria-pressed="true"]`)).toBeNull()
+    await draw(at.x + 15, at.y + 20, 10, 5)
+    expect(await page.$('[data-design-markup]')).toBeNull()
+    await capture('dm-16-markup-tools')
+    await page.click(control('Arrow'))
+    await draw(at.x + 105, at.y + 30, -140, 40)
+    await page.waitForSelector('[data-markup-status="draft"] [data-markup-tool="arrow"]')
+    await chord('z')
+    await page.waitForSelector('[data-design-markup]', { hidden: true })
+    await page.mouse.move(at.x + 15, at.y + 20)
+    await page.mouse.down()
+    await page.mouse.move(at.x + 130, at.y + 50, { steps: 4 })
+    await page.waitForSelector('[data-markup-tool="arrow"]')
+    await page.keyboard.press('Escape')
+    await page.mouse.up()
+    await page.waitForSelector('[data-design-markup]', { hidden: true })
+    expect(await page.$(field)).not.toBeNull()
+    await page.click(control('Ellipse'))
+    await draw(at.x + 30, at.y + 25, 124, 70)
+    await page.waitForSelector('[data-markup-tool="ellipse"]')
+    await page.click('[role="switch"]')
+    await page.click(control('Add to stack'))
+    await page.waitForSelector(pin(1))
+    const ellipse = '[data-markup-status="pending"] [data-markup-tool="ellipse"]'
+    await page.waitForSelector(ellipse)
+    await capture('dm-17-markup-saved')
+    const priorTop = await page.$eval(ellipse, (el) => el.getBoundingClientRect().top)
+    await frame.evaluate(() => window.scrollTo(0, 40))
+    await page.waitForFunction(
+      (selector, top) => document.querySelector(selector)!.getBoundingClientRect().top < top - 20,
+      {},
+      ellipse,
+      priorTop,
+    )
+    await mount()
+    await enter()
+    await page.waitForSelector(ellipse)
+    await page.click(control('Send 1 to agent'))
+    await page.waitForSelector(address)
+    expect((await sent())[0]?.[1]).toMatch(/^Screenshot region \d+ × \d+ with markup: 1 ellipse$/)
+  })
+
   it('temporarily re-enables page clicks while Space is held and resumes picking after iframe keyup', async () => {
     const frame = await mount()
     await enter()

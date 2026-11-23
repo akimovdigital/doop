@@ -131,6 +131,35 @@ describe('design notes', () => {
       `<button> — “Open now”: ${css}\n\nElement context:\n${context}`,
     )
   })
+  it('summarizes the markup tools on a region and preserves page coordinates in storage', () => {
+    const arrow = {
+      tool: 'arrow' as const,
+      points: [
+        { x: 40, y: 120 },
+        { x: 60, y: 150 },
+      ],
+    }
+    const region: DesignNote = {
+      ...note,
+      kind: 'region',
+      region: { ...rect, y: 100 },
+      regionInPage: true,
+      elements: [],
+      comment: '',
+      markup: [arrow, arrow, { ...arrow, tool: 'ellipse' }],
+    }
+    let raw = ''
+    const storage = {
+      getItem: () => raw,
+      setItem: (_key: string, value: string) => {
+        raw = value
+      },
+    }
+    writeDesignNotes(storage, note.canvasId, { batch: true, notes: [region] })
+    const restored = readDesignNotes(storage, note.canvasId).notes
+    expect(restored).toEqual([region])
+    expect(formatDesignNotes(restored)).toBe('Screenshot region 80 × 40 with markup: 2 arrows, 1 ellipse')
+  })
   it('clips the label text, attribute and HTML text independently', () => {
     const el = { ...element, text: 't'.repeat(501), attributes: [['title', 'a'.repeat(201)]] as [string, string][] }
     const out = formatDesignNotes([{ ...note, elements: [el] }])

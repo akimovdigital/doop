@@ -237,7 +237,7 @@ export function BrowserFrame({
           win.postMessage({ type: 'doop:runtime-port' }, '*', [channel.port2])
         } else if (annotationWindow.current === win) {
           if (type === 'doop:textEdit-finished') design.finishTextEdit(event.data)
-          if (type === 'doop:annotation-layout') design.refreshPins()
+          if (type === 'doop:annotation-layout') design.refreshPins(event.data.scrollX, event.data.scrollY)
           if (type === 'doop:proto-space-up') design.releasePage()
           if (type === 'doop:esc' && document.activeElement === iframe.current) {
             if (!design.escape() && !design.enabled) {

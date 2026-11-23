@@ -270,5 +270,19 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     await editFrame!.waitForFunction(
       () => getComputedStyle(document.querySelector('#title')!).color === 'rgb(31, 39, 106)',
     )
+
+    await page.mouse.move(cssX, cssY)
+    await page.mouse.down()
+    await page.mouse.move(cssX + 130, cssY + 80, { steps: 4 })
+    await page.mouse.up()
+    const draw = '[data-design-markup-tool="draw"]'
+    await page.waitForSelector(`${draw}[aria-pressed="false"]`)
+    await page.locator(draw).click()
+    await page.waitForSelector(`${draw}[aria-pressed="true"]`)
+    await page.mouse.move(cssX + 10, cssY + 10)
+    await page.mouse.down()
+    await page.mouse.move(cssX + 80, cssY + 45, { steps: 4 })
+    await page.mouse.up()
+    await page.waitForSelector('[data-markup-status="draft"] [data-markup-tool="draw"]')
   })
 })

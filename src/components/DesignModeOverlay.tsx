@@ -2,12 +2,25 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 're
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { hasInsetTrafficLights } from '../lib/shell'
+import { markupPath, markupStrokeWidth, type MarkupStroke, type MarkupTool } from '../lib/designMarkup'
 import type { DesignNote, NoteRect } from '../lib/designNotes'
 import { Button } from './ui/button'
 import { Checkbox } from './ui/checkbox'
 import { Switch } from './ui/switch'
 import { IconButton } from './ui/icon-button'
-import { CheckIcon, ChevronDownIcon, HotspotIcon, MessageSquareIcon, PlusIcon, SlidersIcon, XIcon } from './ui/icons'
+import {
+  ArrowUpRightIcon,
+  BoxIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  HotspotIcon,
+  CircleIcon,
+  EditIcon,
+  MessageSquareIcon,
+  PlusIcon,
+  SlidersIcon,
+  XIcon,
+} from './ui/icons'
 import { Textarea } from './ui/textarea'
 import { DesignCssInspector } from './DesignCssInspector'
 import type { useDesignMode } from './useDesignMode'
@@ -95,17 +108,26 @@ export function DesignModeControls({ mode }: { mode: Mode }) {
   )
 }
 
+const markupTools = [
+  { tool: 'draw', label: 'panels.designMarkupDraw', Icon: EditIcon },
+  { tool: 'ellipse', label: 'panels.designMarkupEllipse', Icon: CircleIcon },
+  { tool: 'rectangle', label: 'panels.designMarkupRectangle', Icon: BoxIcon },
+  { tool: 'arrow', label: 'panels.designMarkupArrow', Icon: ArrowUpRightIcon },
+] as const satisfies readonly { tool: MarkupTool; label: string; Icon: unknown }[]
+
 export function DesignModeHint({ mode }: { mode: Mode }) {
   const t = useT()
   const canEditText = mode.draft?.elements.length === 1 && mode.draft.elements[0]?.textEditable
   const message = t(
     mode.editingText
       ? 'panels.designTextEditingHint'
-      : canEditText
-        ? 'panels.designTextNoteHint'
-        : mode.region || mode.draft
-          ? 'panels.designNoteHint'
-          : 'panels.designPickHint',
+      : mode.draft?.region
+        ? 'panels.designMarkupHint'
+        : canEditText
+          ? 'panels.designTextNoteHint'
+          : mode.region || mode.draft
+            ? 'panels.designNoteHint'
+            : 'panels.designPickHint',
   )
   return (
     <div
@@ -118,6 +140,24 @@ export function DesignModeHint({ mode }: { mode: Mode }) {
       <IconButton size="sm" className="text-brand" aria-label={t('panels.designExit')} onClick={mode.exit}>
         <XIcon size="rail" />
       </IconButton>
+      {mode.draft?.region && (
+        <div className="flex shrink-0 items-center" role="group" aria-label={t('panels.designMarkupTools')}>
+          {markupTools.map(({ tool, label, Icon }) => (
+            <IconButton
+              key={tool}
+              data-design-markup-tool={tool}
+              size="sm"
+              on={mode.markupTool === tool}
+              aria-pressed={mode.markupTool === tool}
+              aria-label={t(label)}
+              title={t(label)}
+              onClick={() => mode.setMarkupTool(mode.markupTool === tool ? 'move' : tool)}
+            >
+              <Icon size={14} />
+            </IconButton>
+          ))}
+        </div>
+      )}
       <span className="truncate" title={message}>
         {message}
       </span>
@@ -254,7 +294,7 @@ export function DesignModeOverlay({
     function cancel(event?: PointerEvent) {
       if (!gesture.current || (event && event.pointerId !== gesture.current.id)) return
       gesture.current = undefined
-      handlers.current.cancelDrag()
+      handlers.current.cancelPointer()
     }
     function finish(event: MouseEvent, id: number) {
       if (event.button !== 0 || gesture.current?.id !== id) return
@@ -299,7 +339,8 @@ export function DesignModeOverlay({
   const { draft, hover } = mode
   const selected =
     draft?.elements.map((el, index) => (index === 0 && draft.id && mode.pins[draft.id]?.rect) || el.rect) ?? []
-  const anchors = draft?.region ? [draft.region] : selected
+  const draftRegion = draft && mode.visibleRegion(draft)
+  const anchors = draftRegion ? [draftRegion] : selected
   const cardWidth = Math.min(290, Math.max(0, (surface?.viewportWidth ?? 290) - 2 * inset))
   const right = Math.max(...anchors.map((rect) => rect.x + rect.width))
   const bottom = Math.max(...anchors.map((rect) => rect.y + rect.height))
@@ -309,7 +350,7 @@ export function DesignModeOverlay({
       : inset
   const top = Math.min(...anchors.map((rect) => rect.y))
   const comment = draft?.comment.trim()
-  const canSubmit = !!(comment || draft?.textEdit || draft?.cssEdits?.length)
+  const canSubmit = !!(comment || draft?.textEdit || draft?.cssEdits?.length || draft?.markup?.length)
   const rows = Math.min(3, (draft?.comment ?? '').split('\n').length)
   const cardHeight = (canSubmit || draft?.id ? 58 : 34) + (rows - 1) * 20
   let cardTop = inset
@@ -335,16 +376,19 @@ export function DesignModeOverlay({
               ref={shieldRef}
               tabIndex={-1}
               data-design-shield=""
-              className="pointer-events-auto absolute cursor-crosshair touch-none outline-none select-none"
+              className={cn(
+                'pointer-events-auto absolute touch-none outline-none select-none',
+                draftRegion && mode.markupTool === 'move' ? 'cursor-default' : 'cursor-crosshair',
+              )}
               style={{ left: surface.x, top: surface.y, width: surface.width, height: surface.height }}
               onPointerDown={(e) => {
                 if (e.button !== 0 || !e.isPrimary) return
-                if (gesture.current) mode.cancelDrag()
+                if (gesture.current) mode.cancelPointer()
                 const mouse = e.pointerType === 'mouse'
                 // Keep compatibility mouseup enabled. Capture touch/pen; the shield
                 // and the window listeners already cover the mouse.
                 if (!mouse) e.currentTarget.setPointerCapture(e.pointerId)
-                if (!draft) e.currentTarget.focus({ preventScroll: true })
+                if (!draft || draft.region) e.currentTarget.focus({ preventScroll: true })
                 gesture.current = { id: e.pointerId, mouse }
                 mode.pointerDown(designPoint(e, e.currentTarget, surface.scale), e.pointerId)
               }}
@@ -357,7 +401,7 @@ export function DesignModeOverlay({
                 if (draft) event.preventDefault()
               }}
               onDoubleClick={(event) => {
-                if (!event.altKey && !event.shiftKey)
+                if (!draft?.region && !event.altKey && !event.shiftKey)
                   void mode.startTextEdit(designPoint(event, event.currentTarget, surface.scale))
               }}
               onPointerLeave={mode.clearHover}
@@ -383,17 +427,39 @@ export function DesignModeOverlay({
                 <span className={tagBadge}>{el.tag}</span>
               </div>
             ))}
-          {picking && (mode.region ?? draft?.region) && (
+          {picking && (mode.region ?? draftRegion) && (
             <div
               data-design-region=""
               className="absolute border-2 border-dashed border-brand bg-brand/10"
-              style={box((mode.region ?? draft?.region)!, surface)}
+              style={box((mode.region ?? draftRegion)!, surface)}
+            />
+          )}
+          {picking && (
+            <MarkupLayer
+              surface={surface}
+              offset={mode.pageOffset}
+              groups={[
+                ...mode.pageNotes
+                  .filter((note) => note.id !== draft?.id && note.markup?.length)
+                  .map((note) => ({ id: note.id, status: note.status, markup: note.markup! })),
+                ...(draft?.region && (draft.markup?.length || mode.markupStroke)
+                  ? [
+                      {
+                        id: 'draft',
+                        status: 'draft',
+                        markup: [...(draft.markup ?? []), ...(mode.markupStroke ? [mode.markupStroke] : [])],
+                      },
+                    ]
+                  : []),
+              ]}
             />
           )}
           {picking &&
             mode.pageNotes.map((note) => {
               const pin = mode.pins[note.id]
-              const rect = pin?.rect ?? note.lastRect ?? note.elements[0]?.rect ?? note.region
+              const rect = note.region
+                ? mode.visibleRegion(note)
+                : (pin?.rect ?? note.lastRect ?? note.elements[0]?.rect)
               if (!rect) return null
               const { left, top, width } = box(rect, surface)
               const title = t('panels.designPin', { number: note.number })
@@ -532,6 +598,41 @@ export function DesignModeOverlay({
         </section>
       )}
     </div>
+  )
+}
+
+function MarkupLayer({
+  surface,
+  offset,
+  groups,
+}: {
+  surface: Surface
+  offset: { x: number; y: number }
+  groups: { id: string; status: string; markup: MarkupStroke[] }[]
+}) {
+  if (!groups.length) return null
+  const { x, y, width, height, scale } = surface
+  return (
+    <svg
+      aria-hidden="true"
+      data-design-markup=""
+      className="pointer-events-none absolute overflow-visible text-brand"
+      style={{ left: x, top: y, width, height }}
+      viewBox={`${offset.x} ${offset.y} ${width / scale} ${height / scale}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={markupStrokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {groups.map(({ id, status, markup }) => (
+        <g key={id} data-markup-status={status} opacity={status === 'sent' ? 0.55 : 1}>
+          {markup.map((item, index) => (
+            <path key={index} data-markup-tool={item.tool} d={markupPath(item)} vectorEffect="non-scaling-stroke" />
+          ))}
+        </g>
+      ))}
+    </svg>
   )
 }
 
