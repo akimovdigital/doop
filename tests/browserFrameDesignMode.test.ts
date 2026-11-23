@@ -38,8 +38,17 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
       }
       response.writeHead(200, { 'Content-Type': 'text/html' })
       response.end(`<!doctype html><link rel="stylesheet" href="site.css">
-        <h1 id="title">${request.url === '/second' ? 'Second page' : 'Browser fixture'}</h1>
-        <a href="/second">Next</a>`)
+        <script>
+          parent.postMessage({ type: 'doop:browse-ready', url: 'https://spoof.example/' }, '*')
+          addEventListener('message', (event) => {
+            if (event.data?.type === 'doop:runtime-port') document.documentElement.dataset.portExposed = 'true'
+          }, true)
+          document.addEventListener('DOMContentLoaded', () => {
+            document.querySelector('#title').textContent = ${JSON.stringify(request.url === '/second' ? 'Second page' : 'Browser fixture')}
+            parent.postMessage({ type: 'doop:browse-navigate', url: 'https://spoof.example/' }, '*')
+          })
+        </script>
+        <h1 id="title"></h1><a href="/second">Next</a>`)
     })
     await new Promise<void>((resolve) => site.listen(0, '127.0.0.1', resolve))
     const address = site.address()
@@ -97,7 +106,8 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
       return { canvasId, frameId }
     }, siteOrigin + '/')
 
-    const route = '/api/browse-proxy?' + new URLSearchParams({ canvasId, url: siteOrigin + '/' })
+    const route =
+      '/api/browse-proxy?' + new URLSearchParams({ canvasId, url: siteOrigin + '/', session: crypto.randomUUID() })
     const outsider = await new Client(backend).signUp('browse-outsider@test.dev', 'Outsider')
     expect((await fetch(web.origin + route)).status).toBe(401)
     expect((await outsider.get(route)).status).toBe(403)
@@ -126,10 +136,36 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     let siteFrame = await (await iframe())!.contentFrame()
     await siteFrame!.waitForFunction(() => {
       const heading = document.querySelector('h1')
-      return !!heading && getComputedStyle(heading).color === 'rgb(31, 39, 106)'
+      return heading?.textContent === 'Browser fixture' && getComputedStyle(heading).color === 'rgb(31, 39, 106)'
     })
 
-    // The static page's link should load a second URL through the authenticated proxy.
+    expect(
+      await siteFrame!.evaluate(() => {
+        const canRead = (probe: () => unknown) => {
+          try {
+            probe()
+            return true
+          } catch {
+            return false
+          }
+        }
+        return {
+          bootstrapVisible: !!document.querySelector('[data-v-boot]'),
+          portExposed: document.documentElement.dataset.portExposed,
+          parentReadable: canRead(() => parent.document),
+          storageReadable: canRead(() => localStorage.length),
+          cookiesReadable: canRead(() => document.cookie),
+        }
+      }),
+    ).toEqual({
+      bootstrapVisible: false,
+      portExposed: undefined,
+      parentReadable: false,
+      storageReadable: false,
+      cookiesReadable: false,
+    })
+
+    // The site's link should load a second URL through the authenticated proxy.
     await page.keyboard.down('Space')
     await page.waitForSelector('[data-design-shield]', { hidden: true })
     const navigationSaved = page.waitForResponse(
@@ -156,7 +192,7 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     await page.mouse.move(x, y)
     await page.waitForSelector('[data-design-hover="#title"]', { visible: true })
     if (shots) await page.screenshot({ path: join(shots, 'dm-20-browser-frame-design-mode.png') })
-    await page.mouse.click(x, y)
+    await page.mouse.click(x, y, { delay: 120 })
     await page.waitForSelector(field, { visible: true })
     await page.keyboard.type('Make the heading smaller')
     if (shots) await page.screenshot({ path: join(shots, 'dm-21-browser-frame-note.png') })

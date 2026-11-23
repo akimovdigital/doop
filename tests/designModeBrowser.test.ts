@@ -245,7 +245,12 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
   it('sends the exact note and element scope, intercepting the hotspot until exit', async () => {
     const frame = await mount()
     await enter()
-    await pick(frame, '#go')
+    const at = await location(frame, '#go')
+    await page.mouse.move(at.x, at.y)
+    await page.waitForSelector('[data-design-hover="#go"]', { visible: true })
+    await page.mouse.click(at.x, at.y, { delay: 120 })
+    await page.waitForSelector(field, { visible: true })
+    expect(await page.$('[data-design-region]')).toBeNull()
     expect(await page.$('[data-proto-screen="next"]')).toBeNull()
     await page.keyboard.type('Move this')
     await page.keyboard.press('Enter')
@@ -268,6 +273,18 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     const next = await screen('next')
     expect(await next.$eval('h1', (el) => el.textContent)).toBe('The second screen')
     expect(await page.$('[data-design-pin]')).toBeNull()
+  })
+
+  it('opens the note on mouseup when the pointerup is lost', async () => {
+    await page.evaluateOnNewDocument(() => {
+      window.addEventListener('pointerup', (event) => event.stopImmediatePropagation(), { capture: true })
+    })
+    const frame = await mount()
+    await enter()
+    const at = await location(frame, '#go')
+    await page.mouse.click(at.x, at.y, { delay: 120 })
+    await page.waitForSelector(field, { visible: true })
+    expect(await page.$('[data-design-region]')).toBeNull()
   })
 
   it('queues, edits and reloads pins, sends one batch and manages sent notes', async () => {

@@ -192,6 +192,7 @@ const REPLY_TIMEOUT_MS = 2000
 
 const windows = new Map<string, Window>()
 const frameByWindow = new Map<Window, string>()
+const browseMessageTokens = new WeakMap<Window, string>()
 const messageListeners = new Map<Window, Set<(event: MessageEvent) => void>>()
 /* ⌘Y outline mode, which a frame mounted later picks up when it registers */
 let outlines = false
@@ -206,6 +207,8 @@ function listen() {
   listening = true
   window.addEventListener('message', (ev: MessageEvent) => {
     const source = ev.source as Window | null
+    const token = source && browseMessageTokens.get(source)
+    if (token && (!ev.isTrusted || ev.origin !== 'null' || ev.data?.browseToken !== token)) return
     if (source)
       messageListeners.get(source)?.forEach((callback) => {
         // Like separate DOM listeners, one handler's failure leaves the other
@@ -230,13 +233,16 @@ function listen() {
 
 /** Deliver sandbox messages directly to their frame, including the initial
  *  boot signal before the runtime is ready to receive requests. */
-export function onFrameMessage(win: Window, callback: (event: MessageEvent) => void): () => void {
+export function onFrameMessage(win: Window, callback: (event: MessageEvent) => void, browseToken?: string): () => void {
+  if (browseToken) browseMessageTokens.set(win, browseToken)
   listen()
   const listeners = messageListeners.get(win) ?? new Set()
   messageListeners.set(win, listeners)
   listeners.add(callback)
   return () => {
     listeners.delete(callback)
+    // Keep the token on this WindowProxy while outstanding RPCs expire.
+    // The WeakMap drops it with the removed iframe.
     if (listeners.size === 0) messageListeners.delete(win)
   }
 }

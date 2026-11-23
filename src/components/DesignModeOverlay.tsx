@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
+import { hasInsetTrafficLights } from '../lib/shell'
 import type { DesignNote, NoteRect } from '../lib/designNotes'
 import { Button } from './ui/button'
 import { Checkbox } from './ui/checkbox'
@@ -97,7 +98,13 @@ export function DesignModeHint({ mode }: { mode: Mode }) {
   const t = useT()
   const message = t(mode.region || mode.draft ? 'panels.designNoteHint' : 'panels.designPickHint')
   return (
-    <div data-design-hint="" className="flex min-w-0 flex-1 items-center gap-1 text-caption text-brand">
+    <div
+      data-design-hint=""
+      className={cn(
+        'flex min-w-0 flex-1 items-center gap-1 text-caption text-brand',
+        hasInsetTrafficLights() && 'pl-[76px]',
+      )}
+    >
       <IconButton size="sm" className="text-brand" aria-label={t('panels.designExit')} onClick={mode.exit}>
         <XIcon size="rail" />
       </IconButton>
@@ -224,6 +231,59 @@ export function DesignModeOverlay({
     return () => shield.removeEventListener('wheel', wheel)
   }, [picking, surface, getWindow])
 
+  const gesture = useRef<{ id: number; mouse: boolean }>()
+  const handlers = useRef(mode)
+  useLayoutEffect(() => {
+    handlers.current = mode
+  })
+  useLayoutEffect(() => {
+    const shield = shieldRef.current
+    if (!picking || !shield || !surface) return
+    const scale = surface.scale
+    function cancel(event?: PointerEvent) {
+      if (!gesture.current || (event && event.pointerId !== gesture.current.id)) return
+      gesture.current = undefined
+      handlers.current.cancelDrag()
+    }
+    function finish(event: MouseEvent, id: number) {
+      if (event.button !== 0 || gesture.current?.id !== id) return
+      gesture.current = undefined
+      handlers.current.pointerUp(designPoint(event, shield!, scale), id, event.shiftKey, event.altKey, scale)
+    }
+    function up(event: PointerEvent) {
+      finish(event, event.pointerId)
+    }
+    function mouseUp(event: MouseEvent) {
+      const active = gesture.current
+      if (active?.mouse) finish(event, active.id)
+    }
+    function move(event: PointerEvent) {
+      const active = gesture.current
+      if (!active || event.pointerId !== active.id) return
+      if (active.mouse && !(event.buttons & 1)) {
+        cancel(event)
+        return
+      }
+      handlers.current.pointerMove(designPoint(event, shield!, scale), event.shiftKey, event.altKey, scale)
+    }
+    const blur = () => cancel()
+    window.addEventListener('pointermove', move, true)
+    window.addEventListener('pointerup', up, true)
+    window.addEventListener('mouseup', mouseUp, true)
+    window.addEventListener('pointercancel', cancel, true)
+    shield.addEventListener('lostpointercapture', cancel)
+    window.addEventListener('blur', blur)
+    return () => {
+      window.removeEventListener('pointermove', move, true)
+      window.removeEventListener('pointerup', up, true)
+      window.removeEventListener('mouseup', mouseUp, true)
+      window.removeEventListener('pointercancel', cancel, true)
+      shield.removeEventListener('lostpointercapture', cancel)
+      window.removeEventListener('blur', blur)
+      cancel()
+    }
+  }, [picking, surface, revision])
+
   if (!mode.allowed) return null
   const { draft, hover } = mode
   const selected =
@@ -258,18 +318,27 @@ export function DesignModeOverlay({
               ref={shieldRef}
               tabIndex={-1}
               data-design-shield=""
-              className="pointer-events-auto absolute cursor-crosshair touch-none outline-none"
+              className="pointer-events-auto absolute cursor-crosshair touch-none outline-none select-none"
               style={{ left: surface.x, top: surface.y, width: surface.width, height: surface.height }}
               onPointerDown={(e) => {
-                if (e.button !== 0) return
-                e.preventDefault()
+                if (e.button !== 0 || !e.isPrimary) return
+                if (gesture.current) mode.cancelDrag()
+                const mouse = e.pointerType === 'mouse'
+                // Keep compatibility mouseup enabled. Capture touch/pen; the shield
+                // and the window listeners already cover the mouse.
+                if (!mouse) e.currentTarget.setPointerCapture(e.pointerId)
                 if (!draft) e.currentTarget.focus({ preventScroll: true })
-                e.currentTarget.setPointerCapture(e.pointerId)
-                mode.pointerDown(designPoint(e, surface.scale), e.pointerId)
+                gesture.current = { id: e.pointerId, mouse }
+                mode.pointerDown(designPoint(e, e.currentTarget, surface.scale), e.pointerId)
               }}
-              onPointerMove={(e) => mode.pointerMove(designPoint(e, surface.scale), e.shiftKey, e.altKey)}
-              onPointerUp={(e) => mode.pointerUp(designPoint(e, surface.scale), e.pointerId, e.shiftKey, e.altKey)}
-              onPointerCancel={mode.cancelDrag}
+              onPointerMove={(e) => {
+                if (!gesture.current) {
+                  mode.pointerMove(designPoint(e, e.currentTarget, surface.scale), e.shiftKey, e.altKey, surface.scale)
+                }
+              }}
+              onMouseDown={(event) => {
+                if (draft) event.preventDefault()
+              }}
               onPointerLeave={mode.clearHover}
             />
           )}
@@ -417,8 +486,8 @@ export function DesignModeOverlay({
   )
 }
 
-function designPoint(event: { currentTarget: HTMLDivElement; clientX: number; clientY: number }, scale: number) {
-  const bounds = event.currentTarget.getBoundingClientRect()
+function designPoint(event: { clientX: number; clientY: number }, shield: HTMLDivElement, scale: number) {
+  const bounds = shield.getBoundingClientRect()
   return { x: (event.clientX - bounds.left) / scale, y: (event.clientY - bounds.top) / scale }
 }
 

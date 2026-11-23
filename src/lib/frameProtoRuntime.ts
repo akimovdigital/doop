@@ -221,7 +221,7 @@ export const FRAME_PROTO_RUNTIME = `
 
   // A pointer click can move focus into this document while Space is held.
   document.addEventListener('keyup', function (ev) {
-    if (ev.code === 'Space') parent.postMessage({ type: 'doop:proto-space-up' }, '*')
+    if (ev.code === 'Space' && (!browse || ev.isTrusted)) postToEditor({ type: 'doop:proto-space-up' })
   }, true)
   window.addEventListener('blur', function () {
     if (protoActive()) parent.postMessage({ type: 'doop:proto-blur' }, '*')
