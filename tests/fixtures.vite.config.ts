@@ -7,7 +7,10 @@ import app from '../vite.config.ts'
    beside index.html, minified as it ships. No .env file is read, so the pages
    are the same on every machine, and no source maps are written: nothing
    reads them, and the build stays about a second. */
+const benchOnly = process.env.DOOP_BENCH_ONLY === '1'
 const pages: UserConfig = {
+  // React's ordinary production renderer omits Profiler callbacks.
+  ...(benchOnly ? { resolve: { alias: [{ find: /^react-dom$/, replacement: 'react-dom/profiling' }] } } : {}),
   logLevel: 'error',
   envDir: false,
   build: {
@@ -15,12 +18,14 @@ const pages: UserConfig = {
     sourcemap: false,
     reportCompressedSize: false,
     rollupOptions: {
-      input: [
-        'index.html',
-        ...readdirSync('tests/fixtures')
-          .filter((name) => name.endsWith('.html'))
-          .map((name) => `tests/fixtures/${name}`),
-      ],
+      input: benchOnly
+        ? ['tests/fixtures/perfCanvas.html']
+        : [
+            'index.html',
+            ...readdirSync('tests/fixtures')
+              .filter((name) => name.endsWith('.html'))
+              .map((name) => `tests/fixtures/${name}`),
+          ],
     },
   },
 }

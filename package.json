@@ -19,7 +19,9 @@
     "doc-lint": "node scripts/doc-lint.mjs",
     "storybook": "storybook dev -p 6006 --no-open",
     "build-storybook": "storybook build",
-    "prepare": "husky || true"
+    "prepare": "husky || true",
+    "bench:canvas": "bun scripts/bench/canvas.ts",
+    "bench:bundle": "bun scripts/bench/bundle.ts"
   },
   "lint-staged": {
     "*.{ts,tsx,js}": [
