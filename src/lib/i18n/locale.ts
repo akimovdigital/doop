@@ -1,6 +1,8 @@
 import { useSyncExternalStore } from 'react'
 import { FALLBACK_LOCALE, isLocale, type Locale, type LocaleConfig } from '../../../shared/locales'
 
+import { catalogs, loadCatalog } from './catalogs'
+
 export { LOCALES, LOCALE_NAMES, isLocale, type Locale } from '../../../shared/locales'
 
 /* Per browser, not per account, like the theme: it is how this device reads. */
@@ -30,7 +32,8 @@ function getPicked(): Locale | null {
 }
 
 export function getLocale(): Locale {
-  return getPicked() ?? serverDefault
+  const locale = getPicked() ?? serverDefault
+  return catalogs[locale] ? locale : FALLBACK_LOCALE
 }
 
 /* lang tells the browser (hyphenation, screen readers, its own translator)
@@ -62,14 +65,22 @@ export function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener)
 }
 
-export function setLocale(locale: Locale): void {
+async function publishLocale(): Promise<void> {
+  const locale = getPicked() ?? serverDefault
+  const loading = loadCatalog(locale)
+  if (loading) await loading
+  // A slower catalog must not override a newer pick.
+  if (locale === (getPicked() ?? serverDefault)) notify()
+}
+
+export function setLocale(locale: Locale): Promise<void> {
   picked = locale
   try {
     localStorage.setItem(LOCALE_STORAGE_KEY, locale)
   } catch {
     /* nowhere to keep it — the choice still holds until the tab closes */
   }
-  notify()
+  return publishLocale()
 }
 
 async function fetchServerDefault(): Promise<Locale | null> {
@@ -90,17 +101,16 @@ export async function initLocale(): Promise<void> {
   window.addEventListener('storage', (event) => {
     if (event.key !== null && event.key !== LOCALE_STORAGE_KEY) return
     picked = undefined
-    notify()
+    void publishLocale()
   })
   if (!getPicked()) serverDefault = (await fetchServerDefault()) ?? FALLBACK_LOCALE
-  snapshot = null
-  mark()
+  await publishLocale()
 }
 
 /** The active language, whether this browser picked it (rather than taking
  *  the server's default), and the setter. Re-renders when it changes here or
  *  in another tab. */
-export function useLocale(): LocaleState & { setLocale: (locale: Locale) => void } {
+export function useLocale(): LocaleState & { setLocale: typeof setLocale } {
   const state = useSyncExternalStore(subscribe, getSnapshot)
   return { ...state, setLocale }
 }

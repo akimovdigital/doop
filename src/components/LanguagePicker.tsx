@@ -10,7 +10,9 @@ export function LanguagePicker() {
     <ToggleChipGroup
       aria-label={t('settings.languageAria')}
       value={locale}
-      onValueChange={(next) => isLocale(next) && setLocale(next)}
+      onValueChange={(next) => {
+        if (isLocale(next)) void setLocale(next)
+      }}
     >
       {LOCALES.map((value) => (
         <ToggleChipItem key={value} value={value} lang={value}>

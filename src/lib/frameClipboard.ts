@@ -5,7 +5,6 @@ import { posthog } from './posthog'
 import { historyEpoch, recordCreates, replaceFramesTracked } from './history'
 import { ELEMENT_CLIP_KEY, FRAME_CLIP_KEY as CLIP_KEY } from './clipboardKeys'
 import { stageViewportSize } from './framePlacement'
-import { importSvgInBrowser, looksLikeSvg } from './svgImport'
 import { importPdf, isPdfFile } from './pdfImport'
 
 /** One copied frame, positioned relative to the top-left of the copied group
@@ -258,6 +257,12 @@ export function isSvgFile(file: File): boolean {
   return file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)
 }
 
+/** Does this text look like an SVG document, the way a copied file or snippet does? */
+export function looksLikeSvg(text: string): boolean {
+  const head = text.trimStart().slice(0, 512)
+  return /^(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE[^>]*>\s*)?<svg[\s>]/i.test(head)
+}
+
 /** The text on the clipboard when it is an SVG document, as copying a file's
  *  source or an icon from a design tool puts there. */
 export function svgMarkupOf(data: DataTransfer | null): string | null {
@@ -321,8 +326,9 @@ async function importIncoming(
     : await Promise.all(
         incoming.vectors.map(async (file) => ({ name: fileStem(file.name) || 'Vector', markup: await file.text() })),
       )
+  const svg = sources.length || incoming.pdfs.length ? await import('./svgImport') : undefined
   const vectors: Prepared[] = sources.flatMap(({ name, markup }) => {
-    const result = importSvgInBrowser(markup, name)
+    const result = svg?.importSvgInBrowser(markup, name)
     if (!result) return []
     return [
       {
@@ -336,16 +342,18 @@ async function importIncoming(
   if (sources.length && !vectors.length && !images.length) throw new Error('The SVG has no shapes to import.')
   /* a PDF is one frame per page, at the page's printed size */
   /* a PDF that cannot be read drops out on its own; its siblings still land */
-  const read = await Promise.allSettled(
-    incoming.pdfs.map(async (file) =>
-      importPdf(new Uint8Array(await file.arrayBuffer()), fileStem(file.name) || 'PDF', {
-        importSvg: importSvgInBrowser,
-        /* pictures become assets, so a photo-heavy page stays under the frame's size cap */
-        storeImage: async (bytes, mime) =>
-          (await api.uploadAsset(canvasId, new Blob([bytes as BlobPart], { type: mime }))).url,
-      }),
-    ),
-  )
+  const read = svg
+    ? await Promise.allSettled(
+        incoming.pdfs.map(async (file) =>
+          importPdf(new Uint8Array(await file.arrayBuffer()), fileStem(file.name) || 'PDF', {
+            importSvg: svg.importSvgInBrowser,
+            /* pictures become assets, so a photo-heavy page stays under the frame's size cap */
+            storeImage: async (bytes, mime) =>
+              (await api.uploadAsset(canvasId, new Blob([bytes as BlobPart], { type: mime }))).url,
+          }),
+        ),
+      )
+    : []
   const unreadable = read.find((r): r is PromiseRejectedResult => r.status === 'rejected')
   if (unreadable) console.error('PDF import failed', unreadable.reason)
   const pages: Prepared[] = read

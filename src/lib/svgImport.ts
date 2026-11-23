@@ -180,12 +180,6 @@ export function parseSvgMarkup(markup: string): SVGSVGElement | null {
   return svg && svg.namespaceURI === SVG_NS ? svg : null
 }
 
-/** Does this text look like an SVG document, the way a copied file or snippet does? */
-export function looksLikeSvg(text: string): boolean {
-  const head = text.trimStart().slice(0, 512)
-  return /^(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*(<!DOCTYPE[^>]*>\s*)?<svg[\s>]/i.test(head)
-}
-
 const UNITS: Record<string, number> = {
   px: 1,
   pt: 4 / 3,
