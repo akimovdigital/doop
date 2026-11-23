@@ -422,11 +422,10 @@ export const FrameView = memo(function FrameView({
   const menuRequest = useRef(0)
   const surfaceRef = useRef<HTMLDivElement>(null)
   const linkPress = useRef<{ pointerId: number; x: number; y: number } | null>(null)
-  /* the design point the latest hover probe was asked at, and the one its
-     answer (the `hover` drawn) is for: probes are throttled with no trailing
-     one, so the drawn hover can be for a spot the pointer has left */
+  /* Keep each click candidate paired with its probe coordinates even when
+     a pointer event arrives before React renders the new hover outline. */
   const hoverAsked = useRef<{ x: number; y: number } | null>(null)
-  const hoverAnswered = useRef<{ x: number; y: number } | null>(null)
+  const hoverAnswered = useRef<{ x: number; y: number; href: string } | null>(null)
   const sentCursor = useRef<string | null>(null)
   const syncCursorRef = useRef(() => {})
   syncCursorRef.current = () => {
@@ -1272,6 +1271,7 @@ export const FrameView = memo(function FrameView({
   function clearHover() {
     hoverReq.current += 1 // drop any in-flight result
     hoverKey.current = null
+    hoverAnswered.current = null
     setHover(null)
   }
 
@@ -1291,6 +1291,7 @@ export const FrameView = memo(function FrameView({
     /* the old outline's key must match no answer, not even "nothing here",
        so the reply always redraws */
     hoverKey.current = 'stale'
+    hoverAnswered.current = null
     if (
       editing ||
       pathEdit ||
@@ -1627,7 +1628,8 @@ export const FrameView = memo(function FrameView({
       }
       if (ev.data?.type === 'doop:hover-result' && ev.data.reqId === hoverReq.current) {
         const hit = (ev.data.hit ?? null) as HoverHit | null
-        hoverAnswered.current = hoverAsked.current
+        const point = hoverAsked.current
+        hoverAnswered.current = point && hit?.href ? { ...point, href: hit.href } : null
         /* only re-render when the outlined element actually changes */
         const key = hit ? JSON.stringify([hit.selector, hit.rect, hit.href, hit.linkRect]) : null
         if (key !== hoverKey.current) {
@@ -2375,20 +2377,20 @@ export const FrameView = memo(function FrameView({
                 return
               }
               const at = designPoint(e, e.currentTarget, frame.rotation)
-              /* a web link opens now, inside the click, where a popup blocker
-                 is surest to allow the tab: but only when the hover drawn was
-                 answered for this very spot. Otherwise the frame is asked
-                 what is under the press, as for every other link */
+              /* Use a hover reply for the exact click point to open a web
+                 link synchronously while the browser allows the tab.
+                 Otherwise, ask the frame what is under the pointer. */
               const answered = hoverAnswered.current
+              const canvas = useStore.getState().canvas
               if (
-                linkHovered &&
-                linkHovered.kind === 'web' &&
-                hover?.href &&
                 answered &&
-                Math.hypot(at.x - answered.x, at.y - answered.y) <= 2
+                at.x === answered.x &&
+                at.y === answered.y &&
+                canvas &&
+                resolveFrameLink(canvas, answered.href)?.kind === 'web'
               ) {
                 linkPress.current = null
-                followLink(hover.href)
+                followLink(answered.href)
                 return
               }
               void requestFrame(frame.id, 'doop:link-hit', at).then((reply) => {
