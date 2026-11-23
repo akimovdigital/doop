@@ -315,8 +315,10 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', { timeout: 30_0
   it('drags from the pill grip and commits a normal canvas move', async () => {
     await seed()
     await page.hover(SURFACE)
-    await page.waitForSelector(BAR)
-    const grip = await centerOf(`${BAR} [aria-label="Drag browser frame"]`)
+    const gripSelector = `${BAR} [aria-label="Drag browser frame"]`
+    // The initial camera fit can leave the pill mounted but hidden.
+    await page.waitForSelector(gripSelector, { visible: true })
+    const grip = await centerOf(gripSelector)
     await page.mouse.move(grip.x, grip.y)
     await page.mouse.down()
     await page.mouse.move(grip.x + 65, grip.y + 22, { steps: 6 })
@@ -331,8 +333,7 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', { timeout: 30_0
     await seed()
     await child()
     await page.click(SURFACE)
-    await page.waitForSelector(TOOLS)
-    await clickButton(TOOLS, 'Capture')
+    await page.locator(`${TOOLS} button[aria-label="Capture"]`).setVisibility('visible').click()
     await page
       .locator('[role="menuitem"]')
       .filter((item) => item.textContent === 'Visible area')

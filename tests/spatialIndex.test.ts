@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { frameDesignPoint, rotatedBounds } from '../shared/frameRotation'
 import { framePageId } from '../shared/pages'
 import type { Frame } from '../shared/types'
+import { drawingDropFrame } from '../src/lib/drawingMove'
+import { currentPageSpatialIndex } from '../src/lib/pages'
 import { snapFrame } from '../src/lib/snap'
 import { SpatialIndex } from '../src/lib/spatialIndex'
+import { useStore } from '../src/lib/store'
 
 function makeFrames(count: number) {
   let seed = 647
@@ -37,6 +40,58 @@ function makeFrames(count: number) {
 }
 
 describe('page frame spatial index', () => {
+  it('finds the source frame under an in-frame drawing drag after the canvas is seeded', () => {
+    const source: Frame = {
+      id: 'source',
+      canvasId: 'c',
+      pageId: 'first',
+      name: 'Source',
+      html: '<div data-doop-drawing="rectangle"></div>',
+      x: 20,
+      y: 20,
+      width: 250,
+      height: 250,
+      createdAt: 0,
+      updatedAt: 0,
+      updatedBy: 'test',
+    }
+    const canvas = {
+      id: 'c',
+      name: 'Draw',
+      pages: [
+        { id: 'first', name: 'Main' },
+        { id: 'second', name: 'Other' },
+      ],
+      createdAt: 0,
+      updatedAt: 0,
+    }
+    const store = useStore.getState()
+    store.setCanvas({ ...canvas, frames: [] })
+    try {
+      expect(currentPageSpatialIndex()?.index.all('first')).toEqual([])
+      const frames = [
+        source,
+        { ...source, id: 'hidden', hidden: true },
+        { ...source, id: 'other-page', pageId: 'second' },
+      ]
+      store.setCanvas({ ...canvas, frames })
+      const point = { x: 143, y: 217 }
+      const brute = [...frames].reverse().find(
+        (frame) =>
+          !frame.hidden &&
+          framePageId(canvas, frame) === 'first' &&
+          point.x >= frame.x &&
+          point.x <= frame.x + frame.width &&
+          point.y >= frame.y &&
+          point.y <= frame.y + frame.height,
+      )
+      expect(brute?.id).toBe('source')
+      expect(drawingDropFrame(point)).toEqual(brute)
+    } finally {
+      store.setCanvas(null)
+    }
+  })
+
   it('matches admission candidates and rotated point hits after edits and reordering', () => {
     const { canvas, random } = makeFrames(500)
     const index = new SpatialIndex()
