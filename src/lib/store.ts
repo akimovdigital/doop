@@ -121,6 +121,7 @@ interface State {
   /** which face the Layers panel shows: the layer tree, Components, or Tokens */
   layersTab: 'layers' | 'components' | 'tokens'
   selectedSectionId: string | null
+  selectedSectionIds: string[]
   sectionFocus: { id: string } | null
   /** ⌘. — every panel and toolbar is off screen, leaving only the canvas.
    *  A plain overlay flag: the panels' own open/closed state is untouched
@@ -304,7 +305,7 @@ interface State {
   setElementPanelOpen(v: boolean): void
   setLayersOpen(v: boolean): void
   setLayersTab(tab: State['layersTab']): void
-  selectSection(id: string): void
+  selectSection(id: string, toggle?: boolean): void
   focusSection(id: string): void
   toggleUiHidden(): void
   setPrototypeMode(on: boolean): void
@@ -385,6 +386,7 @@ export const useStore = create<State>((set, get) => ({
   layersOpen: readLayersOpen(),
   layersTab: 'layers',
   selectedSectionId: null,
+  selectedSectionIds: [],
   sectionFocus: null,
   uiHidden: false,
   prototypeMode: false,
@@ -412,6 +414,7 @@ export const useStore = create<State>((set, get) => ({
          re-join of the same canvas keeps it */
       uiHidden: !!canvas && canvas.id === s.canvas?.id && s.uiHidden,
       selectedSectionId: canvas?.id === s.canvas?.id ? s.selectedSectionId : null,
+      selectedSectionIds: canvas?.id === s.canvas?.id ? s.selectedSectionIds : [],
       /* an agent follow outlives the agent's presence, not the canvas */
       ...(s.following && canvas?.id !== s.canvas?.id ? UNFOLLOW : {}),
       activePageId: canvas
@@ -428,6 +431,7 @@ export const useStore = create<State>((set, get) => ({
       return {
         activePageId: id,
         selectedSectionId: null,
+        selectedSectionIds: [],
         sectionFocus: null,
         selectedId: null,
         selectedIds: [],
@@ -467,15 +471,17 @@ export const useStore = create<State>((set, get) => ({
         canvas.guides = canvas.guides.filter((g) => pages.some((p) => p.id === g.pageId))
       const selectedGuideId = canvas.guides?.some((g) => g.id === s.selectedGuideId) ? s.selectedGuideId : null
       const activePageId = pages.some((p) => p.id === s.activePageId) ? s.activePageId : pages[0]!.id
+      const sections = pages.find((page) => page.id === activePageId)?.sections ?? []
+      const selectedSectionIds =
+        activePageId === s.activePageId
+          ? s.selectedSectionIds.filter((id) => sections.some((item) => item.id === id))
+          : []
       return {
         canvas,
         activePageId,
         selectedGuideId,
-        selectedSectionId: pages
-          .find((p) => p.id === activePageId)
-          ?.sections?.some((sct) => sct.id === s.selectedSectionId)
-          ? s.selectedSectionId
-          : null,
+        selectedSectionIds,
+        selectedSectionId: selectedSectionIds.at(-1) ?? null,
         ...(activePageId !== s.activePageId
           ? {
               selectedId: null,
@@ -751,6 +757,7 @@ export const useStore = create<State>((set, get) => ({
             selectedId,
             selectedIds,
             selectedSectionId: null,
+            selectedSectionIds: [],
             inspectorOpen: false,
             selectedElement: null,
             elementPanelOpen: false,
@@ -761,16 +768,15 @@ export const useStore = create<State>((set, get) => ({
     set((s) => {
       const selectedIds = s.selectedIds.includes(id) ? s.selectedIds.filter((x) => x !== id) : [...s.selectedIds, id]
       const selectedId = selectedIds[selectedIds.length - 1] ?? null
-      return selectedId === s.selectedId && !s.selectedSectionId
-        ? { selectedIds }
-        : {
-            selectedIds,
-            selectedId,
-            selectedSectionId: null,
-            inspectorOpen: false,
-            selectedElement: null,
-            elementPanelOpen: false,
-          }
+      if (selectedId === s.selectedId && !s.selectedSectionId) return { selectedIds }
+      return {
+        selectedIds,
+        selectedId,
+        inspectorOpen: s.selectedSectionId ? s.inspectorOpen : false,
+        selectedElement: null,
+        selectedElements: [],
+        elementPanelOpen: false,
+      }
     }),
   selectMany: (ids) => {
     const state = get()
@@ -784,6 +790,7 @@ export const useStore = create<State>((set, get) => ({
             selectedIds: ids,
             selectedId,
             selectedSectionId: null,
+            selectedSectionIds: [],
             inspectorOpen: false,
             selectedElement: null,
             elementPanelOpen: false,
@@ -875,17 +882,25 @@ export const useStore = create<State>((set, get) => ({
     set({ layersOpen })
   },
   setLayersTab: (layersTab) => set({ layersTab }),
-  selectSection: (id) =>
-    set({
-      selectedSectionId: id,
-      selectedId: null,
-      selectedIds: [],
-      selectedElement: null,
-      selectedElements: [],
-      elementPanelOpen: false,
-      selectedGuideId: null,
-      inspectorOpen: true,
-      ctxMenu: null,
+  selectSection: (id, toggle = false) =>
+    set((s) => {
+      const selectedSectionIds = !toggle
+        ? [id]
+        : s.selectedSectionIds.includes(id)
+          ? s.selectedSectionIds.filter((item) => item !== id)
+          : [...s.selectedSectionIds, id]
+      return {
+        selectedSectionIds,
+        selectedSectionId: selectedSectionIds.at(-1) ?? null,
+        selectedId: toggle ? s.selectedId : null,
+        selectedIds: toggle ? s.selectedIds : [],
+        selectedElement: null,
+        selectedElements: [],
+        elementPanelOpen: false,
+        selectedGuideId: null,
+        inspectorOpen: selectedSectionIds.length > 0,
+        ctxMenu: null,
+      }
     }),
   focusSection: (id) => {
     get().selectSection(id)

@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid'
 import { rotatedBounds } from '../shared/frameRotation.ts'
 import { sortByStack } from '../shared/frameStack.ts'
 import { canvasPages, pageFrames } from '../shared/pages.ts'
-import { SECTION_BOUNDS_LIMIT, sectionContainsFrame } from '../shared/sections.ts'
+import { SECTION_BOUNDS_LIMIT, sectionContents } from '../shared/sections.ts'
 import type {
   Canvas,
   CanvasFrameMove,
@@ -52,16 +52,37 @@ export function moveSection(
   const delta = { x: to.x - section.x, y: to.y - section.y }
   if (!delta.x && !delta.y) return { pages, frameMoves: [] }
 
-  const sections = page!.sections!.map((s) => {
-    if (s.id === sectionId) return { ...s, ...to }
-    return (s.width < section.width || s.height < section.height) && sectionContainsFrame(section, s)
-      ? { ...s, x: s.x + delta.x, y: s.y + delta.y }
-      : s
-  })
-  const frameMoves = pageFrames(canvas, pageId)
-    .filter((frame) => sectionContainsFrame(section, frame))
-    .map((frame) => moveFrame(frame, pageId, delta, by))
+  const contents = sectionContents(page!.sections!, pageFrames(canvas, pageId), [section])
+  const moving = new Set(contents.sections.map((child) => child.id))
+  const sections = page!.sections!.map((child) =>
+    moving.has(child.id) ? { ...child, x: child.x + delta.x, y: child.y + delta.y } : child,
+  )
+  const frameMoves = contents.frames.map((frame) => moveFrame(frame, pageId, delta, by))
   return { pages: pages.map((p) => (p.id === pageId ? { ...p, sections } : p)), frameMoves }
+}
+
+export function removeSections(
+  canvas: Canvas,
+  pageId: string,
+  ids: readonly string[],
+  keepContents: boolean,
+): PageLayoutWrite | undefined {
+  const pages = canvasPages(canvas)
+  const page = pages.find((item) => item.id === pageId)
+  if (!page) return undefined
+  const sections = page.sections ?? []
+  const roots = sections.filter((section) => ids.includes(section.id))
+  if (!roots.length) return { pages, frameMoves: [] }
+
+  const contents = keepContents
+    ? { sections: roots, frames: [] }
+    : sectionContents(sections, pageFrames(canvas, pageId), roots)
+  const removed = new Set(contents.sections.map((section) => section.id))
+  const frameDeletes = contents.frames.map((frame) => frame.id)
+  const next = { ...page, sections: sections.filter((section) => !removed.has(section.id)) }
+  if (next.landingSectionId && removed.has(next.landingSectionId)) delete next.landingSectionId
+  if (next.startFrameId && frameDeletes.includes(next.startFrameId)) delete next.startFrameId
+  return { pages: pages.map((item) => (item === page ? next : item)), frameMoves: [], frameDeletes }
 }
 
 const PAGE_PADDING = 64

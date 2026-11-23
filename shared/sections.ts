@@ -30,9 +30,36 @@ export function sectionForFrame(sections: readonly CanvasSection[], frame: Secti
   return closest
 }
 
+/** Resolve the subtree using the same tightest-container rule as the Layers panel.
+ * Equal boxes are peers, even though both may contain the same object. */
+export function sectionContents<T extends SectionFrame>(
+  sections: readonly CanvasSection[],
+  frames: readonly T[],
+  roots: readonly CanvasSection[],
+) {
+  const area = (section: CanvasSection) => section.width * section.height
+  const ids = new Set(roots.map((section) => section.id))
+  for (const section of [...sections].sort((a, b) => area(b) - area(a))) {
+    if (ids.has(section.id) || !roots.some((root) => sectionContainsFrame(root, section))) continue
+    const parent = sectionForFrame(
+      sections.filter((other) => area(other) > area(section)),
+      section,
+    )
+    if (parent && ids.has(parent.id)) ids.add(section.id)
+  }
+  return {
+    sections: sections.filter((section) => ids.has(section.id)),
+    frames: frames.filter((frame) => {
+      if (!roots.some((root) => sectionContainsFrame(root, frame))) return false
+      const parent = sectionForFrame(sections, frame)
+      return parent !== undefined && ids.has(parent.id)
+    }),
+  }
+}
+
 export const SECTION_FILL = { light: '#ebedf2', dark: '#30343c' } as const
 export const SECTION_STROKE = { light: '#c3c9d3', dark: '#535b69' } as const
-export const SECTION_RADIUS = 8
+export const SECTION_RADIUS = 2
 export const SECTION_BOUNDS_LIMIT = 1_000_000_000
 
 /** A wrapper can be moved or resized independently of what it contains. */

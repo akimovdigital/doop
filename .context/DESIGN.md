@@ -91,6 +91,12 @@ White system (Doop UI v2, canvas guideline `doop-ui-system`): neutral greys, no 
   `text-paper`, never `text-white`, so it flips with the theme. `text-white` is for brand and
   accent fills and for dark overlays, which stay dark in both themes.
 
+## Section inspector
+
+Sections use the frame inspector’s name, position and size controls and the Design panel’s paint
+fields. The size row links width and height. Stroke alignment and the canvas actions for fitting
+contents, fitting the viewport and copying a link stay with the section.
+
 ## Component catalogue (Storybook)
 
 - `bun run storybook` serves the catalogue on :6006; `bun run build-storybook` writes

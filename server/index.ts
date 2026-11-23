@@ -68,6 +68,7 @@ import {
   MAX_SECTION_COORDINATE,
   MAX_SECTIONS_PER_PAGE,
   moveSection,
+  removeSections,
   PageLayoutLimitError,
 } from './pageSections.ts'
 import { parseGuide } from '../shared/guides.ts'
@@ -2387,22 +2388,21 @@ app.delete(sectionPath, async (req, res, next) => {
   const canvas = requireCanvas(req, res, req.params.id, 'edit')
   if (!canvas) return
   const { pageId, sectionId } = req.params
-  const current = canvasPages(canvas)
-  const page = current.find((p) => p.id === pageId)
-  if (!page) return res.status(404).json({ error: 'page not found' })
-  const pages = page.sections?.some((s) => s.id === sectionId)
-    ? current.map((p) =>
-        p === page
-          ? {
-              ...p,
-              sections: page.sections!.filter((s) => s.id !== sectionId),
-              ...(p.landingSectionId === sectionId ? { landingSectionId: undefined } : {}),
-            }
-          : p,
-      )
-    : current
+  const input = z
+    .object({
+      keepContents: z.boolean().default(true),
+      additionalSections: z
+        .array(z.string())
+        .max(MAX_SECTIONS_PER_PAGE - 1)
+        .default([]),
+    })
+    .safeParse(req.body)
+  if (!input.success) return res.status(400).json({ error: 'Provide valid section removal options.' })
+  const { keepContents, additionalSections } = input.data
+  const layout = removeSections(canvas, pageId, [sectionId, ...additionalSections], keepContents)
+  if (!layout) return res.status(404).json({ error: 'page not found' })
   try {
-    res.json(await actions.savePageLayout(canvas.id, { pages, frameMoves: [] }, userActor(req)))
+    res.json(await actions.savePageLayout(canvas.id, layout, userActor(req)))
   } catch (error) {
     next(error)
   }

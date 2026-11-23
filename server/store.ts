@@ -610,6 +610,14 @@ class Store {
           for (const { id, ...placement } of layout.frameMoves) Object.assign(byId.get(id)!, placement)
           canvas.frames.sort(byStack)
         }
+        if (layout.frameDeletes?.length) {
+          const deleted = new Set(layout.frameDeletes)
+          canvas.frames = canvas.frames.filter((frame) => !deleted.has(frame.id))
+          for (const id of deleted) {
+            this.frameIndex.delete(id)
+            persist.deleteFrame(id, true)
+          }
+        }
         canvas.updatedAt = Math.max(canvas.updatedAt, updatedAt)
         this.reviseCanvas(canvas)
         applyComments()

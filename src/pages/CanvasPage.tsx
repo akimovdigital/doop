@@ -442,7 +442,7 @@ export function CanvasPage({
      selection walk on ↩ and Tab, the arrow nudge and Esc */
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (useBrowserUi.getState().surface?.mode === 'present') return
+      if (e.defaultPrevented || useBrowserUi.getState().surface?.mode === 'present') return
       const typing = isTypingTarget(e.target)
       if (dispatchActionKey(e, typing)) return
       if (typing) return
@@ -462,7 +462,8 @@ export function CanvasPage({
       const canEdit = canEditOpenCanvas(useStore.getState())
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
-        if (canEdit && !e.repeat) deleteSelection()
+        const modifiedSection = useStore.getState().selectedSectionId && (e.metaKey || e.ctrlKey)
+        if (canEdit && !e.repeat && !modifiedSection) deleteSelection()
       }
       /* Figma's walk of the selection: ↩ into it, ⇧↩ out to the parent, Tab
          and ⇧Tab along the siblings. Only the bare keys, and only when no
@@ -528,7 +529,9 @@ export function CanvasPage({
     /* ⌘X: copy, then remove what ⌫ would. Locked frames and layers stay put,
        as they do on ⌫, so cutting one only copies it; a reader's cut copies. */
     function onCut(e: ClipboardEvent) {
-      const remove = canEditOpenCanvas(useStore.getState()) ? () => void deleteSelection() : undefined
+      const state = useStore.getState()
+      if (state.selectedSectionId) return
+      const remove = canEditOpenCanvas(state) ? () => void deleteSelection() : undefined
       if (writeSelection(e, remove)) e.preventDefault()
     }
     function onPaste(e: ClipboardEvent) {
@@ -802,7 +805,9 @@ export function CanvasPage({
   const pageShown = !readOnly && !selectedFrame && !selectedSection && pagePanelOpen && !deferPanel
   /* the frame Inspector, the element panel or the Page panel, whichever has the slot */
   const propertiesShown =
-    (!readOnly && !!selectedFrame && !deferPanel && (!!panelElement || inspectorOpen)) || sectionShown || pageShown
+    (!readOnly && !selectedSection && !!selectedFrame && !deferPanel && (!!panelElement || inspectorOpen)) ||
+    sectionShown ||
+    pageShown
   /* ⇧R docks the rulers on the canvas's top and left edges; the bar and the
      floating chrome step in past them (the same test Stage draws them by) */
   const rulers = useStore((s) => s.rulers)
@@ -1199,7 +1204,7 @@ export function CanvasPage({
               }}
             />
           )}
-          {!isMobile && !readOnly && selectedFrame && panelElement && !deferPanel && (
+          {!isMobile && !readOnly && !selectedSection && selectedFrame && panelElement && !deferPanel && (
             <ElementPanel
               /* never keyed: picking the next element, in this frame or
                  another, swaps the values in place instead of remounting */
@@ -1209,9 +1214,15 @@ export function CanvasPage({
               style={{ right: chrome.properties }}
             />
           )}
-          {!isMobile && !readOnly && selectedFrame && inspectorOpen && !panelElement && !deferPanel && (
-            <Inspector frame={selectedFrame} surface={panelSurface} style={{ right: chrome.properties }} />
-          )}
+          {!isMobile &&
+            !readOnly &&
+            !selectedSection &&
+            selectedFrame &&
+            inspectorOpen &&
+            !panelElement &&
+            !deferPanel && (
+              <Inspector frame={selectedFrame} surface={panelSurface} style={{ right: chrome.properties }} />
+            )}
           {!isMobile && sectionShown && selectedSection && (
             <SectionInspector
               key={selectedSection.id}

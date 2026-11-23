@@ -279,29 +279,28 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     expect(
       await page.$$eval('[data-canvas-section] button[aria-label^="Resize section"]', (items) => items.length),
     ).toBe(4)
-    await page.click(inspector + ' button[role="switch"]')
-    await page.waitForSelector(inspector + ' button[role="switch"][aria-checked="true"]')
-    const width = await page.$eval(
-      inspector + ' input[aria-label="Width"]',
-      (el) => (el as HTMLInputElement).valueAsNumber,
+    const aspectLock = inspector + ' button[aria-label="Link width and height"]'
+    await page.click(aspectLock)
+    await page.waitForSelector(aspectLock + '[aria-pressed="true"]')
+    const width = await page.$eval(inspector + ' input[aria-label="Width"]', (el) =>
+      Number((el as HTMLInputElement).value),
     )
-    const height = await page.$eval(
-      inspector + ' input[aria-label="Height"]',
-      (el) => (el as HTMLInputElement).valueAsNumber,
+    const height = await page.$eval(inspector + ' input[aria-label="Height"]', (el) =>
+      Number((el as HTMLInputElement).value),
     )
-    await page.locator(inspector + ' input[aria-label="Width"]').fill(String(width + 30))
+    await page.click(inspector + ' input[aria-label="Width"]', { count: 3 })
+    await page.keyboard.type(String(width + 30))
     await page.keyboard.press('Enter')
     await page.waitForFunction(
       (height) => {
         const next = document.querySelector<HTMLInputElement>('[data-section-inspector] input[aria-label="Height"]')
-        return !!next && next.valueAsNumber > height
+        return !!next && Number(next.value) > height
       },
       {},
       height,
     )
-    const resizedHeight = await page.$eval(
-      inspector + ' input[aria-label="Height"]',
-      (el) => (el as HTMLInputElement).valueAsNumber,
+    const resizedHeight = await page.$eval(inspector + ' input[aria-label="Height"]', (el) =>
+      Number((el as HTMLInputElement).value),
     )
     expect(resizedHeight).toBeCloseTo(((width + 30) * height) / width)
     const beforeFit = await page.$eval('.world', (el) => (el as HTMLElement).style.transform)

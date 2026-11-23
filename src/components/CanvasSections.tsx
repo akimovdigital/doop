@@ -13,23 +13,30 @@ import {
   SECTION_FILL,
   SECTION_RADIUS,
   SECTION_STROKE,
-  sectionContainsFrame,
+  sectionContents,
   sectionForFrame,
   sectionPaint,
   sectionSize,
 } from '../../shared/sections'
 import type { CanvasSection } from '../../shared/types'
 import { usePageCanvas } from '../lib/pages'
-import { activeSections, changeSection, sectionLink } from '../lib/canvasSections'
+import {
+  activeSections,
+  changeSection,
+  copySectionLink,
+  removeSectionSelection,
+  wrapSelectionInSection,
+} from '../lib/canvasSections'
 import { canEditOpenCanvas, useStore } from '../lib/store'
 import { useT } from '../lib/i18n'
 import { useTheme } from '../lib/theme'
-import { isTypingTarget } from '../lib/keys'
+import { isTypingTarget, MOD_KEY } from '../lib/keys'
 import { cn } from '../lib/utils'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { SectionIcon } from './ui/icons'
+import { MenuHint } from './ui/menu'
 
 type Point = { x: number; y: number }
 type Corner = 'nw' | 'ne' | 'sw' | 'se'
@@ -108,6 +115,7 @@ export const CanvasSections = memo(function CanvasSections({
   const canvasId = useStore((state) => state.canvas?.id)
   const pageId = useStore((state) => state.activePageId)
   const picked = useStore((state) => state.selectedSectionId)
+  const pickedIds = useStore((state) => state.selectedSectionIds)
   const selectSection = useStore((state) => state.selectSection)
   const { resolved } = useTheme()
   const stackedSections = useMemo(
@@ -165,13 +173,9 @@ export const CanvasSections = memo(function CanvasSections({
     const related: HTMLElement[] = []
     if (gesture.type === 'move' && state.canvas) {
       const { section } = gesture
-      const nested = sections.filter(
-        (item) =>
-          item.id !== section.id &&
-          (item.width < section.width || item.height < section.height) &&
-          sectionContainsFrame(section, item),
-      )
-      const frames = pageFrames(state.canvas, pageId).filter((frame) => sectionContainsFrame(section, frame))
+      const contents = sectionContents(sections, pageFrames(state.canvas, pageId), [section])
+      const nested = contents.sections.filter((item) => item.id !== section.id)
+      const frames = contents.frames
       for (const frame of frames) {
         const shell = world.current?.querySelector<HTMLElement>(`[data-doop-frame-shell="${CSS.escape(frame.id)}"]`)
         if (shell) related.push(shell)
@@ -181,7 +185,8 @@ export const CanvasSections = memo(function CanvasSections({
         if (element) related.push(element)
       }
     }
-    if (gesture.type !== 'create') selectSection(gesture.section.id)
+    if (gesture.type !== 'create' && !state.selectedSectionIds.includes(gesture.section.id))
+      selectSection(gesture.section.id)
     const handle = gesture.type === 'create' ? surface : gesture.handle
     try {
       handle.setPointerCapture(pointerId)
@@ -294,7 +299,7 @@ export const CanvasSections = memo(function CanvasSections({
     const state = useStore.getState()
     if (!element || state.tool !== 'select' || state.panMode || event.button !== 0) return
     event.stopPropagation()
-    if (!editable) return
+    if (!editable || (event.shiftKey && !corner)) return
     const handle = event.currentTarget
     begin(
       event.nativeEvent,
@@ -306,16 +311,6 @@ export const CanvasSections = memo(function CanvasSections({
     const next = name.trim()
     if (next && next !== section.name) void submit({ type: 'patch', section, patch: { name: next } })
     setRenaming(undefined)
-  }
-
-  async function copyLink(section: CanvasSection) {
-    if (!canvasId || !pageId) return
-    try {
-      await navigator.clipboard.writeText(sectionLink(canvasId, pageId, section.id))
-      useStore.getState().pushNotice(t('canvas.sectionLinkCopied'))
-    } catch {
-      useStore.getState().pushNotice(t('canvas.sectionLinkFailed'))
-    }
   }
 
   useEffect(() => {
@@ -343,9 +338,6 @@ export const CanvasSections = memo(function CanvasSections({
       } else if (event.key === 'F2') {
         event.preventDefault()
         startRename(selected)
-      } else if (event.key === 'Delete' || event.key === 'Backspace') {
-        event.preventDefault()
-        void submit({ type: 'delete', section: selected })
       } else if (event.key === 'Escape') {
         useStore.getState().select(null)
       }
@@ -363,7 +355,7 @@ export const CanvasSections = memo(function CanvasSections({
           <div
             key={section.id}
             data-canvas-section={section.id}
-            data-section-selected={picked === section.id || undefined}
+            data-section-selected={pickedIds.includes(section.id) || undefined}
             className="pointer-events-none absolute"
             style={{
               left: section.x,
@@ -373,7 +365,7 @@ export const CanvasSections = memo(function CanvasSections({
               borderRadius: section.cornerRadius ?? SECTION_RADIUS,
               backgroundColor: fill ? sectionPaint(fill, section.fillOpacity ?? 100) : 'transparent',
               boxShadow: sectionShadow(section, stroke),
-              outline: picked === section.id ? 'calc(1.5px / var(--zoom, 1)) solid var(--brand)' : undefined,
+              outline: pickedIds.includes(section.id) ? 'calc(1.5px / var(--zoom, 1)) solid var(--brand)' : undefined,
             }}
           >
             {editable && tool === 'select' && (
@@ -419,9 +411,9 @@ export const CanvasSections = memo(function CanvasSections({
                       title={section.name}
                       onPointerDown={(event) => pointerHandle(event, section)}
                       onDoubleClick={() => startRename(section)}
-                      onClick={() => {
+                      onClick={(event) => {
                         if (useStore.getState().tool === 'select' && !useStore.getState().panMode)
-                          selectSection(section.id)
+                          selectSection(section.id, event.shiftKey)
                       }}
                     >
                       <SectionIcon className="size-3.5 shrink-0 text-ink-soft" aria-hidden />
@@ -432,7 +424,7 @@ export const CanvasSections = memo(function CanvasSections({
                     <ContextMenuItem onSelect={() => useStore.getState().focusSection(section.id)}>
                       {t('canvas.sectionFit')}
                     </ContextMenuItem>
-                    <ContextMenuItem onSelect={() => void copyLink(section)}>
+                    <ContextMenuItem onSelect={() => void copySectionLink(section)}>
                       {t('canvas.sectionCopyLink')}
                     </ContextMenuItem>
                     {editable && (
@@ -440,7 +432,18 @@ export const CanvasSections = memo(function CanvasSections({
                         <ContextMenuItem onSelect={() => startRename(section)}>
                           {t('canvas.sectionRename')}
                         </ContextMenuItem>
-                        <ContextMenuItem onSelect={() => void submit({ type: 'delete', section })}>
+                        <ContextMenuItem
+                          onSelect={() =>
+                            void wrapSelectionInSection(t('canvas.toolSection'), { sectionId: section.id })
+                          }
+                        >
+                          {t('canvas.sectionWrap')}
+                        </ContextMenuItem>
+                        <ContextMenuItem onSelect={() => removeSectionSelection(true, section.id)}>
+                          {t('canvas.sectionUnwrap')}
+                          <MenuHint>{MOD_KEY}⌫</MenuHint>
+                        </ContextMenuItem>
+                        <ContextMenuItem tone="danger" onSelect={() => removeSectionSelection(false, section.id)}>
                           {t('canvas.sectionDelete')}
                         </ContextMenuItem>
                       </>
@@ -483,7 +486,7 @@ export const CanvasSections = memo(function CanvasSections({
 export function SectionsPanel() {
   const canvas = usePageCanvas()
   const sections = useStore(activeSections)
-  const selectedId = useStore((s) => s.selectedSectionId)
+  const selectedIds = useStore((s) => s.selectedSectionIds)
   const t = useT()
   const frameCounts = new Map<string, number>()
   for (const frame of canvas?.frames ?? []) {
@@ -500,8 +503,8 @@ export function SectionsPanel() {
           key={section.id}
           title={section.name}
           className="flex items-center justify-start gap-2 rounded-row px-2.5 py-1.5 text-left text-label text-ink hover:bg-sub"
-          aria-pressed={selectedId === section.id}
-          onClick={() => useStore.getState().selectSection(section.id)}
+          aria-pressed={selectedIds.includes(section.id)}
+          onClick={(event) => useStore.getState().selectSection(section.id, event.shiftKey)}
           onDoubleClick={() => useStore.getState().focusSection(section.id)}
         >
           <SectionIcon className="size-3.5 shrink-0 text-ink-soft" aria-hidden />

@@ -1,3 +1,4 @@
+import { removeSectionSelection } from '../canvasSections'
 import { createBrowserFrame, openBrowserSurface, reloadBrowser, selectedBrowser } from '../browserFrames'
 /* Every command the canvas editor offers, in one list: the keyboard handler,
    the ⌘K palette, the main menu and the shortcuts sheet all read it, so a
@@ -386,7 +387,7 @@ export const ACTIONS: readonly CanvasAction[] = [
     keys: [{ key: 'Backspace' }, { key: 'Delete' }],
     hintOnly: true,
     edit: true,
-    enabled: hasSelection,
+    enabled: () => !!store().selectedSectionId || hasSelection(),
     run: () => deleteSelection(),
   },
   { id: 'find', label: 'actions.find', menu: 'edit', section: 2, keys: [mod('f')], run: () => h()?.openFind('find') },
@@ -749,8 +750,17 @@ export const ACTIONS: readonly CanvasAction[] = [
     section: 0,
     keys: [mod('g', { shift: true }), mod('Backspace')],
     edit: true,
-    enabled: canUngroup,
+    enabled: () => !store().selectedSectionId && canUngroup(),
     run: ungroupSelection,
+  },
+  {
+    id: 'unwrap-section',
+    label: 'canvas.sectionUnwrap',
+    menu: 'object',
+    section: 0,
+    edit: true,
+    enabled: () => !!store().selectedSectionId,
+    run: () => removeSectionSelection(true),
   },
   {
     id: 'auto-layout',
@@ -1249,6 +1259,19 @@ type KeyEventLike = Pick<
  *  found nothing to act on, is left to the next binding and the browser. */
 export function dispatchActionKey(e: KeyEventLike, typing: boolean, mac = IS_MAC): boolean {
   if (!host || host.presenting) return false
+  // On a section the modified Backspace removes the wrapper. Ungroup keeps its single registry binding.
+  if (
+    !typing &&
+    store().selectedSectionId &&
+    e.key === 'Backspace' &&
+    (e.metaKey || e.ctrlKey) &&
+    !e.altKey &&
+    !e.shiftKey
+  ) {
+    if (!e.repeat) removeSectionSelection(true)
+    e.preventDefault()
+    return true
+  }
   for (const action of ACTIONS) {
     if (action.hintOnly) continue
     if (!action.keys?.some((chord) => (!typing || chord.global) && matchesChord(e, chord, mac))) continue

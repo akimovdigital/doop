@@ -166,6 +166,7 @@ export interface CanvasFrameMove {
 export interface CanvasPageLayout {
   pages: CanvasPageInfo[]
   frameMoves: CanvasFrameMove[]
+  frameDeletes?: string[]
 }
 
 export interface CanvasPageInfo {

@@ -128,3 +128,64 @@ it('moves sections with their frames and consolidates pages durably', async () =
     server.stop()
   }
 }, 150_000)
+
+it('unwraps in place and durably deletes only the selected section subtree', async () => {
+  let server = await startServer()
+  try {
+    const owner = await new Client(server).signUp('section-delete@test.dev', 'Tester')
+    const canvas = await json<Canvas>(owner.post('/api/canvases', { name: 'Section deletion fixture' }))
+    const api = `/api/canvases/${canvas.id}`
+    const page = canvas.pages![0]!
+    const path = `${api}/pages/${page.id}`
+    const outer = { id: 'outer', name: 'Outer', x: 0, y: 0, width: 800, height: 500 }
+    const nested = { ...outer, id: 'nested', name: 'Nested', x: 30, y: 30, width: 300, height: 300 }
+    const overlap = { ...outer, id: 'overlap', name: 'Overlap', x: 700, width: 200, height: 200 }
+    for (const section of [outer, nested, overlap]) await json(owner.put(`${path}/sections/${section.id}`, section))
+    async function createFrame(name: string, x: number, y: number, html?: string) {
+      return json<Frame>(owner.post(`${api}/frames`, { name, pageId: page.id, x, y, width: 50, height: 50, html }))
+    }
+    const frame = await createFrame('Nested artboard', 60, 60)
+    const shape = await createFrame('Shape', 360, 60, '<body data-doop-canvas-element="true"><svg></svg></body>')
+    const group = await createFrame(
+      'Group',
+      450,
+      60,
+      '<body data-doop-canvas-element="true"><div><b>A</b><i>B</i></div></body>',
+    )
+    const other = await createFrame('In the tighter overlap', 725, 80)
+    const partial = await createFrame('Only crosses the outer edge', 785, 300)
+    await json(owner.put(`${path}/flow-start`, { frameId: frame.id }))
+    // Landing sections are evaluated on the section route just like ordinary sections.
+    const landing = await json<CanvasPageLayout>(owner.post(`${path}/consolidate`, { name: page.name }))
+    expect(landing.pages[0]!.landingSectionId).toBe(outer.id)
+
+    const remove = (keepContents: boolean) =>
+      json<CanvasPageLayout>(
+        owner.req(`${path}/sections/${outer.id}`, { method: 'DELETE', body: JSON.stringify({ keepContents }) }),
+      )
+    const before = await json<Canvas>(owner.get(api))
+    const unwrap = await remove(true)
+    expect(unwrap.frameMoves).toEqual([])
+    expect(unwrap.frameDeletes).toBeUndefined()
+    expect(unwrap.pages[0]!.sections?.map((section) => section.id)).toEqual([nested.id, overlap.id])
+    expect(unwrap.pages[0]!.landingSectionId).toBeUndefined()
+    expect((await json<Canvas>(owner.get(api))).frames).toEqual(before.frames)
+
+    await json(owner.put(`${path}/sections/${outer.id}`, outer))
+    const deleted = await remove(false)
+    expect(deleted.frameDeletes?.sort()).toEqual([frame.id, shape.id, group.id].sort())
+    expect(deleted.pages[0]!.sections).toEqual([overlap])
+    expect(deleted.pages[0]!.startFrameId).toBeUndefined()
+    await remove(false)
+
+    const dataDir = server.dataDir
+    server.stop({ keepData: true })
+    await server.stopped
+    server = await startServer({}, dataDir)
+    const restored = await json<Canvas>(owner.get(api))
+    expect(restored.pages).toEqual(deleted.pages)
+    expect(restored.frames.map((item) => item.id).sort()).toEqual([other.id, partial.id].sort())
+  } finally {
+    server.stop()
+  }
+}, 150_000)

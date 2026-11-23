@@ -159,7 +159,9 @@ export function FrameContextMenu({
               {t('stage.paste')}
               <MenuHint>{MOD_KEY}V</MenuHint>
             </ContextMenuItem>
-            <ContextMenuItem onSelect={() => void wrapSelectionInSection(t('canvas.toolSection'))}>
+            <ContextMenuItem
+              onSelect={() => void wrapSelectionInSection(t('canvas.toolSection'), { frameId: frame.id })}
+            >
               {t('canvas.sectionWrap')}
             </ContextMenuItem>
             <ContextMenuItem onSelect={() => duplicateFrames(groupFrames())}>

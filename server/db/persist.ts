@@ -80,7 +80,9 @@ export async function savePageLayout(
   apply: () => void,
 ): Promise<void> {
   const moved = new Set(layout.frameMoves.map((frame) => frame.id))
-  const frames = canvas.frames.filter((frame) => moved.has(frame.id))
+  const deleted = layout.frameDeletes ?? []
+  const affected = new Set([...moved, ...deleted])
+  const frames = canvas.frames.filter((frame) => affected.has(frame.id))
   // The store keeps this layout stable while writing. Drain any earlier edit
   // to these frames so it cannot put the old geometry back afterward.
   await Promise.all(
@@ -106,6 +108,10 @@ export async function savePageLayout(
           .where(and(eq(t.frames.id, id), eq(t.frames.canvasId, canvas.id)))
           .returning({ id: t.frames.id })
         if (!frame) throw new Error('Cannot move a missing frame.')
+      }
+      if (deleted.length) {
+        await tx.delete(t.frames).where(and(eq(t.frames.canvasId, canvas.id), inArray(t.frames.id, deleted)))
+        await tx.delete(t.assetRefs).where(inArray(t.assetRefs.frameId, deleted))
       }
       for (const { id, pageId, x, y } of layout.comments ?? []) {
         await tx
@@ -943,15 +949,17 @@ export function deleteCanvas(canvasId: string) {
   void queueRowWrite(canvasWrites, canvasId, canvasId, () => db.delete(t.canvases).where(eq(t.canvases.id, canvasId)))
 }
 
-export function deleteFrame(frameId: string) {
+export function deleteFrame(frameId: string, rowAlreadyDeleted = false) {
   dirtyFrames.delete(frameId)
   const timer = frameTimers.get(frameId)
   if (timer) {
     clearTimeout(timer)
     frameTimers.delete(frameId)
   }
-  swallow(db.delete(t.frames).where(eq(t.frames.id, frameId)))
-  swallow(db.delete(t.assetRefs).where(eq(t.assetRefs.frameId, frameId)))
+  if (!rowAlreadyDeleted) {
+    swallow(db.delete(t.frames).where(eq(t.frames.id, frameId)))
+    swallow(db.delete(t.assetRefs).where(eq(t.assetRefs.frameId, frameId)))
+  }
   queueVersionWrite(frameId, versionWrites.get(frameId)?.canvasId ?? '', () =>
     db.delete(t.frameVersions).where(eq(t.frameVersions.frameId, frameId)),
   )
