@@ -15,7 +15,6 @@ const SIDE = '.browser-surface:popover-open'
 const LIVE = '[data-browser-active="true"]'
 const HANDLES = '[data-frame-resize-handles]'
 const IFRAME = 'iframe[title="Browser"]'
-const MODEL = 'button[aria-label^="Model:"]'
 
 describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
   const pages = pagePerTest()
@@ -88,7 +87,7 @@ describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
     })
   })
 
-  async function seed(address?: string, keepAgentsOpen = false) {
+  async function seed(address?: string) {
     if (address !== undefined) {
       frames.push({
         ...canvasFrame({ id: 'browser', name: 'Browser', x: 150, y: 120, width: 620, height: 500 }),
@@ -102,7 +101,7 @@ describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
     if (frames.length) await page.waitForSelector(SHIELD, { visible: true })
     // The floating Agents rail and Inspector can otherwise overlap the grips.
     const agentsClose = await page.$('button[aria-label="Close panel"]')
-    if (agentsClose && !keepAgentsOpen) await agentsClose.click()
+    if (agentsClose) await agentsClose.click()
   }
 
   async function browserCenter() {
@@ -115,9 +114,13 @@ describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
   async function clickEmptyCanvas() {
     const point = await page.$eval('.stage', (stage) => {
       const rect = stage.getBoundingClientRect()
-      for (let y = rect.bottom - 80; y > rect.top; y -= 25) {
-        for (let x = rect.left + rect.width / 2; x < rect.right; x += 25) {
-          if (document.elementFromPoint(x, y)?.matches('.stage, .world')) return { x, y }
+      const offsets = [-24, 0, 24]
+      for (let y = rect.bottom - 80; y > rect.top + 24; y -= 25) {
+        for (let x = rect.left + rect.width / 2; x < rect.right - 24; x += 25) {
+          const clear = offsets.every((dx) =>
+            offsets.every((dy) => document.elementFromPoint(x + dx, y + dy)?.matches('.stage, .world')),
+          )
+          if (clear) return { x, y }
         }
       }
       throw new Error('No empty canvas point')
@@ -211,15 +214,14 @@ describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
     expect(await child!.evaluate(() => window.scrollY)).toBe(400)
   }, 15_000)
 
-  it('selects and activates at the same coordinates even when the model menu is initially open', async () => {
-    await seed(url, true)
-    await page.waitForSelector(`${MODEL}:not(:disabled)`)
-    await page.click(MODEL)
-    await page.waitForSelector('[role="menu"]', { visible: true })
+  it('selects on the first click and activates on the next after clicking empty canvas', async () => {
+    await seed(url)
     const center = await browserCenter()
-    expect(await page.$(HANDLES)).toBeNull()
     await page.mouse.click(center.x, center.y)
-    await page.waitForSelector('[role="menu"]', { hidden: true })
+    await page.waitForSelector(HANDLES)
+    await clickEmptyCanvas()
+    await page.waitForSelector(HANDLES, { hidden: true })
+    await page.mouse.click(center.x, center.y)
     await page.waitForSelector(HANDLES)
     await new Promise((resolve) => setTimeout(resolve, 600))
     expect(await page.$(LIVE)).toBeNull()
@@ -230,10 +232,12 @@ describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
   it.each([false, true])('presents on double click without activating first (selected: %s)', async (selected) => {
     await seed(url)
     const center = await browserCenter()
-    if (selected) {
-      await page.mouse.click(center.x, center.y)
-      await page.waitForSelector(HANDLES)
-    } else expect(await page.$(HANDLES)).toBeNull()
+    await page.mouse.click(center.x, center.y)
+    await page.waitForSelector(HANDLES)
+    if (!selected) {
+      await clickEmptyCanvas()
+      await page.waitForSelector(HANDLES, { hidden: true })
+    }
     await page.evaluate(() => {
       const frame = document.querySelector('[data-browser-frame]')!
       new MutationObserver(() => {

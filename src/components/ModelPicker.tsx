@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useState } from 'react'
 import { posthog } from '../lib/posthog'
 import { navigate } from '../App'
 import { cn } from '@/lib/utils'
@@ -70,27 +70,9 @@ function modelName(models: RunnerOption[], id: string): string {
  * nothing connected there is nothing to choose between, so it says so and
  * links to Settings.
  */
-export function ModelPicker({
-  disabled = false,
-  allowCanvasInteraction = false,
-}: {
-  disabled?: boolean
-  allowCanvasInteraction?: boolean
-}) {
+export function ModelPicker({ disabled = false }: { disabled?: boolean }) {
   const t = useT()
   const [open, setOpen] = useState(false)
-  const dismissedFromCanvas = useRef(false)
-  useEffect(() => {
-    if (!allowCanvasInteraction || !open) return
-    // Frame drags stop pointerdown before Radix's outside listener can see it.
-    function dismissOnCanvasPress(event: PointerEvent) {
-      if (!(event.target instanceof Element) || !event.target.closest('.stage')) return
-      dismissedFromCanvas.current = true
-      setOpen(false)
-    }
-    document.addEventListener('pointerdown', dismissOnCanvasPress, true)
-    return () => document.removeEventListener('pointerdown', dismissOnCanvasPress, true)
-  }, [allowCanvasInteraction, open])
   const runners = useAgentRunners()
   const stored = useRunnerPick((s) => s.stored)
   const setPick = useRunnerPick((s) => s.setPick)
@@ -128,7 +110,7 @@ export function ModelPicker({
   const effortBlurbs = resolved?.runner.provider === 'claude-local' ? CLAUDE_EFFORT_BLURBS : EFFORT_BLURBS
 
   return (
-    <DropdownMenu modal={!allowCanvasInteraction} open={open} onOpenChange={setOpen}>
+    <DropdownMenu onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <MenuButton
           variant="quiet"
@@ -151,16 +133,7 @@ export function ModelPicker({
           {effortLabel && <span className="hidden flex-none text-ink-faint md:inline">{effortLabel}</span>}
         </MenuButton>
       </DropdownMenuTrigger>
-      <DropdownMenuContent
-        side="top"
-        align="end"
-        width="auto"
-        onCloseAutoFocus={(event) => {
-          if (!dismissedFromCanvas.current) return
-          dismissedFromCanvas.current = false
-          event.preventDefault()
-        }}
-      >
+      <DropdownMenuContent side="top" align="end" width="auto">
         {runners && runners.runners.length > 0 ? (
           <>
             {runners.runners.map((runner) => (

@@ -478,7 +478,7 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
             <BookOpenIcon className="size-3.5" />
           </Button>
           <span className="flex-1" />
-          <ModelPicker disabled={busy} allowCanvasInteraction />
+          <ModelPicker disabled={busy} />
           {/* the meter rides on the send button; a disabled button takes no
               pointer events, so the span under it is what the tooltip hangs on */}
           <Tooltip label={meter ?? t('panels.promptSendTooltip')} side="top" align="end">
