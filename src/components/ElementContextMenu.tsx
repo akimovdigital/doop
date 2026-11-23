@@ -1,3 +1,4 @@
+import { wrapSelectionInSection } from '../lib/canvasSections'
 import { useRef, useState } from 'react'
 import type { Frame } from '../../shared/types'
 import { copyElementLink } from '../lib/elementLink'
@@ -147,6 +148,11 @@ function ElementMenuItems({ frame, selector, hit, onRename, onExport }: ElementI
         >
           {t('common.cut')}
           <MenuHint>{MOD_KEY}X</MenuHint>
+        </ContextMenuItem>
+      )}
+      {!readOnly && standalone && (
+        <ContextMenuItem onSelect={() => void wrapSelectionInSection(t('canvas.toolSection'), { frameId: frame.id })}>
+          {t('canvas.sectionWrap')}
         </ContextMenuItem>
       )}
       {selector && exists && (

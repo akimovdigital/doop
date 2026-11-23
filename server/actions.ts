@@ -1958,17 +1958,20 @@ function startReveal(frame: Frame, actor: Actor, shown: number) {
   broadcast(frame.canvasId, { type: 'frame:streaming', frameId: frame.id, active: true, actor })
 }
 
-function finishReveal(frameId: string) {
+function finishReveal(frameId: string, deletedFrom?: string) {
   const r = reveals.get(frameId)
   if (!r) return
   dropKey(reveals, frameId)
   const frame = store.getFrame(frameId)
-  if (!frame) return
+  if (!frame) {
+    if (deletedFrom) endAutoTask(deletedFrom, r.actor)
+    return
+  }
   broadcast(frame.canvasId, { type: 'frame:streaming', frameId, active: false, actor: r.actor })
   endAutoTask(frame.canvasId, r.actor)
 }
 
-function finishStream(frameId: string, logDone: boolean) {
+function finishStream(frameId: string, logDone: boolean, deletedFrom?: string) {
   const s = streams.get(frameId)
   if (!s) return
   dropKey(streams, frameId)
@@ -1976,7 +1979,11 @@ function finishStream(frameId: string, logDone: boolean) {
   /* background work that waited for this stream (a detach-all) takes its turn now */
   afterCommit(() => propagation.resumeFrame(frameId))
   const current = store.getFrame(frameId)
-  if (!current) return
+  if (!current) {
+    dropKey(pendingRenames, frameId)
+    if (deletedFrom) endAutoTask(deletedFrom, s.actor)
+    return
+  }
   /* a stream that ends without its done chunk (the agent went idle, or a
      replace cut it off) still gets the faces of the library fonts it uses;
      a finished one already has them, and this is then a no-op */
@@ -2539,10 +2546,14 @@ export const setCanvasPages = atomic(function setCanvasPages(
 
 /** Notify peers after the entire layout, including each frame position, is durable. */
 export async function savePageLayout(canvasId: string, layout: PageLayoutWrite, actor: Actor) {
-  const { pages, frameMoves, guides, comments } = layout
+  const { pages, frameMoves, frameDeletes, guides, comments } = layout
   store.requirePageLayoutIdle(canvasId)
   const current = store.getCanvas(canvasId)
   if (current && pages === current.pages && !frameMoves.length) return { pages, frameMoves }
+  const removed = (frameDeletes ?? []).flatMap((id) => {
+    const frame = store.getFrame(id)
+    return frame ? [frame] : []
+  })
   await store.commitPageLayout(canvasId, layout, () => {
     if (comments?.length) {
       const byId = new Map(comments.map((comment) => [comment.id, comment]))
@@ -2553,13 +2564,14 @@ export async function savePageLayout(canvasId: string, layout: PageLayoutWrite, 
     }
   })
   broadcast(canvasId, { type: 'canvas:pages', pages, ...(frameMoves.length ? { frameMoves } : {}), actor })
+  if (removed.length) finishLayoutDeletion(removed, actor)
   for (const guide of guides ?? []) broadcast(canvasId, { type: 'guide', id: guide.id, guide, actor })
   for (const comment of comments ?? []) {
     const latest = findComment(comment.id)
     if (latest) broadcast(canvasId, { type: 'comment', comment: latest })
   }
   touch(canvasId, actor, frameMoves[0]?.id)
-  return { pages, frameMoves }
+  return { pages, frameMoves, ...(frameDeletes?.length ? { frameDeletes } : {}) }
 }
 
 /** Add one page at the end of the canvas, named `name`, with a fresh id; peers
@@ -2850,6 +2862,20 @@ export const deleteFrame = atomic(function deleteFrame(frameId: string, actor: A
   finishReveal(frameId)
   const frame = store.deleteFrame(frameId)
   if (!frame) return undefined
+  frameDeleted(frame, actor)
+  return frame
+})
+
+const finishLayoutDeletion = atomic(function finishLayoutDeletion(frames: Frame[], actor: Actor) {
+  for (const frame of frames) {
+    finishStream(frame.id, false, frame.canvasId)
+    finishReveal(frame.id, frame.canvasId)
+    frameDeleted(frame, actor)
+  }
+})
+
+function frameDeleted(frame: Frame, actor: Actor) {
+  const frameId = frame.id
   dropKey(unsavedStamps, frameId)
   dropKey(bursts, frameId)
   afterCommit(() => thumbs.purge(frameId))
@@ -2857,8 +2883,7 @@ export const deleteFrame = atomic(function deleteFrame(frameId: string, actor: A
   releaseMains(frame.canvasId, frameId, actor)
   logActivity(frame.canvasId, actor, `deleted frame “${frame.name}”`, frame.id)
   touch(frame.canvasId, actor, null)
-  return frame
-})
+}
 
 /** Remove a canvas with everything attached to it; viewers are told to leave. */
 export const deleteCanvas = atomic(function deleteCanvas(canvasId: string): boolean {

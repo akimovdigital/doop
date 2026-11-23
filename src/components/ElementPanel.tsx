@@ -1,3 +1,4 @@
+import { InspectorPaintRow } from './InspectorFields'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { Frame } from '../../shared/types'
 import { useStore } from '../lib/store'
@@ -802,7 +803,7 @@ export function FillSection({
       {info.image && (
         <ImageFill key={`${frame.id}:${selector}`} frame={frame} selector={selector} image={info.image} apply={apply} />
       )}
-      <div className="grid grid-cols-[minmax(0,1fr)_64px] gap-1.5">
+      <InspectorPaintRow>
         <ColorField
           label={t('inspector.fillColor')}
           value={fillAlpha === 0 && fill === '#000000' ? null : fill}
@@ -828,7 +829,7 @@ export function FillSection({
             apply(info.vector && !fill ? { 'fill-opacity': String(v / 100) } : fillPatch(fill ?? fillColor, v / 100))
           }
         />
-      </div>
+      </InspectorPaintRow>
     </PropertySection>
   )
 }
@@ -1178,7 +1179,7 @@ function DesignTab({
       </PropertySection>
       <FillSection frame={frame} selector={selector} info={info} apply={apply} />
       <PropertySection title={t('inspector.sectionStroke')}>
-        <div className="grid grid-cols-[minmax(0,1fr)_64px] gap-1.5">
+        <InspectorPaintRow>
           <ColorField
             label={t('inspector.borderColor')}
             value={borderColor}
@@ -1208,7 +1209,7 @@ function DesignTab({
               )
             }
           />
-        </div>
+        </InspectorPaintRow>
         {!info.vector && border.sides && (
           <p className="mt-1 text-[10.5px] text-ink-faint">
             {t('inspector.sides', {

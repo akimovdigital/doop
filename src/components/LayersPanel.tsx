@@ -769,7 +769,8 @@ export function LayersPanel({
            and takes a standalone element's shell frame along with its layer */
         /* with no layer picked, every selected frame and canvas shape goes,
            as ⌫ on the canvas takes them */
-        if (row && !useStore.getState().selectedElement) deleteSelection()
+        if (useStore.getState().selectedSectionId && (e.metaKey || e.ctrlKey)) return
+        if (useStore.getState().selectedSectionId || (row && !useStore.getState().selectedElement)) deleteSelection()
         else if (row) deleteLayers(row.frame, pickedSelectors(useStore.getState()))
         break
       default:

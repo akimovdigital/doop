@@ -1,3 +1,4 @@
+import { removeSectionSelection } from './canvasSections'
 import type { TextFormatCommand } from './richText'
 import type { Frame } from '../../shared/types'
 import { ELEMENT_ID_ATTR } from '../../shared/elementId'
@@ -255,6 +256,7 @@ export function deleteLayers(frame: Frame, selectors: string[]): boolean {
  *  never go from here. Returns false when the key had nothing to act on. */
 export function deleteSelection(): boolean {
   const s = useStore.getState()
+  if (s.selectedSectionId) return removeSectionSelection(false)
   const frames = s.canvas?.frames ?? []
   const picked = s.selectedElement
   if (picked) {

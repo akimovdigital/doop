@@ -19,7 +19,6 @@ import { cn } from '@/lib/utils'
 import { Panel, PanelClose, PanelHeader, type PanelSurface } from './ui/panel'
 import { CopyIcon, DownloadIcon, FrameIcon, LockIcon, RotationIcon } from './ui/icons'
 import { Button } from './ui/button'
-import { Input } from './ui/input'
 import { Textarea } from './ui/textarea'
 import { NumberField, PropertyScrubContext, PropertySection, StaticField } from './ui/property-field'
 import { normalizeRotation } from '../../shared/frameRotation'
@@ -35,6 +34,7 @@ import {
   type StylePatch,
 } from '../lib/frameBridge'
 import { isCanvasElement } from '../lib/drawing'
+import { InspectorBoxFields, InspectorName } from './InspectorFields'
 import { FillSection } from './ElementPanel'
 
 /* the rail's filled buttons: a grey well, 28px, tall enough to hit on a phone */
@@ -239,7 +239,12 @@ export function Inspector({
           ) : (
             <FrameIcon className="size-3.5 flex-none text-ink-faint" />
           )}
-          <NameInput key={frame.id} value={frame.name} onCommit={(v) => v.trim() && commitMeta({ name: v.trim() })} />
+          <InspectorName
+            key={frame.id}
+            label={t('inspector.frameName')}
+            value={frame.name}
+            onCommit={(name) => commitMeta({ name })}
+          />
         </span>
         <PanelClose onClick={() => select(null)} />
       </PanelHeader>
@@ -267,59 +272,17 @@ export function Inspector({
         </InspectorGroup>
         {frame.browser && <BrowserProperties key={frame.id} frame={{ ...frame, browser: frame.browser }} />}
         <PropertyScrubContext.Provider value={boxScrub}>
-          <InspectorGroup title={t('inspector.sectionPosition')}>
-            <div className="grid grid-cols-2 gap-1.5">
-              <NumberField
-                label={t('inspector.xPosition')}
-                prefix="X"
-                unit="px"
-                min={-Infinity}
-                value={frame.x}
-                className={boxField}
-                onCommit={(x) => editBox({ x })}
-              />
-              <NumberField
-                label={t('inspector.yPosition')}
-                prefix="Y"
-                unit="px"
-                min={-Infinity}
-                value={frame.y}
-                className={boxField}
-                onCommit={(y) => editBox({ y })}
-              />
-            </div>
-          </InspectorGroup>
-          <InspectorGroup title={t('inspector.sectionLayout')}>
-            <div className="grid grid-cols-2 gap-1.5">
-              <NumberField
-                label={t('inspector.width')}
-                prefix="W"
-                unit="px"
-                min={MIN_FRAME_SIZE}
-                value={frame.width}
-                className={boxField}
-                onCommit={(width) => editBox({ width })}
-              />
-              <NumberField
-                label={t('inspector.height')}
-                prefix="H"
-                unit="px"
-                min={MIN_FRAME_SIZE}
-                value={frame.height}
-                className={boxField}
-                onCommit={(height) => editBox({ height })}
-              />
-              <NumberField
-                label={t('inspector.rotation')}
-                prefix={<RotationIcon size="rail" />}
-                unit="°"
-                min={-Infinity}
-                value={frame.rotation ?? 0}
-                className={boxField}
-                onCommit={(rotation) => editBox({ rotation: normalizeRotation(rotation) ?? 0 })}
-              />
-            </div>
-          </InspectorGroup>
+          <InspectorBoxFields box={frame} minSize={MIN_FRAME_SIZE} onCommit={(key, value) => editBox({ [key]: value })}>
+            <NumberField
+              label={t('inspector.rotation')}
+              prefix={<RotationIcon size="rail" />}
+              unit="°"
+              min={-Infinity}
+              value={frame.rotation ?? 0}
+              className={boxField}
+              onCommit={(rotation) => editBox({ rotation: normalizeRotation(rotation) ?? 0 })}
+            />
+          </InspectorBoxFields>
         </PropertyScrubContext.Provider>
         {!frame.browser && !frame.locked && !isCanvasElement(frame.html) && <FrameFillSection frame={frame} />}
         <InspectorGroup title={t('inspector.groupExport')}>
@@ -635,29 +598,5 @@ function InspectorGroup({ title, children }: { title: string; children: ReactNod
       <h3 className="mb-1.5 flex h-5 items-center text-[12px] font-normal text-ink-soft">{title}</h3>
       {children}
     </section>
-  )
-}
-
-/** The frame's name, edited in place in the panel header. */
-function NameInput({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
-  const t = useT()
-  const [draft, setDraft] = useState(value)
-  /* a committed or remote value replaces whatever was being typed */
-  const [seen, setSeen] = useState(value)
-  if (seen !== value) {
-    setSeen(value)
-    setDraft(value)
-  }
-  return (
-    <Input
-      variant="bare"
-      inputSize="auto"
-      aria-label={t('inspector.frameName')}
-      className="h-7 min-w-0 flex-1 truncate rounded-[6px] px-1 text-[12.5px] font-medium hover:bg-sub focus:bg-surface focus:shadow-elevation-1-focus md:text-[12.5px] max-md:min-h-10"
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => draft !== value && onCommit(draft)}
-      onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-    />
   )
 }
