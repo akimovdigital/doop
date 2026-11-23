@@ -1,3 +1,4 @@
+import { browserFrameSchema } from '../shared/browserFrame.ts'
 import { env } from './env.ts'
 import {
   changeInstances,
@@ -2505,9 +2506,11 @@ app.post('/api/canvases/:id/pages/:pageId/duplicate', async (req, res) => {
 
 app.post('/api/canvases/:id/frames', (req, res) => {
   if (!requireCanvas(req, res, req.params.id, 'edit')) return
-  const { name, pageId, x, y, width, height, html, hidden, locked, z, rotation } = req.body ?? {}
+  const { name, pageId, x, y, width, height, html, hidden, locked, z, rotation, browser } = req.body ?? {}
   if (pageId !== undefined && !store.getCanvas(req.params.id)?.pages?.some((p) => p.id === pageId))
     return res.status(400).json({ error: 'page not found' })
+  const parsed = browserFrameSchema.optional().safeParse(browser)
+  if (!parsed.success || (parsed.data && html)) return res.status(400).json({ error: 'Invalid browser frame' })
   const actor = userActor(req)
   /* `hidden`, `locked` and `z` let undo bring a deleted frame back as it was */
   const frame = actions.createFrame(
@@ -2524,6 +2527,7 @@ app.post('/api/canvases/:id/frames', (req, res) => {
       locked: locked === true,
       z: Number.isFinite(z) ? z : undefined,
       rotation: normalizeRotation(rotation),
+      browser: parsed.data,
     },
     actor,
   )
@@ -2578,6 +2582,12 @@ app.patch('/api/frames/:id', (req, res) => {
     if (patch.rotation !== null && !Number.isFinite(patch.rotation))
       return res.status(400).json({ error: 'rotation must be a finite number of degrees' })
     clean.rotation = normalizeRotation(patch.rotation)
+  }
+  if (current.browser && patch.html) return res.status(400).json({ error: 'Browser frames do not have editable HTML' })
+  if (patch.browser !== undefined) {
+    const parsed = browserFrameSchema.safeParse(patch.browser)
+    if (!current.browser || !parsed.success) return res.status(400).json({ error: 'Invalid browser frame' })
+    clean.browser = parsed.data
   }
   const frame = actions.updateFrame(req.params.id, clean, actor)
   if (!frame) return res.status(404).json({ error: 'frame not found' })

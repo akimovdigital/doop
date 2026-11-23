@@ -1,6 +1,7 @@
+import { normalizeBrowserUrl } from '../shared/browserFrame.ts'
 import { normalizeRotation } from '../shared/frameRotation.ts'
 import * as actions from './actions.ts'
-import { MAX_PAGES, PageLimitError } from './store.ts'
+import { MAX_PAGES, PageLimitError, store } from './store.ts'
 import { canvasPages, framePageId, MAX_PAGE_NAME, samePages } from '../shared/pages.ts'
 import type { Actor, Canvas, CanvasPageInfo, Frame } from '../shared/types.ts'
 
@@ -15,7 +16,7 @@ export type PageToolResult<T> = { ok: true; value: T } | { ok: false; error: str
 
 export type FrameMetaPatch = Partial<
   Pick<Frame, 'name' | 'pageId' | 'x' | 'y' | 'width' | 'height' | 'locked' | 'rotation'>
->
+> & { browser?: { url: string } }
 
 const MAX_PAGE_ID = 100
 
@@ -98,6 +99,20 @@ export function updateFrameMeta(
     if (!Number.isFinite(clean.rotation)) return { ok: false, error: 'rotation must be a finite number of degrees' }
     clean.rotation = normalizeRotation(clean.rotation)
   }
-  const frame = actions.updateFrame(frameId, clean, actor)
+  const { browser, ...metadata } = clean
+  const current = store.getFrame(frameId)
+  if (browser) {
+    if (!current?.browser) return { ok: false, error: 'This frame is not a browser' }
+    const url = normalizeBrowserUrl(browser.url)
+    if (url === null || url.length > 8192) return { ok: false, error: 'Enter an HTTP or HTTPS URL' }
+    const next = { ...current.browser, url }
+    if (url !== current.browser.url) {
+      delete next.scrollX
+      delete next.scrollY
+    }
+    const frame = actions.updateFrame(frameId, { ...metadata, browser: next }, actor)
+    return frame ? { ok: true, value: frame } : { ok: false, error: `frame ${frameId} not found` }
+  }
+  const frame = actions.updateFrame(frameId, metadata, actor)
   return frame ? { ok: true, value: frame } : { ok: false, error: `frame ${frameId} not found` }
 }

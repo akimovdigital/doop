@@ -2449,7 +2449,7 @@ const appendChunk = atomic(function appendChunk(
   opts: { start?: boolean; done?: boolean },
 ): Frame | undefined {
   const before = store.getFrame(frameId)
-  if (!before) return undefined
+  if (!before || before.browser) return undefined
 
   const starting = opts.start || !streams.has(frameId)
   /* read now: the store updates `before` in place below */
@@ -2630,6 +2630,7 @@ export const createFrame = atomic(function createFrame(
     locked?: boolean
     z?: number
     rotation?: number
+    browser?: Frame['browser']
   },
   actor: Actor,
 ): Frame | undefined {
@@ -2680,13 +2681,16 @@ function refusesUnclosed(frameId: string, actor: Actor, replace: boolean): boole
 export const updateFrame = atomic(function updateFrame(
   frameId: string,
   patch: Partial<
-    Pick<Frame, 'name' | 'pageId' | 'x' | 'y' | 'width' | 'height' | 'html' | 'hidden' | 'locked' | 'z' | 'rotation'>
+    Pick<
+      Frame,
+      'name' | 'pageId' | 'x' | 'y' | 'width' | 'height' | 'html' | 'hidden' | 'locked' | 'z' | 'rotation' | 'browser'
+    >
   >,
   actor: Actor,
   opts: { replace?: boolean } = {},
 ): Frame | undefined {
   const before = store.getFrame(frameId)
-  if (!before) return undefined
+  if (!before || (before.browser && patch.html)) return undefined
   let changedComponents: ComponentDef[] = []
   if (patch.html !== undefined) {
     const prepared = prepareWrite(before.canvasId, frameId, repairEscapedHtml(patch.html), before.html, actor.name, {

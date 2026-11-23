@@ -175,3 +175,22 @@ describe('openFeedbackFor', () => {
     expect(actions.openFeedbackFor('c-open', { name: 'Claude' })).toEqual([])
   })
 })
+
+it('lists a Browser frame with empty HTML and exposes its live URL', async () => {
+  const browser: Frame = { ...FRAME, html: '', browser: { url: 'http://127.0.0.1:8747/', deviceId: 'laptop' } }
+  vi.mocked(store.getCanvas).mockReturnValue({ ...CANVAS, frames: [browser] })
+  vi.mocked(store.getFrame).mockReturnValue(browser)
+  const { client, close } = await connect()
+  try {
+    for (const [tool, args] of [
+      ['get_canvas', { canvas_id: CANVAS.id, agent_name: 'Claude' }],
+      ['get_frame', { frame_id: FRAME.id, agent_name: 'Claude' }],
+    ] as const) {
+      const output = await callText(client, tool, args)
+      expect(output).toContain('http://127.0.0.1:8747/')
+      expect(output).toContain('laptop')
+    }
+  } finally {
+    await close()
+  }
+})

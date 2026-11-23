@@ -145,6 +145,7 @@ export async function saveCanvasCopy(c: Canvas): Promise<void> {
           locked: frame.locked ?? null,
           z: frame.z ?? null,
           rotation: frame.rotation ?? null,
+          browser: frame.browser ?? null,
         })),
       )
     }
@@ -602,6 +603,7 @@ export async function savePageCopy(c: Canvas, frames: Frame[]): Promise<void> {
         locked: frame.locked ?? null,
         z: frame.z ?? null,
         rotation: frame.rotation ?? null,
+        browser: frame.browser ?? null,
       })),
     )
     const refs = frames.flatMap((frame) =>
@@ -688,6 +690,7 @@ async function writeFrameRow(f: Frame) {
     locked: f.locked ?? null,
     z: f.z ?? null,
     rotation: f.rotation ?? null,
+    browser: f.browser ?? null,
     approval: f.approval ?? null,
   }
   const { id, createdAt, ...set } = row
@@ -748,6 +751,7 @@ const frameMetaColumns = {
   locked: t.frames.locked,
   z: t.frames.z,
   rotation: t.frames.rotation,
+  browser: t.frames.browser,
   approval: t.frames.approval,
 }
 
@@ -1290,6 +1294,7 @@ export async function hydrate(): Promise<Hydrated> {
       locked: f.locked ?? undefined,
       z: f.z ?? undefined,
       rotation: f.rotation ?? undefined,
+      browser: f.browser ?? undefined,
     } as Frame
     unloadHtml(frame)
     byId.get(f.canvasId)?.frames.push(frame)

@@ -1,3 +1,4 @@
+import { browserReferenceHtml } from '../../shared/browserFrame'
 import { pdfRenderBudgetMs } from '../../shared/pdfLimits'
 import {
   DEFAULT_EXPORT_SCALE,
@@ -262,7 +263,10 @@ async function exportOutcome(fetched: Promise<Fetched>): Promise<string | null> 
  *  shows, so a draft in progress exports as typed. Nothing to fetch, so it
  *  cannot fail the way the rendered exports can. */
 export function downloadFrameHtml(frame: Frame, html = frame.html): void {
-  saveBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), `${frame.name || 'frame'}.html`)
+  saveBlob(
+    new Blob([frame.browser ? browserReferenceHtml(frame.browser) : html], { type: 'text/html;charset=utf-8' }),
+    `${frame.name || 'frame'}.html`,
+  )
 }
 
 /** Render and download a frame export, reporting through the canvas toast:

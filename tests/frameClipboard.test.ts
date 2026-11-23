@@ -137,3 +137,23 @@ describe('multi-frame copy and paste', () => {
     expect(useStore.getState().selectedIds).toEqual(['new1', 'new2'])
   })
 })
+
+it('keeps the Browser descriptor when copying, pasting and duplicating an empty HTML frame', async () => {
+  const browser: NonNullable<Frame['browser']> = {
+    url: 'https://example.com/',
+    deviceId: 'phone',
+    zoom: 0.75,
+    scrollY: 160,
+  }
+  const source = { ...frame('browser'), html: '', browser }
+  seed(source)
+  clipboard.copyFrames([source])
+  clipboard.pasteFrameCentered('c1')
+  await flush()
+  clipboard.duplicateFrames([source])
+  await flush()
+  expect(api.createFrame.mock.calls.map(([, input]) => ({ browser: input.browser, html: input.html }))).toEqual([
+    { browser, html: '' },
+    { browser, html: '' },
+  ])
+})

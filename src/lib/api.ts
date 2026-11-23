@@ -693,7 +693,9 @@ export const api = {
       }),
     }),
   updateFrame: async (frameId: string, patch: Partial<Frame>, expectedUpdatedAt?: number) => {
-    const finish = ['html', 'width', 'height'].some((key) => key in patch) ? beginFrameSave(frameId) : () => {}
+    const finish = ['html', 'width', 'height', 'browser'].some((key) => key in patch)
+      ? beginFrameSave(frameId)
+      : () => {}
     try {
       return await req<Frame>('/api/frames/' + frameId, {
         method: 'PATCH',

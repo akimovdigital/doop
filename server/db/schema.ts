@@ -11,6 +11,7 @@ import {
   jsonb,
   customType,
 } from 'drizzle-orm/pg-core'
+import type { BrowserFrameData } from '../../shared/browserFrame.ts'
 import { open, seal } from '../secretBox.ts'
 import type { CanvasGuide, CanvasPageInfo, FrameApproval } from '../../shared/types.ts'
 import type { AutomationRunState, AutomationTrigger, Schedule, Step } from '../../shared/automations.ts'
@@ -201,6 +202,7 @@ export const frames = pgTable(
     z: doublePrecision('z'),
     /** degrees clockwise about the centre (shared/frameRotation.ts); null = 0 */
     rotation: doublePrecision('rotation'),
+    browser: jsonb('browser').$type<BrowserFrameData>(),
     approval: jsonb('approval').$type<FrameApproval>(),
   },
   (t) => [index('frames_canvas_idx').on(t.canvasId)],

@@ -1201,6 +1201,7 @@ class Store {
        *  in front of everything on the page when unset */
       z?: number
       rotation?: number
+      browser?: Frame['browser']
     },
     by: string,
   ): Frame | undefined {
@@ -1238,6 +1239,7 @@ class Store {
     if (input.hidden) frame.hidden = true
     if (input.locked) frame.locked = true
     if (input.rotation) frame.rotation = input.rotation
+    if (input.browser) frame.browser = input.browser
     requireBoundary('store.createFrame')
     c.frames.push(frame)
     c.frames.sort(byStack)
@@ -1269,6 +1271,7 @@ class Store {
         | 'locked'
         | 'z'
         | 'rotation'
+        | 'browser'
         | 'approval'
       >
     >,
@@ -1289,7 +1292,9 @@ class Store {
       return undefined
     const designChanged =
       !opts.annotation &&
-      (['html', 'width', 'height'] as const).some((key) => patch[key] !== undefined && patch[key] !== frame[key])
+      (['html', 'width', 'height', 'browser'] as const).some(
+        (key) => patch[key] !== undefined && patch[key] !== frame[key],
+      )
     const c = this.canvases.get(frame.canvasId)!
     requireBoundary('store.updateFrame')
     const before = inTransaction() ? frameState(frame) : undefined

@@ -1743,6 +1743,11 @@ const TOOLS: Anthropic.Tool[] = [
         y: { type: 'number', description: 'Canvas position in px' },
         width: { type: 'number', description: 'px; the design is not rescaled' },
         height: { type: 'number', description: 'px; the design is not rescaled' },
+        browser: {
+          type: 'object',
+          properties: { url: { type: 'string', description: 'Navigate a Browser frame to an HTTP(S) URL' } },
+          required: ['url'],
+        },
         locked: { type: 'boolean', description: 'true keeps humans from selecting, moving or deleting it' },
       },
       required: ['frame_id'],
@@ -1890,7 +1895,8 @@ export function describeFrameList(frames: Frame[], images: Map<string, FrameImag
       (image) =>
         `    image ${image.src}: ${image.description ? image.description.slice(0, KICKOFF_IMAGE_CHARS) : '(description pending)'}`,
     )
-    return [head, ...pictures].join('\n')
+    const browser = f.browser ? [`    browser: ${JSON.stringify(f.browser)}`] : []
+    return [head, ...browser, ...pictures].join('\n')
   })
   if (images.size > 0)
     lines.push(
@@ -2616,11 +2622,14 @@ async function runResidentTool(
         const before = { width: f.width, height: f.height, arrangement: arrangement(f) }
         const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
         const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+        const browser = raw.browser as { url?: unknown } | undefined
+        if (raw.browser !== undefined && typeof browser?.url !== 'string') return fail('browser.url must be a string')
         const updated = updateFrameMeta(
           canvas,
           f.id,
           {
             name: text(raw.name),
+            browser: typeof browser?.url === 'string' ? { url: browser.url } : undefined,
             pageId: text(raw.pageId),
             x: num(raw.x),
             y: num(raw.y),
