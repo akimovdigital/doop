@@ -27,6 +27,12 @@ export interface DesignTextEdit {
   after: string
 }
 
+export interface DesignCssEdit {
+  prop: string
+  before: string
+  after: string
+}
+
 export interface DesignNote {
   id: string
   canvasId: string
@@ -37,6 +43,7 @@ export interface DesignNote {
   number: number
   kind: 'element' | 'region' | 'textEdit'
   textEdit?: DesignTextEdit
+  cssEdits?: DesignCssEdit[]
   elements: NoteElement[]
   region?: NoteRect
   comment: string
@@ -54,7 +61,10 @@ export type DesignNotesAction =
       type: 'update'
       id: string
       changes: Partial<
-        Pick<DesignNote, 'comment' | 'elements' | 'region' | 'textEdit' | 'status' | 'sentAt' | 'resolvedAt' | 'cardId'>
+        Pick<
+          DesignNote,
+          'comment' | 'elements' | 'region' | 'textEdit' | 'cssEdits' | 'status' | 'sentAt' | 'resolvedAt' | 'cardId'
+        >
       >
     }
   | { type: 'remove'; ids: string[] }
@@ -155,7 +165,10 @@ export function formatDesignNotes(notes: DesignNote[]): string {
               ? `<${note.elements[0]?.tag ?? 'element'}> text edit`
               : note.elements.map(elementLabel).join(' + ')
           for (const element of note.elements) context.push(elementContext(note, element))
-          const comment = [note.textEdit && textEditSummary(note.textEdit), note.comment].filter(Boolean).join('\n\n')
+          const css = note.cssEdits?.map(({ prop, before, after }) => `${prop}: ${before} → ${after}`).join('; ')
+          const comment = [note.textEdit && textEditSummary(note.textEdit), note.comment, css && `CSS edits — ${css}`]
+            .filter(Boolean)
+            .join('\n\n')
           return `${notes.length > 1 ? `${note.number}. ` : ''}${label}${comment ? `: ${comment}` : ''}`
         })
       return (

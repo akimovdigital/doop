@@ -1,6 +1,7 @@
 import { FRAME_REPLAY_RUNTIME } from './frameReplayRuntime'
 import { FRAME_DROP_RUNTIME } from './frameDropRuntime'
 import { FRAME_PROTO_RUNTIME } from './frameProtoRuntime'
+import { FRAME_ANNOTATION_CSS_RUNTIME } from './frameAnnotationCss'
 import { FRAME_TEXT_RUNTIME } from './frameTextRuntime'
 import { CANVAS_MOD_CHORDS, SHORTCUT_KEYS_BY_CODE } from './keys'
 
@@ -1302,6 +1303,8 @@ export function frameRuntime(browse?: { token: string; url: string }) {
     annotationChanged()
   }
 
+  ${FRAME_ANNOTATION_CSS_RUNTIME}
+
   /* The pointer shield lives above the sandbox. Scroll its closest scrollable
      container, then the document, just as a wheel over the document would. */
   function annotationWheel(d) {
@@ -2176,6 +2179,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
     }
     if (d.type === 'doop:html' && typeof d.html === 'string' && !editing) {
       endAnnotationText('revert')
+      syncAnnotationCss([])
       render(d.html)
       notifyFrameUpdated()
       protoHtmlChanged()
@@ -2343,6 +2347,13 @@ export function frameRuntime(browse?: { token: string; url: string }) {
         postToEditor({ type: 'doop:textEdit-result', reqId: d.reqId, started: startAnnotationText(d) })
       } else if (d.action === 'cancel' && annotationText?.id === d.id) endAnnotationText('cancel')
       else if (d.action === 'sync' && Array.isArray(d.edits)) syncAnnotationText(d.edits)
+    }
+    if (d.type === 'doop:css') {
+      if (d.action === 'inspect') {
+        var cssTarget = styleTarget(d.selector)
+        var properties = cssTarget ? annotationCssProperties(cssTarget, d.prop) : null
+        postToEditor({ type: 'doop:css-result', reqId: d.reqId, properties: properties })
+      } else if (d.action === 'sync' && Array.isArray(d.targets)) syncAnnotationCss(d.targets)
     }
     if (d.type === 'doop:annotation-wheel') annotationWheel(d)
     if (d.type === 'doop:annotation-watch') {

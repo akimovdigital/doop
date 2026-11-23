@@ -448,7 +448,7 @@ export function PrototypePlayer({
       if (target === addressRef.current && command !== 'address' && command !== 'annotate' && command !== 'chat') return
       if (target?.closest('[data-preview-chat]') && e.key !== 'Escape' && !command) return
       if (inDesignControl && e.key !== 'Escape' && command !== 'annotate') {
-        if (target?.closest('[data-design-note-field]')) return
+        if (target?.closest('[data-design-note-field],[data-design-css-inspector]')) return
         if (command !== 'address' && command !== 'chat') return
       }
       if (command) {

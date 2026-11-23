@@ -118,6 +118,19 @@ describe('design notes', () => {
       '1. <button> — “Open now”: Move this\n2. <button> text edit: change text to “Read more” (was “Open now”)',
     )
   })
+  it('formats CSS changes with and without prose using the Cursor CSS header', () => {
+    const cssEdits = [
+      { prop: 'color', before: '#fff', after: '#000' },
+      { prop: 'font-size', before: '16px', after: '20px' },
+    ]
+    const css = 'CSS edits — color: #fff → #000; font-size: 16px → 20px'
+    expect(formatDesignNotes([{ ...note, cssEdits }])).toBe(
+      `<button> — “Open now”: Move this\n\n${css}\n\nElement context:\n${context}`,
+    )
+    expect(formatDesignNotes([{ ...note, comment: '', cssEdits }])).toBe(
+      `<button> — “Open now”: ${css}\n\nElement context:\n${context}`,
+    )
+  })
   it('clips the label text, attribute and HTML text independently', () => {
     const el = { ...element, text: 't'.repeat(501), attributes: [['title', 'a'.repeat(201)]] as [string, string][] }
     const out = formatDesignNotes([{ ...note, elements: [el] }])

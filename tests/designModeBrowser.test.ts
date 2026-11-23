@@ -304,6 +304,72 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     expect(await page.$(control('Send 1 to agent'))).toBeNull()
   })
 
+  it('previews CSS on the heading, keeps CSS-only pending edits and reverts them on delete', async () => {
+    await page.setViewport({ width: 1440, height: 960 })
+    let frame = await mount()
+    await enter()
+    await pick(frame, '#title')
+    const original = await frame.$eval('#title', (el) => getComputedStyle(el).color)
+    await page.click(control('Edit CSS properties'))
+    const filter = 'input[aria-label="Filter properties"]'
+    const color = 'input[aria-label="color"]'
+    await page.waitForSelector(filter, { visible: true })
+    await page.type(filter, 'color')
+    await page.waitForSelector(color, { visible: true })
+    await capture('dm-14-css-inspector')
+    await page.focus(color)
+    await page.$eval(color, (el) => (el as HTMLInputElement).select())
+    await page.keyboard.type('#da1376')
+    await frame.waitForFunction(() => getComputedStyle(document.querySelector('#title')!).color === 'rgb(218, 19, 118)')
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('[data-design-css-inspector]', { hidden: true })
+    expect(await frame.$eval('#title', (el) => getComputedStyle(el).color)).toBe('rgb(218, 19, 118)')
+    await page.click('[role="switch"]')
+    await page.click(control('Add to stack'))
+    await page.waitForSelector(pin(1))
+    await page.click(control('1 pending; show details'))
+    await page.waitForSelector('[data-design-queue-note="pending"]')
+    expect(await page.$eval('[data-design-queue-note="pending"]', (el) => el.textContent)).toContain('CSS changes')
+    await capture('dm-15-css-edited-note')
+    expect(await sent()).toEqual([])
+    frame = await mount()
+    await frame.waitForFunction(() => getComputedStyle(document.querySelector('#title')!).color === 'rgb(218, 19, 118)')
+    await page.click(control('1 pending; show details'))
+    await page.click(control('Remove annotation 1'))
+    await frame.waitForFunction(
+      (original) => getComputedStyle(document.querySelector('#title')!).color === original,
+      {},
+      original,
+    )
+    expect(await frame.$eval('#title', (el) => el.getAttribute('style'))).toBeNull()
+  })
+
+  it('sends CSS-only notes with batch off and restores inline styles on exit', async () => {
+    const frame = await mount()
+    await enter()
+    const changeColor = async () => {
+      await pick(frame, '#title')
+      await page.click(control('Edit CSS properties'))
+      const filter = 'input[aria-label="Filter properties"]'
+      await page.waitForSelector(filter)
+      await page.type(filter, 'color')
+      const color = 'input[aria-label="color"]'
+      await page.focus(color)
+      await page.$eval(color, (el) => (el as HTMLInputElement).select())
+      await page.keyboard.type('red')
+      await frame.waitForFunction(() => getComputedStyle(document.querySelector('#title')!).color === 'rgb(255, 0, 0)')
+    }
+    await changeColor()
+    await page.click(control('Exit Design Mode'))
+    await frame.waitForFunction(() => !document.querySelector('#title')?.hasAttribute('style'))
+    await enter()
+    await changeColor()
+    await page.keyboard.press('Escape')
+    await page.click(control('Send note'))
+    await page.waitForSelector('[data-design-pin][data-status="sent"]')
+    expect((await sent())[0]?.[1]).toContain('CSS edits — color: rgb(0, 0, 0) → red')
+  })
+
   it('temporarily re-enables page clicks while Space is held and resumes picking after iframe keyup', async () => {
     const frame = await mount()
     await enter()
