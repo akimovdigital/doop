@@ -79,8 +79,48 @@ const NEAR_PX = 180
 const TINY_PX = 160
 const MAX_BITMAP_EDGE = 640
 const CAPTURE_TIMEOUT_MS = 4000
+const CAPTURE_DEADLINE = Symbol('snapshot deadline')
+const RETRY_DELAYS_MS = [3500, 7000]
 
-type Slot = { frame: Frame; image: HTMLImageElement; attempted: boolean; near: boolean }
+type Slot = {
+  frame: Frame
+  image: HTMLImageElement
+  attempts: number
+  retryAt: number
+  near: boolean
+  captured: boolean
+}
+
+function resetAttempts(slot: Slot) {
+  slot.attempts = 0
+  slot.retryAt = 0
+  slot.captured = false
+}
+
+function finishAttempt(slot: Slot, retry: boolean) {
+  const delay = retry ? RETRY_DELAYS_MS[slot.attempts] : undefined
+  slot.attempts++
+  slot.retryAt = delay === undefined ? Infinity : performance.now() + delay
+}
+
+function decodeSnapshot(url: string, signal: AbortSignal): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    signal.throwIfAborted()
+    const image = new Image()
+    const cancel = () => {
+      image.removeAttribute('src')
+      reject(signal.reason)
+    }
+    signal.addEventListener('abort', cancel, { once: true })
+    image.src = url
+    void image
+      .decode()
+      .then(() => resolve(image), reject)
+      .finally(() => {
+        signal.removeEventListener('abort', cancel)
+      })
+  })
+}
 
 function onIdle(run: () => void): () => void {
   if (typeof window.requestIdleCallback === 'function') {
@@ -97,6 +137,7 @@ export class FrameSnapshots {
   private readonly slots = new Map<string, Slot>()
   private readonly ready = new Set<Slot>()
   private cancelIdle: (() => void) | undefined
+  private retryTimer: number | undefined
   private pending: { slot: Slot; abort: AbortController } | undefined
   private stage: HTMLElement | undefined
   private layer: HTMLElement | undefined
@@ -125,9 +166,11 @@ export class FrameSnapshots {
       this.stage = this.layer = this.viewport = undefined
       this.cancelIdle?.()
       this.cancelIdle = undefined
+      window.clearTimeout(this.retryTimer)
+      this.retryTimer = undefined
       this.pending?.abort.abort()
       this.cache.clear()
-      for (const slot of this.slots.values()) slot.attempted = false
+      for (const slot of this.slots.values()) resetAttempts(slot)
     }
   }
 
@@ -137,12 +180,12 @@ export class FrameSnapshots {
       if (changing || !sameRevision(slot.frame, frame)) {
         this.cache.delete(frame.id)
         if (this.pending?.slot === slot) this.pending.abort.abort()
-        slot.attempted = false
+        resetAttempts(slot)
       }
       slot.frame = frame
     } else {
       this.remove(frame.id)
-      this.slots.set(frame.id, { frame, image, attempted: false, near: false })
+      this.slots.set(frame.id, { frame, image, attempts: 0, retryAt: 0, near: false, captured: false })
     }
     this.wake()
   }
@@ -166,6 +209,8 @@ export class FrameSnapshots {
   }
 
   wake() {
+    window.clearTimeout(this.retryTimer)
+    this.retryTimer = undefined
     if (this.paused()) {
       this.cancelIdle?.()
       this.cancelIdle = undefined
@@ -190,6 +235,9 @@ export class FrameSnapshots {
     if (!width || !height) return
     let next: Slot | undefined
     let bestArea = -1
+    let bestDistance = Infinity
+    let nextRetry = Infinity
+    const now = performance.now()
     for (const slot of this.slots.values()) {
       const { frame, image } = slot
       const box = rotatedBounds(frame, frame.rotation ?? 0)
@@ -199,18 +247,32 @@ export class FrameSnapshots {
       const bottom = top + box.height * zoom
       const near = right >= -NEAR_PX && bottom >= -NEAR_PX && left <= width + NEAR_PX && top <= height + NEAR_PX
       // An evicted frame can get a fresh snapshot when the camera returns to it.
-      if (near && !slot.near && !this.ready.has(slot)) slot.attempted = false
+      if (near && !slot.near && slot.captured && !this.ready.has(slot)) resetAttempts(slot)
       slot.near = near
       if (!near || image.hasAttribute('data-frame-snapshot-blocked')) continue
       const area =
         Math.max(0, Math.min(width, right) - Math.max(0, left)) *
         Math.max(0, Math.min(height, bottom) - Math.max(0, top))
       if (area > 0) this.cache.touch(frame)
-      if (!slot.attempted && area > bestArea) {
+      if (slot.retryAt > now) {
+        nextRetry = Math.min(nextRetry, slot.retryAt)
+        continue
+      }
+      const distance = Math.hypot(
+        Math.max(left - width / 2, width / 2 - right, 0),
+        Math.max(top - height / 2, height / 2 - bottom, 0),
+      )
+      if (
+        !next ||
+        slot.attempts < next.attempts ||
+        (slot.attempts === next.attempts && (area > bestArea || (area === bestArea && distance < bestDistance)))
+      ) {
         bestArea = area
+        bestDistance = distance
         next = slot
       }
     }
+    if (!next && Number.isFinite(nextRetry)) this.retryTimer = window.setTimeout(() => this.wake(), nextRetry - now)
     return next
   }
 
@@ -218,24 +280,32 @@ export class FrameSnapshots {
     const { frame, image } = slot
     const abort = new AbortController()
     this.pending = { slot, abort }
-    const timeout = window.setTimeout(() => abort.abort('timeout'), CAPTURE_TIMEOUT_MS)
+    const timeout = window.setTimeout(() => abort.abort(CAPTURE_DEADLINE), CAPTURE_TIMEOUT_MS)
     const started = performance.now()
     let url: string | undefined
+    let resourceFailure = false
     try {
       const { rasterizeFrame } = await import('./frameRaster')
       abort.signal.throwIfAborted()
       const scale = Math.min(1, MAX_BITMAP_EDGE / Math.max(frame.width, frame.height))
-      const blob = await rasterizeFrame(frame, { type: 'png', scale, signal: abort.signal, documentBackground: true })
+      const blob = await rasterizeFrame(frame, {
+        type: 'png',
+        scale,
+        signal: abort.signal,
+        documentBackground: true,
+        preview: { onResourceFailure: () => (resourceFailure = true) },
+      })
       abort.signal.throwIfAborted()
       url = URL.createObjectURL(blob)
-      image.src = url
-      await image.decode()
+      const decoded = await decodeSnapshot(url, abort.signal)
       abort.signal.throwIfAborted()
       if (this.paused() || image.hasAttribute('data-frame-snapshot-blocked')) return
 
       const cachedUrl = url
+      this.cache.delete(frame.id)
+      image.src = cachedUrl
       this.cache.set(frame, {
-        bytes: image.naturalWidth * image.naturalHeight * 4 + blob.size,
+        bytes: decoded.naturalWidth * decoded.naturalHeight * 4 + blob.size,
         dispose: () => {
           this.ready.delete(slot)
           image.removeAttribute('data-frame-snapshot-ready')
@@ -245,19 +315,16 @@ export class FrameSnapshots {
       })
       url = undefined
       this.ready.add(slot)
+      slot.captured = true
       this.updateTiny(slot)
       image.setAttribute('data-frame-snapshot-ready', `${started}:${performance.now()}`)
-      slot.attempted = true
+      finishAttempt(slot, resourceFailure)
     } catch {
-      // Unsupported resources, timeouts and tainted captures leave the live document in place.
-      // Camera movement and revision changes can retry after the next idle period.
-      if (!abort.signal.aborted || abort.signal.reason === 'timeout') slot.attempted = true
+      // Camera movement and revision changes do not spend a retry.
+      if (!abort.signal.aborted || abort.signal.reason === CAPTURE_DEADLINE) finishAttempt(slot, true)
     } finally {
       window.clearTimeout(timeout)
-      if (url) {
-        image.removeAttribute('src')
-        URL.revokeObjectURL(url)
-      }
+      if (url) URL.revokeObjectURL(url)
       this.pending = undefined
       this.wake()
     }

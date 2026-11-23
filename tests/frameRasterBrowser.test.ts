@@ -42,6 +42,39 @@ describe.skipIf(!findBrowserPath())('rasterizing a frame in the browser', () => 
     expect(out.paper).toEqual([255, 255, 255, 255])
   })
 
+  it('paints a preview with a missing sheet, font and image, preserving the image box', async () => {
+    const html = `<link rel="stylesheet" href="https://resources.invalid/style.css">
+      <style>
+        @font-face { font-family: Missing; src: url(https://resources.invalid/font.woff2) }
+        body { margin: 0; background: white; font-family: Missing, system-ui }
+        img { display: block }
+        .marker { width: 100px; height: 100px; background: red }
+      </style>
+      <img src="https://resources.invalid/image.png" width="100" height="100">
+      <div class="marker"></div><p>Fallback type</p>`
+    const out = await render({ html, preview: {} })
+    expect(out.type).toBe('image/png')
+    expect([out.width, out.height]).toEqual([300, 300])
+    expect(out.block).toEqual([255, 255, 255, 255])
+    expect(out.made).toEqual([255, 0, 0, 255])
+    await expect(render({ html })).rejects.toThrow()
+  })
+
+  it('keeps the frame viewport when decoding a scaled preview', async () => {
+    const html = `<style>
+      body { margin: 0 }
+      div { width: 50vw; height: 50vh; background: green }
+      @media (max-width: 200px) { div { background: blue } }
+      @supports (display: block) {
+        @media (min-width: 250px) { div { background: red } }
+      }
+    </style><div></div>`
+    const strict = await render({ html, height: 7200, scale: 0.08 })
+    const preview = await render({ html, height: 7200, scale: 0.08, preview: {} })
+    expect(strict.block).toEqual([255, 0, 0, 255])
+    expect(preview).toEqual(strict)
+  })
+
   it('renders at 2x for a retina export', async () => {
     const out = await render({ scale: 2 })
     expect([out.width, out.height]).toEqual([600, 600])

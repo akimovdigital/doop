@@ -302,7 +302,8 @@ export function onFrameDocument(frameId: string, cb: () => void): () => void {
   return subscribe(documentListeners, frameId, cb)
 }
 
-function prepareFrameDocument(frameId: string, timeoutMs: number): Promise<boolean> {
+function prepareFrameDocument(frameId: string, timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
+  signal?.throwIfAborted()
   const frame = deferredFrames.get(frameId)
   if (!frame || hasFrameDocument(frameId)) return Promise.resolve(windows.has(frameId))
   return new Promise((resolve) => {
@@ -311,9 +312,11 @@ function prepareFrameDocument(frameId: string, timeoutMs: number): Promise<boole
       if (hasFrameDocument(frameId)) finish(true)
     })
     const timer = window.setTimeout(cancel, timeoutMs)
+    signal?.addEventListener('abort', cancel, { once: true })
     function finish(ready: boolean) {
       off()
       window.clearTimeout(timer)
+      signal?.removeEventListener('abort', cancel)
       frame?.cancellations.delete(cancel)
       resolve(ready)
     }
@@ -388,7 +391,9 @@ export async function requestFrame(
   type: `doop:${string}`,
   payload: Record<string, unknown>,
   timeoutMs = REPLY_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown> | null> {
+  signal?.throwIfAborted()
   // Prototype scanning is passive; its onFrameChange subscription will read
   // the live document once it boots. HTML itself starts that document.
   if (
@@ -396,11 +401,14 @@ export async function requestFrame(
     type !== 'doop:proto-scan' &&
     deferredFrames.has(frameId) &&
     !hasFrameDocument(frameId) &&
-    !(await prepareFrameDocument(frameId, timeoutMs))
-  )
+    !(await prepareFrameDocument(frameId, timeoutMs, signal))
+  ) {
+    signal?.throwIfAborted()
     return null
+  }
+  signal?.throwIfAborted()
   const win = windows.get(frameId)
-  return win ? askFrameWindow(win, type, payload, timeoutMs) : null
+  return win ? askFrameWindow(win, type, payload, timeoutMs, undefined, signal) : null
 }
 
 /** Preview windows are separate from the editor's registered frame documents. */
@@ -410,17 +418,36 @@ export function askFrameWindow(
   payload: Record<string, unknown>,
   timeoutMs = REPLY_TIMEOUT_MS,
   replyType = `${type}-result`,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown> | null> {
   listen()
   nextReq += 1
   const reqId = nextReq
-  return new Promise((resolve) => {
-    pending.set(reqId, { win, replyType, resolve })
-    win.postMessage({ ...payload, type, reqId }, '*')
+  return new Promise((resolve, reject) => {
+    signal?.throwIfAborted()
+    const cleanup = () => {
+      pending.delete(reqId)
+      window.clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
+    }
+    const finish = (result: Record<string, unknown> | null) => {
+      cleanup()
+      resolve(result)
+    }
+    const abort = () => {
+      cleanup()
+      reject(signal?.reason)
+    }
     /* a frame that unloads mid-request would leave the promise hanging */
-    window.setTimeout(() => {
-      if (pending.delete(reqId)) resolve(null)
-    }, timeoutMs)
+    const timer = window.setTimeout(() => finish(null), timeoutMs)
+    signal?.addEventListener('abort', abort, { once: true })
+    pending.set(reqId, { win, replyType, resolve: finish })
+    try {
+      win.postMessage({ ...payload, type, reqId }, '*')
+    } catch (error) {
+      cleanup()
+      reject(error)
+    }
   })
 }
 
@@ -439,9 +466,9 @@ export interface FrameSnapshot {
  *  is not mounted. A mounted frame that does not answer in time counts as
  *  one that could not be read, never as unmounted: its saved HTML would
  *  render without what the runtime shows. */
-export async function snapshotFrame(frameId: string): Promise<FrameSnapshot | null> {
+export async function snapshotFrame(frameId: string, signal?: AbortSignal): Promise<FrameSnapshot | null> {
   if (!windows.has(frameId) && !deferredFrames.has(frameId)) return null
-  const reply = await requestFrame(frameId, 'doop:snapshot', {}, SNAPSHOT_TIMEOUT_MS)
+  const reply = await requestFrame(frameId, 'doop:snapshot', {}, SNAPSHOT_TIMEOUT_MS, signal)
   return { html: typeof reply?.html === 'string' ? reply.html : null }
 }
 
@@ -569,9 +596,15 @@ export async function computedStyles(
   frameId: string,
   selector: string,
   properties: readonly string[],
-  { fromTextRun = false }: { fromTextRun?: boolean } = {},
+  { fromTextRun = false, signal }: { fromTextRun?: boolean; signal?: AbortSignal } = {},
 ): Promise<Record<string, string> | null> {
-  const reply = await requestFrame(frameId, 'doop:computed', { selector, properties: [...properties], fromTextRun })
+  const reply = await requestFrame(
+    frameId,
+    'doop:computed',
+    { selector, properties: [...properties], fromTextRun },
+    undefined,
+    signal,
+  )
   return reply && reply.values && typeof reply.values === 'object' ? (reply.values as Record<string, string>) : null
 }
 
