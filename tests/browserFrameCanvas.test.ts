@@ -130,6 +130,7 @@ describe.skipIf(!findBrowserPath())('live browser on the canvas', () => {
     await seed('')
     await page.click(SHIELD)
     await page.waitForSelector('.browser-message input', { visible: true })
+    expect(await page.$$('[data-row-key="browser"]')).toHaveLength(1)
     expect(await page.evaluate(() => document.activeElement?.matches('.browser-message input'))).toBe(false)
     await page.click('.browser-message input')
     expect(await page.evaluate(() => document.activeElement?.matches('.browser-message input'))).toBe(true)

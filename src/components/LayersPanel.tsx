@@ -229,7 +229,7 @@ function visibleRows(frames: Frame[], query: string, expanded: Set<string>): Vis
       if (open) walk(shape.children, 1, key, !!frame.hidden || shape.hidden)
       continue
     }
-    const open = !!query || expanded.has(frame.id)
+    const open = !frame.browser && (!!query || expanded.has(frame.id))
     const nodes = open ? (tree ?? frameTree(frame)) : []
     rows.push({ kind: 'frame', key: frame.id, frame, open, empty: open && nodes.length === 0 })
     walk(nodes, 1, frame.id, !!frame.hidden)
@@ -1153,7 +1153,7 @@ function FrameRow({
             /* an open, empty frame shows the drop as the line its first
                layer would sit on, under the caption, not as a box */
             drop={row.empty && drop === 'inside' ? undefined : drop}
-            caret={<Caret open={row.open} present />}
+            caret={<Caret open={row.open} present={!frame.browser} />}
             onCaret={onToggle}
             icon={frame.browser ? <Globe size={14} /> : <FrameIcon className="size-3.5" />}
             label={label}
