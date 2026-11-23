@@ -338,6 +338,8 @@ export const panels = {
   designAnnotateShortcut: 'Annotate (⌘⇧D)',
   designExit: 'Exit Design Mode',
   designPickHint: 'Click or drag to select · Hold Space to use page · ↑↓ to adjust',
+  designTextNoteHint: 'Double-click to edit text · Hold Space to use page · Esc to cancel',
+  designTextEditingHint: 'Return to save · Esc to cancel',
   designNoteHint: 'Hold Space to use page · Esc to cancel',
   designNote: 'Design annotation',
   designDescribe: 'Describe the change',

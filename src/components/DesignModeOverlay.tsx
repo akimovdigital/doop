@@ -96,7 +96,16 @@ export function DesignModeControls({ mode }: { mode: Mode }) {
 
 export function DesignModeHint({ mode }: { mode: Mode }) {
   const t = useT()
-  const message = t(mode.region || mode.draft ? 'panels.designNoteHint' : 'panels.designPickHint')
+  const canEditText = mode.draft?.elements.length === 1 && mode.draft.elements[0]?.textEditable
+  const message = t(
+    mode.editingText
+      ? 'panels.designTextEditingHint'
+      : canEditText
+        ? 'panels.designTextNoteHint'
+        : mode.region || mode.draft
+          ? 'panels.designNoteHint'
+          : 'panels.designPickHint',
+  )
   return (
     <div
       data-design-hint=""
@@ -194,7 +203,7 @@ export function DesignModeOverlay({
   const surface = useSurface(viewportRef, screen, revision)
   const fieldRef = useRef<HTMLTextAreaElement>(null)
   const shieldRef = useRef<HTMLDivElement>(null)
-  const picking = mode.enabled && !mode.usingPage
+  const picking = mode.enabled && !mode.usingPage && !mode.editingText
   const cardOpen = picking && !!mode.draft
 
   useLayoutEffect(() => {
@@ -296,16 +305,19 @@ export function DesignModeOverlay({
     surface && anchors.length
       ? Math.max(inset, Math.min(surface.x + right * surface.scale, surface.viewportWidth - inset) - cardWidth)
       : inset
+  const top = Math.min(...anchors.map((rect) => rect.y))
   const comment = draft?.comment.trim()
+  const canSubmit = !!(comment || draft?.textEdit)
   const rows = Math.min(3, (draft?.comment ?? '').split('\n').length)
   const cardHeight = (comment || draft?.id ? 58 : 34) + (rows - 1) * 20
-  const cardTop =
-    surface && anchors.length
-      ? Math.max(
-          inset,
-          Math.min(surface.y + bottom * surface.scale + inset, surface.viewportHeight - cardHeight - inset),
-        )
-      : inset
+  let cardTop = inset
+  if (surface && anchors.length) {
+    const below = surface.y + bottom * surface.scale + inset
+    const above = surface.y + top * surface.scale - cardHeight - inset
+    const limit = surface.viewportHeight - cardHeight - inset
+    // Keep the note from covering the selected text before the second click.
+    cardTop = below > limit && above >= inset ? above : Math.max(inset, Math.min(below, limit))
+  }
   const submitLabel = t(draft?.id ? 'panels.designSave' : mode.saved.batch ? 'panels.designStack' : 'panels.designSend')
   const tagBadge = 'absolute right-0 bottom-full max-w-full truncate rounded-row bg-brand px-1 text-micro/4 text-white'
 
@@ -338,6 +350,10 @@ export function DesignModeOverlay({
               }}
               onMouseDown={(event) => {
                 if (draft) event.preventDefault()
+              }}
+              onDoubleClick={(event) => {
+                if (!event.altKey && !event.shiftKey)
+                  void mode.startTextEdit(designPoint(event, event.currentTarget, surface.scale))
               }}
               onPointerLeave={mode.clearHover}
             />
@@ -413,7 +429,7 @@ export function DesignModeOverlay({
               ref={fieldRef}
               data-design-note-field=""
               aria-label={t('panels.designDescribe')}
-              placeholder={t('panels.designDescribe')}
+              placeholder={draft.textEdit ? `“${draft.textEdit.after}”` : t('panels.designDescribe')}
               variant="bare"
               rows={rows}
               className="min-w-0 flex-1 text-caption/5 md:text-caption/5"
@@ -461,7 +477,7 @@ export function DesignModeOverlay({
                   variant="primary"
                   className="size-5"
                   aria-label={submitLabel}
-                  disabled={!comment || mode.busy}
+                  disabled={!canSubmit || mode.busy}
                   onClick={() => void mode.submit()}
                 >
                   {draft.id ? (
@@ -524,7 +540,7 @@ function AnnotationQueue({ mode }: { mode: Mode }) {
       ? [element.tag, ...element.classes].join('.')
       : note.region &&
         t('panels.designRegion', { width: Math.round(note.region.width), height: Math.round(note.region.height) })
-    const visibleText = element?.text.replace(/\s+/g, ' ').trim().slice(0, 80)
+    const visibleText = (note.textEdit?.after ?? element?.text)?.replace(/\s+/g, ' ').trim().slice(0, 80)
     return (
       <li
         key={note.id}
@@ -536,7 +552,7 @@ function AnnotationQueue({ mode }: { mode: Mode }) {
           variant="bare"
           className="h-6 min-w-0 flex-1 justify-start gap-1 px-0.5 text-caption text-ink"
           title={[selector, visibleText && `“${visibleText}”`, note.comment].filter(Boolean).join(' ')}
-          aria-label={`${note.number}. ${note.comment}`}
+          aria-label={`${note.number}. ${note.textEdit ? `“${visibleText}”` : note.comment}`}
           disabled={mode.busy}
           onClick={() => mode.openNote(note)}
         >
@@ -548,6 +564,7 @@ function AnnotationQueue({ mode }: { mode: Mode }) {
             {visibleText && <span className="ml-1 text-ink-soft">“{visibleText}”</span>}
           </span>
           <span className="min-w-0 flex-1 truncate text-left">{note.comment}</span>
+          {note.textEdit && <span className="shrink-0 rounded-row bg-brand/10 px-1 text-brand">T</span>}
           {note.elements.length > 1 && (
             <span className="shrink-0 rounded-row bg-brand/10 px-1 text-brand">+{note.elements.length - 1}</span>
           )}

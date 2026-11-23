@@ -236,6 +236,7 @@ export function BrowserFrame({
           }
           win.postMessage({ type: 'doop:runtime-port' }, '*', [channel.port2])
         } else if (annotationWindow.current === win) {
+          if (type === 'doop:textEdit-finished') design.finishTextEdit(event.data)
           if (type === 'doop:annotation-layout') design.refreshPins()
           if (type === 'doop:proto-space-up') design.releasePage()
           if (type === 'doop:esc' && document.activeElement === iframe.current) {
@@ -718,13 +719,18 @@ export function BrowserFrame({
                     : 'allow-scripts allow-forms allow-popups allow-modals'
                 }
                 referrerPolicy="no-referrer"
-                tabIndex={(interactions || overlay) && (!design.enabled || design.usingPage) ? 0 : -1}
+                tabIndex={
+                  (interactions || overlay) && (!design.enabled || design.usingPage || design.editingText) ? 0 : -1
+                }
                 style={{
                   ...viewport,
                   ...(counterScaled ? { zoom: 'var(--frame-counter-zoom, 1)' } : null),
                   transform: iframeScale,
                   visibility: failed ? 'hidden' : undefined,
-                  pointerEvents: (interactions || overlay) && (!design.enabled || design.usingPage) ? 'auto' : 'none',
+                  pointerEvents:
+                    (interactions || overlay) && (!design.enabled || design.usingPage || design.editingText)
+                      ? 'auto'
+                      : 'none',
                 }}
                 className="absolute top-0 left-0 origin-top-left border-0 bg-surface"
                 onLoad={() => {

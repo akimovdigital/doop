@@ -1219,6 +1219,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
     if (!target) return null
     var cs = getComputedStyle(el)
     target.id = el.id
+    target.textEditable = textEditable(el) && !!el.textContent.trim()
     target.doopId = el.getAttribute('data-doop-id') || undefined
     target.classes = Array.from(el.classList)
     target.text = (el.innerText || (el instanceof SVGElement ? el.textContent : '') || '').replace(/\\s+/g, ' ').trim().slice(0, 500)
@@ -1228,6 +1229,77 @@ export function frameRuntime(browse?: { token: string; url: string }) {
       target.styles[name] = cs.getPropertyValue(name)
     })
     return target
+  }
+
+  var annotationText = null
+  var annotationTextPreviews = new Map()
+
+  function textEditable(el) {
+    return el instanceof HTMLElement &&
+      el !== document.body && el !== document.documentElement &&
+      !el.isContentEditable && !el.matches('input,textarea,select,script,style') &&
+      Array.from(el.childNodes).every(function (node) { return node.nodeType === Node.TEXT_NODE })
+  }
+
+  function endAnnotationText(mode) {
+    var edit = annotationText
+    if (!edit) return
+    annotationText = null
+    var el = edit.el
+    var after = el.childElementCount ? el.innerText : el.textContent
+    if (edit.attribute === null) el.removeAttribute('contenteditable')
+    else el.setAttribute('contenteditable', edit.attribute)
+    if (el.textContent !== edit.before || el.childElementCount) el.textContent = edit.before
+    if (document.activeElement === el) el.blur()
+    window.getSelection()?.removeAllRanges()
+    if (mode === 'cancel') return
+    postToEditor({
+      type: 'doop:textEdit-finished', id: edit.id, mode: mode,
+      hit: edit.hit, before: edit.before, after: after
+    })
+  }
+
+  function startAnnotationText(d) {
+    if (annotationText) return false
+    var el = document.elementFromPoint(viewX(d.x), viewX(d.y))
+    if (!textEditable(el) || !el.textContent.trim()) return false
+    var hit = annotationDetails(el, d.x, d.y)
+    annotationText = { id: d.id, el: el, hit: hit, before: el.textContent, attribute: el.getAttribute('contenteditable') }
+    el.setAttribute('contenteditable', 'plaintext-only')
+    el.focus({ preventScroll: true })
+    selectAllIn(el)
+    return true
+  }
+
+  window.addEventListener('keydown', function (ev) {
+    if (!annotationText || ev.isComposing) return
+    var mode = ev.key === 'Escape' ? 'revert' : ev.key === 'Enter' ? 'save'
+      : (ev.metaKey || ev.ctrlKey) && !ev.altKey && !ev.shiftKey && ev.key.toLowerCase() === 'l' ? 'chat' : null
+    if (!mode) return
+    ev.preventDefault()
+    ev.stopImmediatePropagation()
+    endAnnotationText(mode)
+  }, true)
+
+  function syncAnnotationText(edits) {
+    // A pending edit belongs to the source text it was made against. A new
+    // render (or page script) can change that text independently.
+    annotationTextPreviews.forEach(function (preview, el) {
+      if (edits.some(function (edit) {
+        return edit.id === preview.id && edit.after === preview.after && styleTarget(edit.selector) === el &&
+          (el.textContent === preview.after || annotationText?.el === el)
+      })) return
+      if (textEditable(el) && el.textContent === preview.after) el.textContent = preview.before
+      annotationTextPreviews.delete(el)
+    })
+    edits.forEach(function (edit) {
+      if (!edit.pending) return
+      var el = styleTarget(edit.selector)
+      if (!textEditable(el) || el.textContent !== edit.before) return
+      el.textContent = edit.after
+      annotationTextPreviews.set(el, edit)
+    })
+    annotationChanged()
   }
 
   /* The pointer shield lives above the sandbox. Scroll its closest scrollable
@@ -2103,6 +2175,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
       parent.postMessage({ type: 'doop:style-gesture-result', reqId: d.reqId, info: changed ? inspect(d.selector) : null }, '*')
     }
     if (d.type === 'doop:html' && typeof d.html === 'string' && !editing) {
+      endAnnotationText('revert')
       render(d.html)
       notifyFrameUpdated()
       protoHtmlChanged()
@@ -2264,6 +2337,12 @@ export function frameRuntime(browse?: { token: string; url: string }) {
       } catch (e) {
         answer(null)
       }
+    }
+    if (d.type === 'doop:textEdit') {
+      if (d.action === 'start') {
+        postToEditor({ type: 'doop:textEdit-result', reqId: d.reqId, started: startAnnotationText(d) })
+      } else if (d.action === 'cancel' && annotationText?.id === d.id) endAnnotationText('cancel')
+      else if (d.action === 'sync' && Array.isArray(d.edits)) syncAnnotationText(d.edits)
     }
     if (d.type === 'doop:annotation-wheel') annotationWheel(d)
     if (d.type === 'doop:annotation-watch') {
