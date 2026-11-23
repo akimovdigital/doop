@@ -93,3 +93,16 @@ artboard paper. Present opens the interactive prototype player. See `src/compone
 
 Canvas dots fade as their on-screen spacing falls from 10 px to 4 px. At overview zoom, the page colour
 shows through. When canvas chrome is hidden, the bottom-right button and Escape bring it back.
+
+## Prototype preview
+
+The 36 px preview bar sits below the desktop strip and above the site viewport. The bar uses
+`--surface`, a one-pixel `--line` divider and quiet 24 px Doop icon buttons. The 28 px address
+field uses `--sub`, the 10 px pill radius and the shared focus ring. It truncates the preview
+address and, where there is room, displays a muted frame name. The address suggestions and scaling
+menu use the shared menu surface, radius and elevation.
+
+The editor can shrink the player into a centered 80% window with a 300 px minimum width where
+space permits, a panel radius, an edge and `shadow-pop`. The 150 ms ease-out resize follows the
+reduced-motion preference. The site and its overlays share a separately measured, clipped viewport
+inside the window. Standalone preview keeps the same bar layout with its editor actions hidden.

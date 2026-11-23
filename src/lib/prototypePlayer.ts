@@ -165,3 +165,70 @@ export function historyStep(stack: readonly ProtoPlace[], target: ProtoPlace): '
     return 'back'
   return 'jump'
 }
+
+interface ProtoTrail<T> {
+  stack: T[]
+  forward: T[]
+}
+
+const MAX_HISTORY = 50
+
+/** Keep known visits ordered across browser history jumps, including repeated
+ * frame ids. A new visit discards the forward branch. */
+export function updateProtoTrail<T extends ProtoPlace>(
+  trail: ProtoTrail<T>,
+  entry: T,
+  action: 'push' | 'traverse' | 'replace',
+): ProtoTrail<T> {
+  if (action === 'push') return { stack: [...trail.stack, entry].slice(-MAX_HISTORY), forward: [] }
+  if (action === 'replace') return { stack: [...trail.stack.slice(0, -1), entry], forward: trail.forward }
+  const known = [...trail.stack, ...trail.forward]
+  return {
+    stack: [...known.filter((visit) => visit.depth < entry.depth), entry].slice(-MAX_HISTORY),
+    forward: known.filter((visit) => visit.depth > entry.depth).slice(0, MAX_HISTORY),
+  }
+}
+
+export function matchPreviewFrames<T extends { name: string }>(frames: readonly T[], query: string): T[] {
+  const search = query.trim().toLocaleLowerCase()
+  const prefixes: T[] = []
+  const remaining: T[] = []
+  for (const frame of frames) {
+    const name = frame.name.toLocaleLowerCase()
+    if (name.startsWith(search)) prefixes.push(frame)
+    else if (name.includes(search)) remaining.push(frame)
+  }
+  return [...prefixes, ...remaining]
+}
+
+export function previewFrameFromAddress(value: string, previewPath: string): string | null {
+  const address = value.trim()
+  if (!address.includes('?')) return null
+  try {
+    const url = new URL(
+      address.startsWith('/') || address.includes('://') ? address : `https://${address}`,
+      'https://preview.invalid',
+    )
+    if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.pathname !== previewPath) return null
+    return url.searchParams.get('frame') || null
+  } catch {
+    return null
+  }
+}
+
+export type ProtoShortcut = 'back' | 'forward' | 'reload' | 'address'
+
+/** Also inlined in the sandboxed screen; keep this independent of module state. */
+export function protoShortcut(event: KeyboardEvent): ProtoShortcut | undefined {
+  if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey || event.isComposing) return
+  switch (event.key.toLowerCase()) {
+    case '[':
+      return 'back'
+    case ']':
+      return 'forward'
+    case 'r':
+      return 'reload'
+    case 'l':
+      return 'address'
+  }
+}

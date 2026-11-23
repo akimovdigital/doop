@@ -1,5 +1,8 @@
+import { mkdir } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { Frame as PuppeteerFrame, Page } from 'puppeteer-core'
+import type { Frame as PuppeteerFrame, KeyInput, Page } from 'puppeteer-core'
 import { findBrowserPath } from '../server/screenshot'
 import { fixtureUrl, pagePerTest } from './browser'
 import type { Canvas, Frame } from '../shared/types'
@@ -12,6 +15,7 @@ type Fixture = {
   playerClosed: boolean
   seed: (canvas: Canvas) => void
   play: (frameId: string) => void
+  playWithShell: (frameId: string) => void
   playSynced: (frameId: string) => void
   editFrame: (id: string, html: string) => void
   addRawFrame: () => void
@@ -128,6 +132,263 @@ describe.skipIf(!findBrowserPath())('prototype player', { timeout: 30_000 }, () 
     throw new Error(`clicking ${selector} never took effect`)
   }
 
+  const control = (label: string) => `[data-preview-toolbar] button[aria-label="${label}"]`
+  const addressField = '[role="combobox"][aria-label="Preview address"]'
+  const pressCommand = async (key: KeyInput) => {
+    await page.keyboard.down('Meta')
+    try {
+      await page.keyboard.press(key)
+    } finally {
+      await page.keyboard.up('Meta')
+    }
+  }
+  const waitForCurrent = (name: string) =>
+    page.waitForFunction((name) => document.querySelector('[data-proto-current]')?.textContent === name, {}, name)
+
+  it('keeps all the controls above the site and resizes the site in windowed mode', async () => {
+    await page.evaluate((canvas) => {
+      document.documentElement.style.setProperty('--app-inset', '38px')
+      ;(window as unknown as Fixture).seed(canvas)
+      ;(window as unknown as Fixture).play('home')
+    }, CANVAS)
+    await screen('home')
+    const geometry = () =>
+      page.$eval('[data-prototype-player]', (player) => {
+        const bar = player.querySelector('[data-preview-toolbar]')!
+        const area = player.querySelector('[data-proto-viewport]')!.getBoundingClientRect()
+        return {
+          barTop: bar.getBoundingClientRect().top,
+          barBottom: bar.getBoundingClientRect().bottom,
+          screenTop: player.querySelector('[data-proto-screen]')!.getBoundingClientRect().top,
+          width: area.width,
+          height: area.height,
+          buttons: [...bar.querySelectorAll('button')].map((button) => [
+            button.getAttribute('aria-label'),
+            button.title,
+          ]),
+        }
+      })
+    const full = await geometry()
+    expect(full.barTop).toBe(38)
+    expect(full.screenTop).toBe(full.barBottom)
+    expect(full.buttons).toEqual([
+      ['Back', 'Back'],
+      ['Forward', 'Forward'],
+      ['Reload screen', 'Reload screen'],
+      ['Restart prototype', 'Restart prototype'],
+      ['Show hotspots', 'Show hotspots'],
+      ['Scaling', 'Scaling'],
+      ['Open prototype in a new tab', 'Open prototype in a new tab'],
+      ['Minimize preview', 'Minimize preview'],
+      ['Exit prototype', 'Exit (Esc)'],
+    ])
+
+    await page.click(control('Minimize preview'))
+    await page.waitForFunction(() => document.querySelector('[data-proto-viewport]')!.clientWidth < 810)
+    const small = await geometry()
+    expect(small.screenTop).toBe(small.barBottom)
+    expect(small.width).toBeLessThan(full.width)
+    expect(small.height).toBeLessThan(full.height)
+    await page.mouse.click(10, 48)
+    expect(await page.$('[data-prototype-player][data-minimized]')).not.toBeNull()
+
+    await page.click(control('Expand preview'))
+    await page.waitForFunction(
+      (width, height) => {
+        const viewport = document.querySelector('[data-proto-viewport]')
+        return viewport?.clientWidth === width && viewport.clientHeight === height
+      },
+      {},
+      full.width,
+      full.height,
+    )
+    await page.click(control('Exit prototype'))
+    await page.waitForFunction(() => (window as unknown as Fixture).playerClosed)
+  })
+
+  it('searches the current page, accepts preview links, walks local history and remounts on Reload', async () => {
+    const canvas = {
+      ...CANVAS,
+      pages: [...CANVAS.pages!, { id: 'other', name: 'Other page' }],
+      frames: [...CANVAS.frames, { ...frame('other', '<button>Other</button>'), pageId: 'other' }],
+    }
+    await page.evaluate((canvas) => {
+      ;(window as unknown as Fixture).seed(canvas)
+      ;(window as unknown as Fixture).play('home')
+    }, canvas)
+    await screen('home')
+    const disabled = (label: string) => page.$eval(control(label), (el) => (el as HTMLButtonElement).disabled)
+    const enter = async (value: string) => {
+      await page.click(addressField)
+      await page.keyboard.type(value)
+      await page.keyboard.press('Enter')
+    }
+    expect(await disabled('Forward')).toBe(true)
+
+    await pressCommand('l')
+    expect(await page.$eval(addressField, (el) => (el as HTMLInputElement).selectionEnd)).toBeGreaterThan(0)
+    expect(await page.$$eval('[role="option"]', (all) => all.map((option) => option.textContent))).toEqual([
+      'HOME',
+      'DETAIL',
+      'MENU',
+    ])
+    await page.keyboard.type('tAi')
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await waitForCurrent('DETAIL')
+    await page.click(control('Back'))
+    await waitForCurrent('HOME')
+    expect(await disabled('Forward')).toBe(false)
+    await page.click(control('Forward'))
+    await waitForCurrent('DETAIL')
+    expect(await disabled('Forward')).toBe(true)
+
+    const detail = await screen('detail')
+    await detail.evaluate(() => document.body.setAttribute('data-reload-check', 'old'))
+    const oldFrame = await page.$('iframe[data-doop-proto-frame="detail"]')
+    await page.click(control('Reload screen'))
+    await page.waitForFunction((previous) => !previous?.isConnected, {}, oldFrame)
+    expect(await current()).toBe('DETAIL')
+    const reloaded = await screen('detail')
+    expect(await reloaded.$('[data-reload-check]')).toBeNull()
+
+    await page.click(control('Back'))
+    await waitForCurrent('HOME')
+    await enter('/c/c/proto?frame=other')
+    await waitForCurrent('OTHER')
+    expect(await disabled('Forward')).toBe(true)
+    await enter('does not exist')
+    await page.waitForFunction(() => document.querySelector('[role="status"]')?.textContent === 'No screen matches')
+    expect(await page.$eval(addressField, (el) => (el as HTMLInputElement).value)).toMatch(
+      /\/c\/c\/proto\?frame=other$/,
+    )
+
+    await page.click(addressField)
+    await page.keyboard.type('draft')
+    await page.keyboard.press('Escape')
+    expect(await current()).toBe('OTHER')
+    expect(await page.$eval(addressField, (el) => (el as HTMLInputElement).value)).toMatch(/\?frame=other$/)
+  })
+
+  it('uses player shortcuts while the previewed document has focus', async () => {
+    await page.evaluate((canvas) => {
+      ;(window as unknown as Fixture).seed(canvas)
+      ;(window as unknown as Fixture).play('home')
+    }, CANVAS)
+    const home = await screen('home')
+    await clickUntil(home, '#go', async () => (await current()) === 'DETAIL')
+    const detail = await screen('detail')
+    await detail.focus('#back')
+    await pressCommand('[')
+    await waitForCurrent('HOME')
+    const back = await screen('home')
+    await back.focus('#go')
+    await pressCommand(']')
+    await waitForCurrent('DETAIL')
+    const again = await screen('detail')
+    await again.focus('#back')
+    const oldFrame = await page.$('iframe[data-doop-proto-frame="detail"]')
+    await pressCommand('r')
+    await page.waitForFunction((previous) => !previous?.isConnected, {}, oldFrame)
+    const reloaded = await screen('detail')
+    await reloaded.focus('#back')
+    await pressCommand('l')
+    await page.waitForFunction((selector) => document.activeElement?.matches(selector), {}, addressField)
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await waitForCurrent('HOME')
+  })
+
+  it('shares Forward with browser history and hides editor-only controls in standalone mode', async () => {
+    await page.evaluate((canvas) => {
+      ;(window as unknown as Fixture).seed(canvas)
+      ;(window as unknown as Fixture).playSynced('home')
+    }, CANVAS)
+    expect(await page.$(control('Minimize preview'))).toBeNull()
+    expect(await page.$(control('Exit prototype'))).toBeNull()
+    expect(await page.$(control('Open prototype in a new tab'))).toBeNull()
+
+    const home = await screen('home')
+    await clickUntil(home, '#go', async () => (await current()) === 'DETAIL')
+    await page.evaluate(() => history.back())
+    await waitForCurrent('HOME')
+    await page.click(control('Forward'))
+    await waitForCurrent('DETAIL')
+    expect(new URL(page.url()).searchParams.get('frame')).toBe('detail')
+    await page.click(control('Back'))
+    await waitForCurrent('HOME')
+    await page.evaluate(() => history.forward())
+    await waitForCurrent('DETAIL')
+  })
+
+  it.skipIf(!process.env.DOOP_PREVIEW_SHOTS)(
+    'captures preview toolbar screenshots',
+    async () => {
+      const source = 'http://127.0.0.1:8747/'
+      const response = await fetch(source)
+      if (!response.ok) throw new Error(`Local site returned ${response.status}`)
+      const html = (await response.text()).replace(/<head(?:\s[^>]*)?>/i, (head) => `${head}<base href="${source}">`)
+      const canvas: Canvas = {
+        ...CANVAS,
+        name: 'Akimov Digital',
+        frames: [
+          { ...frame('akimov-home', ''), name: 'Akimov Digital · Главная', width: 1440, height: 900, html },
+          { ...frame('akimov-contact', '<button>Contact</button>', 1540), name: 'Akimov Digital · Контакты' },
+        ],
+      }
+      await page.setViewport({ width: 1440, height: 960 })
+      await page.evaluate((canvas) => {
+        localStorage.setItem('doop:proto-scaling', 'responsive')
+        ;(window as unknown as Fixture).seed(canvas)
+        ;(window as unknown as Fixture).playWithShell('akimov-home')
+        localStorage.removeItem('doop:proto-scaling')
+      }, canvas)
+      const tab = await page.waitForSelector('[role="tab"][aria-selected="true"]', { visible: true })
+      expect(
+        await tab?.evaluate((el) => el.closest('[role=tablist]')?.parentElement?.getBoundingClientRect().bottom),
+      ).toBe(await page.$eval('[data-preview-toolbar]', (bar) => bar.getBoundingClientRect().top))
+      const iframe = await page.waitForSelector('iframe[data-doop-proto-frame="akimov-home"]', { visible: true })
+      const content = await iframe?.contentFrame()
+      await content?.waitForSelector('body h1', { visible: true })
+      await content?.evaluate(() => document.fonts.ready.then(() => undefined))
+      await page.waitForNetworkIdle({ idleTime: 500, timeout: 10_000 }).catch(() => {})
+      const dir = join(homedir(), 'doop-preview-toolbar')
+      await mkdir(dir, { recursive: true })
+      const shot = (name: string) => page.screenshot({ path: join(dir, `preview-bar-${name}.png`) as `${string}.png` })
+
+      await shot('full')
+      await page.click(addressField)
+      await page.keyboard.type('akimov')
+      await page.waitForSelector('[role="option"]')
+      await page.keyboard.press('ArrowDown')
+      await shot('address-search')
+      await page.keyboard.press('Escape')
+      await page.click(control('Scaling'))
+      await page.waitForSelector('[data-proto-menu]', { visible: true })
+      await sleep(200)
+      await shot('scaling-menu')
+      await page.keyboard.press('Escape')
+      await page.click(control('Minimize preview'))
+      await page.waitForFunction(() => document.querySelector('[data-proto-window]')!.clientWidth <= 1150)
+      await sleep(200)
+      await page.mouse.move(4, 940)
+      await shot('minimized')
+
+      await page.click(control('Expand preview'))
+      for (const width of [375, 768]) {
+        await page.setViewport({ width, height: 960 })
+        await page.waitForFunction(
+          (width) => document.querySelector('[data-proto-viewport]')?.clientWidth === width,
+          {},
+          width,
+        )
+        await page.mouse.move(4, 940)
+        await shot(`full-${width}`)
+      }
+    },
+    60_000,
+  )
+
   it('navigates on click, goes back, and opens and closes an overlay', async () => {
     await page.evaluate((canvas) => (window as unknown as Fixture).seed(canvas), CANVAS)
     await page.evaluate(() => (window as unknown as Fixture).play('home'))
@@ -150,7 +411,7 @@ describe.skipIf(!findBrowserPath())('prototype player', { timeout: 30_000 }, () 
 
     /* the scrim closes an overlay too */
     await clickUntil(back, '#help', async () => !!(await page.$('[data-proto-overlay="menu"]')))
-    await page.mouse.click(20, 20)
+    await page.mouse.click(20, 60)
     await page.waitForFunction(() => !document.querySelector('[data-proto-overlay]'))
   })
 
@@ -182,8 +443,8 @@ describe.skipIf(!findBrowserPath())('prototype player', { timeout: 30_000 }, () 
       await screen('home')
       expect(await page.$eval('[data-prototype-player]', (el) => el.getBoundingClientRect().top)).toBe(40)
       const width = () => page.$eval('[data-proto-screen="home"] > div', (el) => el.getBoundingClientRect().width)
-      /* 1000 × 660 fits the 400 × 300 frame at 2.2× */
-      expect(await width()).toBe(880)
+      /* 1000 × 624 fits the 400 × 300 frame at 2.08× */
+      expect(await width()).toBe(832)
 
       await page.click('[aria-label="Scaling"]')
       await page.waitForSelector('[data-proto-menu]')
@@ -247,7 +508,7 @@ describe.skipIf(!findBrowserPath())('prototype player', { timeout: 30_000 }, () 
     /* the player's box, the screen's box, and how far its scroller can go */
     const measure = () =>
       page.$eval('[data-proto-screen="big"]', (scroller) => {
-        const player = scroller.closest('[data-prototype-player]')!.getBoundingClientRect()
+        const player = scroller.closest('[data-proto-viewport]')!.getBoundingClientRect()
         scroller.scrollTo(scroller.scrollWidth, scroller.scrollHeight)
         const box = scroller.firstElementChild!.getBoundingClientRect()
         return {
@@ -266,15 +527,15 @@ describe.skipIf(!findBrowserPath())('prototype player', { timeout: 30_000 }, () 
     }
     try {
       await page.evaluate((canvas) => (window as unknown as Fixture).seed(canvas), big)
-      /* 2000 × 1400 at 1× in a 1000 × 700 player: scrolled to the far corner */
+      /* 2000 × 1400 at 1×: scrolled to the far corner of the site area */
       expect(await playAt('actual')).toMatchObject({ scrolled: true, right: 0, bottom: 0 })
-      /* at 0.5×: 1000 × 700 fills the width exactly, no room to scroll */
-      expect(await playAt('fit-width')).toMatchObject({ right: 0, bottom: 0, left: 0, top: 0 })
+      /* at 0.5×: 1000 × 700 fills the width and scrolls under the 36px bar */
+      expect(await playAt('fit-width')).toMatchObject({ scrolled: true, right: 0, bottom: 0, left: 0, top: -36 })
       await page.setViewport({ width: 1000, height: 600 })
-      /* 1000 × 700 in 1000 × 600: scrolls down to the bottom edge */
+      /* 1000 × 700 in 1000 × 564: scrolls down to the bottom edge */
       expect(await playAt('fit-width')).toMatchObject({ scrolled: true, bottom: 0, left: 0 })
-      /* 0.5× covers 1000 × 600: 100px cropped, 50 each side, nothing to scroll */
-      expect(await playAt('fill')).toEqual({ scrolled: false, right: 0, bottom: 50, left: 0, top: -50 })
+      /* 0.5× covers 1000 × 564: 136px cropped, 68 each side, nothing to scroll */
+      expect(await playAt('fill')).toEqual({ scrolled: false, right: 0, bottom: 68, left: 0, top: -68 })
     } finally {
       await page.evaluate(() => localStorage.removeItem('doop:proto-scaling'))
     }

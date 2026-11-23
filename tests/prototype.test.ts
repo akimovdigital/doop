@@ -12,6 +12,9 @@ import {
 } from '../shared/prototype'
 import {
   historyStep,
+  matchPreviewFrames,
+  previewFrameFromAddress,
+  updateProtoTrail,
   protoHistoryState,
   readProtoHistory,
   sanitizeInteraction,
@@ -288,5 +291,56 @@ describe('remapFrameTargets', () => {
     const html =
       '<p>Use navigate:old to link</p><a href="https://x.test/?q=overlay:old">x</a><a data-doop-action="navigate:old-two"></a>'
     expect(remapFrameTargets(html, ids)).toBe(html)
+  })
+})
+
+describe('preview history', () => {
+  const home = { frameId: 'home', depth: 0, key: 1 }
+  const detail = { frameId: 'detail', depth: 1, key: 2 }
+
+  it('keeps undone visits for Forward until a new navigation', () => {
+    const visited = updateProtoTrail({ stack: [home], forward: [] }, detail, 'push')
+    const back = updateProtoTrail(visited, { ...home, key: 3 }, 'traverse')
+    expect(back.forward).toEqual([detail])
+    const forward = updateProtoTrail(back, { ...detail, key: 4 }, 'traverse')
+    expect(forward.stack).toEqual([
+      { ...home, key: 3 },
+      { ...detail, key: 4 },
+    ])
+    expect(forward.forward).toEqual([])
+    const backAgain = updateProtoTrail(forward, { ...home, key: 5 }, 'traverse')
+    const next = updateProtoTrail(backAgain, { frameId: 'other', depth: 1, key: 6 }, 'push')
+    expect(next.forward).toEqual([])
+    expect(next.stack.map((entry) => entry.frameId)).toEqual(['home', 'other'])
+  })
+
+  it('replaces a reloaded document in place and preserves Forward', () => {
+    const trail = { stack: [home], forward: [detail] }
+    expect(updateProtoTrail(trail, { ...home, key: 7 }, 'replace')).toEqual({
+      stack: [{ frameId: 'home', depth: 0, key: 7 }],
+      forward: [detail],
+    })
+  })
+})
+
+describe('preview address', () => {
+  it('finds frames by name case-insensitively, with prefix matches first', () => {
+    const frames = [
+      { id: 'home', name: 'My Home' },
+      { id: 'help', name: 'Help' },
+      { id: 'main', name: 'Home page' },
+    ]
+    expect(matchPreviewFrames(frames, ' hOME ').map((frame) => frame.id)).toEqual(['main', 'home'])
+    expect(matchPreviewFrames(frames, 'missing')).toEqual([])
+  })
+
+  it('accepts preview links for this canvas and decodes the frame id', () => {
+    const parse = (value: string) => previewFrameFromAddress(value, '/c/test/proto')
+    expect(parse('http://127.0.0.1:5173/c/test/proto?frame=a%2Fb')).toBe('a/b')
+    expect(parse('127.0.0.1:5173/c/test/proto?frame=home')).toBe('home')
+    expect(parse('/c/test/proto?frame=home')).toBe('home')
+    expect(parse('https://example.test/c/other/proto?frame=home')).toBeNull()
+    expect(parse('/c/test/proto?page=home')).toBeNull()
+    expect(parse('javascript:alert(1)')).toBeNull()
   })
 })
