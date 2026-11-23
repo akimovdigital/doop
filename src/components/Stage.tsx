@@ -300,8 +300,9 @@ export function Stage({
   const attachLabelLayer = useCallback((el: HTMLDivElement | null) => {
     labelLayerRef.current = el
     if (el) {
-      const { x, y } = useStore.getState().viewport
+      const { x, y, zoom } = useStore.getState().viewport
       el.style.transform = `translate(${x}px, ${y}px)`
+      el.style.setProperty('--zoom', String(zoom))
     }
     setLabelLayer(el)
   }, [])
@@ -371,11 +372,11 @@ export function Stage({
     function apply(vp: { x: number; y: number; zoom: number }) {
       const world = worldRef.current
       const grid = gridRef.current
-      const stage = ref.current
-      if (!world || !grid || !stage) return
+      const labels = labelLayerRef.current
+      if (!world || !grid) return
       world.style.transform = worldTransform(vp, layoutZoomRef.current)
       /* the camera's offset, for chrome drawn in screen px (FrameLabelLayer) */
-      if (labelLayerRef.current) labelLayerRef.current.style.transform = `translate(${vp.x}px, ${vp.y}px)`
+      if (labels) labels.style.transform = `translate(${vp.x}px, ${vp.y}px)`
       const zoomChanged = vp.zoom !== lastPaintedZoom
       const period = DOT_GRID_SPACING * vp.zoom
       const dotOpacity = Math.min(
@@ -388,7 +389,10 @@ export function Stage({
         lastDotOpacity = dotOpacity
       }
       if (zoomChanged) {
-        stage.style.setProperty('--zoom', String(vp.zoom))
+        /* Scope inherited zoom to the world and the screen-space badge layer. */
+        const zoom = String(vp.zoom)
+        world.style.setProperty('--zoom', zoom)
+        labels?.style.setProperty('--zoom', zoom)
         if (dotOpacity > 0) {
           grid.style.backgroundSize = `${period}px ${period}px`
           /* Reserve one tile. Reuse the same layout within each range of
@@ -414,7 +418,7 @@ export function Stage({
           pixels.hidden = opacity === 0
           pixels.style.opacity = String(opacity)
           /* the frames' own grids read the same fade */
-          stage.style.setProperty('--pixel-grid', String(opacity))
+          world.style.setProperty('--pixel-grid', String(opacity))
           lastPixelGridOpacity = opacity
         }
         if (opacity !== 0) {
