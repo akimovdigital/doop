@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 // @vitest-environment-options { "happyDOM": { "settings": { "disableCSSFileLoading": true } } }
 import { afterEach, expect, it, vi } from 'vitest'
-import { clipToFrame, inlineDocument, pinViewportUnits } from '../src/lib/frameRaster'
+import { clipToFrame, inlineDocument, pinViewportUnits, rasterizeFrame } from '../src/lib/frameRaster'
+import { registerFrameWindow, unregisterFrameWindow } from '../src/lib/frameBridge'
+import type { Frame } from '../shared/types'
 
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47])
 const PNG_DATA = 'data:image/png;base64,iVBORw=='
@@ -207,4 +209,74 @@ it('drops what would run once the file is opened as a page', async () => {
   )
   expect(svg).not.toMatch(/javascript:|onload|onclick|onmouseover/i)
   expect(svg).toContain('href="https://doop.design"')
+})
+
+it('previews missing sheets, imports, fonts and images while sharing fetches across frames', async () => {
+  const calls = serve({
+    'https://preview.example/fonts.css': {
+      body: '@import "missing.css"; @font-face{font-family:F;src:url(missing.woff2)}',
+      type: 'text/css',
+    },
+  })
+  const html =
+    '<link rel="stylesheet" href="https://preview.example/styles.css">' +
+    '<link rel="stylesheet" href="https://preview.example/fonts.css">' +
+    '<img width="200" height="80" src="https://preview.example/missing.png">'
+  const onResourceFailure = vi.fn()
+  for (let i = 0; i < 2; i++) {
+    const svg = await inlineDocument(html, { ...opts(), preview: { onResourceFailure } })
+    expect(svg).toContain('<style></style>')
+    expect(svg).toContain('@import url("data:text/css,")')
+    expect(svg).toContain('font-family:F;src:url("data:image/')
+    expect(svg).toMatch(/width="200" height="80" src="data:image\//)
+    expect(svg).not.toContain('https://preview.example/')
+  }
+  expect(onResourceFailure).toHaveBeenCalledTimes(8)
+  expect(calls).toHaveLength(5)
+  const frame = { id: 'preview-resources', width: 300, height: 200, html } as Frame
+  await expect(rasterizeFrame(frame, { type: 'png', scale: 1 })).rejects.toThrow('404 fetching')
+})
+
+it('ends a preview while the mounted frame has yet to answer the snapshot bridge', async () => {
+  const frame = { id: 'unresponsive', width: 300, height: 200, html: '<p>Saved HTML</p>' } as Frame
+  const remote = { postMessage: vi.fn() } as unknown as Window
+  const controller = new AbortController()
+  const deadline = new Error('capture deadline')
+  registerFrameWindow(frame.id, remote)
+  try {
+    const result = rasterizeFrame(frame, {
+      type: 'png',
+      scale: 1,
+      preview: {},
+      signal: controller.signal,
+      documentBackground: true,
+    })
+    expect(remote.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'doop:snapshot' }), '*')
+    controller.abort(deadline)
+    await expect(result).rejects.toBe(deadline)
+  } finally {
+    unregisterFrameWindow(frame.id, remote)
+  }
+})
+
+it('times out a single resource and continues the capture', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  const fetch = vi.fn(
+    (_url, { signal }: { signal: AbortSignal }) =>
+      new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      }),
+  )
+  vi.stubGlobal('fetch', fetch)
+  try {
+    const pending = inlineDocument('<img src="https://slow.example/photo.png">', { ...opts(), preview: {} })
+    const signal = fetch.mock.calls[0]![1].signal
+    await vi.advanceTimersByTimeAsync(1499)
+    expect(signal.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(signal.aborted).toBe(true)
+    await expect(pending).resolves.toContain('src="data:image/')
+  } finally {
+    vi.useRealTimers()
+  }
 })

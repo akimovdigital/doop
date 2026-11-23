@@ -114,9 +114,13 @@ function snapshotStats(): NonNullable<Sample['snapshots']> {
   }
 }
 
-async function warmSnapshots(expected: number, timeout = 3500) {
+async function warmSnapshots(expected: number | (() => number), timeout = 3500) {
   const deadline = performance.now() + timeout
-  while (document.querySelectorAll('[data-frame-snapshot-ready]').length < expected && performance.now() < deadline)
+  while (
+    performance.now() < deadline &&
+    document.querySelectorAll('[data-frame-snapshot-ready]').length <
+      (typeof expected === 'number' ? expected : expected())
+  )
     await sleep(25)
 }
 
@@ -408,13 +412,14 @@ async function run(): Promise<Sample> {
   const expectedLive = await waitReady(scene, 'after warm-up reset')
   if (cameraGesture && real) {
     phase('warming snapshots before measurement')
-    await warmSnapshots(expectedLive, realSnapshotTimeout)
+    // Admission can mount more documents after the camera has settled.
+    await warmSnapshots(() => Math.max(expectedLive, liveDocuments().mounted), realSnapshotTimeout)
   }
-  const snapshots = cameraGesture ? snapshotStats() : undefined
-  diagnostics?.beforeGesture()
   phase('measured gesture')
   const gesture = prepareGesture(scenario, scene, duration)
   const before = await vmStat()
+  const snapshots = cameraGesture ? snapshotStats() : undefined
+  diagnostics?.beforeGesture()
   const start = performance.now()
   const startCamera = harness.getCamera()
   const observed = [startCamera]

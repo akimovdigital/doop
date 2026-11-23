@@ -70,7 +70,15 @@
         throw new Error('the runtime never ran the script, or never picked the srcset image')
       }
 
-      window.render = async ({ scale = 1, type = 'png', html = HTML, live = false, clip } = {}) => {
+      window.render = async ({
+        scale = 1,
+        type = 'png',
+        html = HTML,
+        live = false,
+        clip,
+        preview,
+        height = 300,
+      } = {}) => {
         if (live) await mountLive()
         const frame = {
           id: live ? 'live' : 'raster',
@@ -79,10 +87,10 @@
           x: 0,
           y: 0,
           width: 300,
-          height: 300,
+          height,
           html,
         }
-        const blob = await rasterizeFrame(frame, { scale, type, clip })
+        const blob = await rasterizeFrame(frame, { scale, type, clip, preview })
         const bitmap = await createImageBitmap(blob)
         const canvas = document.createElement('canvas')
         canvas.width = bitmap.width

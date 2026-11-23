@@ -32,6 +32,7 @@ export function traceSnapshots() {
   const set = FrameSnapshotCache.prototype.set
   let scheduling = false
   let tracingRaster = 0
+  let visibilityObserver: MutationObserver | undefined
   const direct = new Map<AbortSignal, 'original' | 'local-control'>()
   const idle = window.requestIdleCallback?.bind(window)
   const cancelIdle = window.cancelIdleCallback?.bind(window)
@@ -169,8 +170,27 @@ export function traceSnapshots() {
         idleSupported: !!idle,
         idlePending: idleJobs.size,
       })
+      const stage = document.querySelector('.stage')
+      if (!stage) return
+      const sampleVisibility = (event: string) => {
+        const documents = [...stage.querySelectorAll('iframe[data-doop-frame]')]
+        const hidden = documents.filter((iframe) => getComputedStyle(iframe).visibility === 'hidden')
+        record(event, { documents: documents.length, hidden: hidden.length })
+      }
+      let moving = false
+      visibilityObserver = new MutationObserver(() => {
+        if (stage.hasAttribute('data-frame-camera-moving')) {
+          moving = true
+          sampleVisibility('gesture-visibility')
+        } else if (moving) {
+          sampleVisibility('settled-visibility')
+          visibilityObserver?.disconnect()
+        }
+      })
+      visibilityObserver.observe(stage, { attributes: true, attributeFilter: ['data-frame-camera-moving'] })
     },
     async finish(frames: Frame[]) {
+      visibilityObserver?.disconnect()
       // Test the actual mounted sandbox, then run the same raster call directly, bypassing only the idle queue.
       const frame = frames.find(({ name }) => name.startsWith('Главная · 1920'))
       const iframe = frame
