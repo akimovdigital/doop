@@ -91,6 +91,8 @@ import {
   MessageCircle,
   MessageSquare,
   Monitor,
+  Maximize2,
+  Minimize2,
   Moon,
   PanelLeft,
   PanelsLeftRight,
@@ -339,6 +341,8 @@ export const CreditCardIcon = icon(CreditCard)
 export const LockIcon = icon(Lock)
 export const LockOpenIcon = icon(LockOpen)
 export const DesktopIcon = icon(Monitor)
+export const PreviewExpandIcon = icon(Maximize2)
+export const PreviewMinimizeIcon = icon(Minimize2)
 export const DownloadIcon = icon(Download)
 export const PuzzleIcon = icon(Puzzle)
 /* the theme switch: sun for light, moon for dark */

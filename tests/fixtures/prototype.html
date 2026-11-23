@@ -19,6 +19,8 @@
       import { createRoot } from 'react-dom/client'
       import { flushSync } from 'react-dom'
       import { PrototypePlayer } from '/src/components/PrototypePlayer.tsx'
+      import { DesktopTabs } from '/src/components/DesktopTabs.tsx'
+      import { ensureTab } from '/src/lib/desktop.ts'
       import { Stage } from '/src/components/Stage.tsx'
       import { TooltipProvider } from '/src/components/ui/tooltip.tsx'
       import { useStore } from '/src/lib/store.ts'
@@ -48,6 +50,27 @@
           },
         })
       /* the full-page route's player: each navigation is a browser history entry */
+      window.playWithShell = (startFrameId) => {
+        const canvas = useStore.getState().canvas
+        window.__DOOP_DESKTOP__ = '0.1.5'
+        ensureTab(canvas.id, canvas.name)
+        document.documentElement.classList.add('dark')
+        flushSync(() =>
+          root.render(
+            React.createElement(
+              TooltipProvider,
+              null,
+              React.createElement(DesktopTabs, { path: `/c/${canvas.id}` }),
+              React.createElement(
+                'main',
+                { className: 'h-dvh pt-[38px] [--app-inset:38px]' },
+                React.createElement(Stage, { onAddFrame: () => {} }),
+                React.createElement(PrototypePlayer, { startFrameId, onClose: () => root.render(null) }),
+              ),
+            ),
+          ),
+        )
+      }
       window.playSynced = (startFrameId) => mountPlayer({ startFrameId, syncUrl: true })
       /* a bare frame document, as the canvas mounts one: prototype mode stays
          off unless a test turns it on */

@@ -1,4 +1,5 @@
 import { parseInteractions, PROTO_SELECTOR } from '../../shared/prototype'
+import { protoShortcut } from './prototypePlayer'
 
 /**
  * Prototype triggers, inside the sandboxed frame (spliced into
@@ -13,6 +14,7 @@ import { parseInteractions, PROTO_SELECTOR } from '../../shared/prototype'
  */
 export const FRAME_PROTO_RUNTIME = `
   var parseInteractions = (${parseInteractions.toString()});
+  var protoShortcut = (${protoShortcut.toString()});
   var PROTO_SEL = '${PROTO_SELECTOR}'
   var protoOn = false
   var protoHints = true
@@ -195,6 +197,12 @@ export const FRAME_PROTO_RUNTIME = `
      back through doop:proto-key, wherever the focus is. */
   document.addEventListener('keydown', function (ev) {
     if (!protoActive() || ev.repeat || ev.key === 'Escape') return
+    var command = protoShortcut(ev)
+    if (command) {
+      ev.preventDefault()
+      parent.postMessage({ type: 'doop:proto-shortcut', command: command }, '*')
+      return
+    }
     if (protoKey(ev.key)) ev.preventDefault()
   }, true)
 

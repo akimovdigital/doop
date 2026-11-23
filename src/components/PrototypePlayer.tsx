@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import type { Frame } from '../../shared/types'
+import { framePageId, pageFrames } from '../../shared/pages'
 import type { Interaction, ProtoTransition } from '../../shared/prototype'
 import { useStore } from '../lib/store'
 import { posthog } from '../lib/posthog'
@@ -7,29 +8,21 @@ import { FRAME_BOOTSTRAP } from '../lib/frameRuntime'
 import {
   fitScale,
   historyStep,
-  isProtoScaling,
   protoHistoryState,
+  protoShortcut,
   readProtoHistory,
   readProtoScaling,
   sanitizeInteraction,
   saveProtoScaling,
   screenLayout,
   transitionFrames,
+  updateProtoTrail,
+  type ProtoShortcut,
   type ProtoScaling,
   type ScreenLayout,
 } from '../lib/prototypePlayer'
 import { prototypePath } from '../lib/prototype'
-import { IconButton } from './ui/icon-button'
-import { ArrowLeftIcon, ExportIcon, HistoryIcon, HotspotIcon, ScalingIcon, XIcon } from './ui/icons'
-import {
-  DropdownMenu,
-  DropdownMenuCaption,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from './ui/dropdown-menu'
+import { PreviewToolbar } from './PreviewToolbar'
 import { t as translate, useT } from '@/lib/i18n'
 
 /* One screen on the player's history stack: the frame it shows and how it
@@ -56,7 +49,6 @@ interface Move {
   ready: boolean
 }
 
-const MAX_HISTORY = 50
 const EASING = 'cubic-bezier(0.2, 0.7, 0.2, 1)'
 /* a hair of the frame's own canvas around an overlay, so its edge reads */
 const OVERLAY_FIT = 0.94
@@ -81,8 +73,9 @@ export function PrototypePlayer({
   onClose?: () => void
   syncUrl?: boolean
 }) {
-  const frames = useStore((s) => s.canvas?.frames)
-  const canvasId = useStore((s) => s.canvas?.id)
+  const canvas = useStore((s) => s.canvas)
+  const frames = canvas?.frames
+  const canvasId = canvas?.id
   const frameById = useCallback((id: string) => frames?.find((f) => f.id === id), [frames])
   const t = useT()
 
@@ -93,19 +86,20 @@ export function PrototypePlayer({
 
   const seq = useRef(0)
   const nextKey = () => ++seq.current
-  const [stack, setStackState] = useState<Entry[]>(() => [entryFor(startFrameId, 0)])
+  const [trail, setTrailState] = useState(() => ({ stack: [entryFor(startFrameId, 0)], forward: [] as Entry[] }))
+  const { stack, forward: ahead } = trail
   const [overlays, setOverlaysState] = useState<Entry[]>([])
   const [move, setMoveState] = useState<Move | null>(null)
   const [readyOverlays, setReadyOverlays] = useState<ReadonlySet<number>>(() => new Set())
   const [notice, setNotice] = useState<string | null>(null)
   /* the handlers below run from message listeners: they read the latest
      state through these refs, written together with the state */
-  const stackRef = useRef(stack)
+  const trailRef = useRef(trail)
   const overlaysRef = useRef(overlays)
   const moveRef = useRef(move)
-  const setStack = (next: Entry[]) => {
-    stackRef.current = next
-    setStackState(next)
+  const setTrail = (next: typeof trail) => {
+    trailRef.current = next
+    setTrailState(next)
   }
   /* closing an overlay that holds the focus drops it on the page: the
      screen it uncovers takes it back (see ProtoScreen) */
@@ -128,12 +122,13 @@ export function PrototypePlayer({
   const pressRevert = useRef<{ action: 'overlay' | 'navigate'; key: number } | null>(null)
   const noticeTimer = useRef<number | null>(null)
 
-  /* the player's own box, not the window: the desktop shell's tab strip
-     (and the impersonation banner) take the top of the window */
-  const rootRef = useRef<HTMLDivElement>(null)
+  const [minimized, setMinimized] = useState(false)
+  const addressRef = useRef<HTMLInputElement>(null)
+  /* Measure the part available to the site, including during window resizing. */
+  const viewportRef = useRef<HTMLDivElement>(null)
   const [viewport, setViewport] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }))
   useLayoutEffect(() => {
-    const root = rootRef.current
+    const root = viewportRef.current
     if (!root) return
     const measure = () => setViewport({ w: root.clientWidth, h: root.clientHeight })
     measure()
@@ -175,23 +170,25 @@ export function PrototypePlayer({
   function navigate(frameId: string, transition: ProtoTransition, duration: number) {
     if (!frameById(frameId)) return flash(translate('panels.protoScreenGone'))
     settle()
-    const current = stackRef.current
+    const current = trailRef.current.stack
     const from = current.at(-1)!
     const to = entryFor(frameId, nextKey(), transition, duration, from.depth + 1)
     setOverlays([])
-    setStack([...current, to].slice(-MAX_HISTORY))
+    setTrail(updateProtoTrail(trailRef.current, to, 'push'))
     setMove({ from, to, transition, duration, back: false, ready: false })
     if (syncUrl) history.pushState(protoHistoryState(frameId, to.depth), '', prototypeUrl(frameId))
   }
 
-  /* the browser's history moved somewhere other than one screen back: show
-     that screen at that depth, keeping the screens before it */
+  /* Browser Forward and multi-entry jumps use the same trail as the toolbar. */
   function jumpTo(frameId: string, depth: number) {
     if (!frameById(frameId)) return flash(translate('panels.protoScreenGone'))
     settle()
-    const kept = stackRef.current.filter((e) => e.depth < depth)
+    const { stack, forward } = trailRef.current
+    const known = [...stack, ...forward].find((entry) => entry.depth === depth && entry.frameId === frameId)
+    const to = known ? { ...known, key: nextKey() } : entryFor(frameId, nextKey(), 'instant', 0, depth)
+    if (screenHasFocus()) focusHandoff.current = true
     setOverlays([])
-    setStack([...kept, entryFor(frameId, nextKey(), 'instant', 0, depth)].slice(-MAX_HISTORY))
+    setTrail(updateProtoTrail(trailRef.current, to, 'traverse'))
   }
 
   function prototypeUrl(frameId: string) {
@@ -203,7 +200,7 @@ export function PrototypePlayer({
   function back(fromHistory = false) {
     /* overlays are not history entries: the browser's Back leaves the screen */
     if (!fromHistory && overlaysRef.current.length) return closeOverlay()
-    const current = stackRef.current
+    const current = trailRef.current.stack
     if (current.length < 2) return
     if (syncUrl && !fromHistory) return history.back()
     settle()
@@ -212,8 +209,37 @@ export function PrototypePlayer({
     if (!frameById(prev.frameId)) return flash(translate('panels.protoScreenGone'))
     const to = { ...prev, key: nextKey() }
     setOverlays([])
-    setStack([...current.slice(0, -2), to])
+    setTrail(updateProtoTrail(trailRef.current, to, 'traverse'))
     setMove({ from, to, transition: from.transition, duration: from.duration, back: true, ready: false })
+  }
+
+  function forward() {
+    const next = trailRef.current.forward[0]
+    if (!next) return
+    if (syncUrl) return history.forward()
+    jumpTo(next.frameId, next.depth)
+  }
+
+  function reload() {
+    settle()
+    const current = trailRef.current.stack.at(-1)!
+    if (screenHasFocus()) focusHandoff.current = true
+    setOverlays([])
+    setTrail(updateProtoTrail(trailRef.current, { ...current, key: nextKey() }, 'replace'))
+  }
+
+  function shortcut(command: ProtoShortcut) {
+    switch (command) {
+      case 'back':
+        return back()
+      case 'forward':
+        return forward()
+      case 'reload':
+        return reload()
+      case 'address':
+        addressRef.current?.focus()
+        return addressRef.current?.select()
+    }
   }
 
   function openOverlay(frameId: string, transition: ProtoTransition, duration: number) {
@@ -229,9 +255,12 @@ export function PrototypePlayer({
      the entries behind it still read as earlier screens) */
   function restart() {
     settle()
-    const depth = syncUrl ? (stackRef.current.at(-1)?.depth ?? 0) : 0
+    const depth = syncUrl ? (trailRef.current.stack.at(-1)?.depth ?? 0) : 0
     setOverlays([])
-    setStack([entryFor(startFrameId, nextKey(), 'instant', 0, depth)])
+    setTrail({
+      stack: [entryFor(startFrameId, nextKey(), 'instant', 0, depth)],
+      forward: syncUrl ? trailRef.current.forward : [],
+    })
     if (syncUrl) history.replaceState(protoHistoryState(startFrameId, depth), '', prototypeUrl(startFrameId))
   }
 
@@ -242,7 +271,7 @@ export function PrototypePlayer({
        entry it opened is still on top, so it cannot undo a different screen */
     perform(interaction)
     if (!press || (interaction.action !== 'overlay' && interaction.action !== 'navigate')) return
-    const opened = interaction.action === 'overlay' ? overlaysRef.current.at(-1) : stackRef.current.at(-1)
+    const opened = interaction.action === 'overlay' ? overlaysRef.current.at(-1) : trailRef.current.stack.at(-1)
     if (opened) pressRevert.current = { action: interaction.action, key: opened.key }
   }
 
@@ -271,7 +300,7 @@ export function PrototypePlayer({
     else if (
       revert?.action === 'navigate' &&
       !overlaysRef.current.length &&
-      stackRef.current.at(-1)?.key === revert.key
+      trailRef.current.stack.at(-1)?.key === revert.key
     )
       back()
   }
@@ -289,7 +318,7 @@ export function PrototypePlayer({
 
   /* the one screen that takes input: the top overlay, else the screen shown */
   function topEntry(): Entry | undefined {
-    return overlaysRef.current.at(-1) ?? moveRef.current?.to ?? stackRef.current.at(-1)
+    return overlaysRef.current.at(-1) ?? moveRef.current?.to ?? trailRef.current.stack.at(-1)
   }
 
   function topWindow(): Window | undefined {
@@ -329,9 +358,9 @@ export function PrototypePlayer({
   }
 
   /* the latest handlers for the listeners below, which subscribe once */
-  const handlers = useRef({ escape, back, jumpTo, release, topWindow })
+  const handlers = useRef({ escape, back, jumpTo, release, topWindow, shortcut })
   useLayoutEffect(() => {
-    handlers.current = { escape, back, jumpTo, release, topWindow }
+    handlers.current = { escape, back, jumpTo, release, topWindow, shortcut }
   })
 
   useEffect(() => {
@@ -341,7 +370,15 @@ export function PrototypePlayer({
          Escape on the button still leaves the player */
       const target = e.target instanceof Element ? e.target : null
       if (target?.closest('[data-proto-menu]')) return
-      if (target?.closest('[data-proto-menu-trigger]') && e.key !== 'Escape') return
+      const command = protoShortcut(e)
+      if (target === addressRef.current && command !== 'address') return
+      if (command) {
+        e.preventDefault()
+        e.stopPropagation()
+        if (!e.repeat) handlers.current.shortcut(command)
+        return
+      }
+      if (target?.closest('[data-preview-toolbar]') && e.key !== 'Escape') return
       /* capture phase, and modal: no key reaches the editor underneath (an
          arrow would nudge the selected frame, Delete would remove it) */
       e.stopPropagation()
@@ -362,12 +399,12 @@ export function PrototypePlayer({
     if (!syncUrl) return
     /* the entry the player opened on records its start screen, so Back to it
        restores the start even when its URL names no frame (?page=, or none) */
-    const start = stackRef.current[0]!
+    const start = trailRef.current.stack[0]!
     history.replaceState({ ...readState(), ...protoHistoryState(start.frameId, start.depth) }, '', location.href)
     function onPop(e: PopStateEvent) {
       const target = readProtoHistory(e.state)
       if (!target) return
-      const step = historyStep(stackRef.current, target)
+      const step = historyStep(trailRef.current.stack, target)
       if (step === 'back') handlers.current.back(true)
       else if (step === 'jump') handlers.current.jumpTo(target.frameId, target.depth)
     }
@@ -396,6 +433,8 @@ export function PrototypePlayer({
   const outgoingOnTop = move ? transitionFrames(move.transition, move.back).outgoingOnTop : false
   const shownFrame = frameById((move?.to ?? current).frameId)
   const baseFrame = frameById(current.frameId)
+  const searchFrame = baseFrame ?? frameById(startFrameId)
+  const searchFrames = canvas && searchFrame ? pageFrames(canvas, framePageId(canvas, searchFrame)) : []
   const baseScale = baseFrame ? screenLayout(baseFrame, viewport, scaling).scale : 1
   /* a screen larger than the player scrolls from its top-left corner, except
      under Fill, which crops it around its centre (clipped, so nothing
@@ -417,12 +456,17 @@ export function PrototypePlayer({
       if (win) windows.current.set(key, win)
       else windows.current.delete(key)
     },
-    onMessage: (data: { type?: string; interaction?: unknown; press?: boolean }) => {
+    onMessage: (data: { type?: string; interaction?: unknown; press?: boolean; command?: unknown }) => {
       /* a covered screen is switched off, but an action it sent before the
          switch reached it must not act over the screen on top */
       if (data.type === 'doop:proto-action') {
         if (topEntry()?.key === entry.key) run(data.interaction, !!data.press)
       } else if (data.type === 'doop:proto-release') release()
+      else if (data.type === 'doop:proto-shortcut' && topEntry()?.key === entry.key && screenHasFocus()) {
+        const command = data.command
+        if (command === 'back' || command === 'forward' || command === 'reload' || command === 'address')
+          shortcut(command)
+      }
       /* Escape with the focus in a screen: the same overlay-first path as a
          key pressed on the player itself */
       else if (data.type === 'doop:esc') escape()
@@ -431,110 +475,111 @@ export function PrototypePlayer({
 
   return (
     <div
-      ref={rootRef}
       /* below the shell's tab strip, by the --app-inset contract (App.tsx) */
-      className="fixed inset-x-0 bottom-0 top-[var(--app-inset,0px)] z-[80] overflow-hidden bg-code"
+      className="fixed inset-x-0 bottom-0 top-[var(--app-inset,0px)] z-[80] grid place-items-center"
+      data-minimized={minimized || undefined}
       role="dialog"
       aria-label={t('panels.protoAria', { name: shownFrame?.name ?? t('panels.protoMissingLower') })}
       data-prototype-player=""
     >
-      {base.map(({ entry, role }) => {
-        const frame = frameById(entry.frameId)
-        return (
-          <div
-            key={entry.key}
-            ref={(el) => {
-              if (el) wrappers.current.set(entry.key, el)
-              else wrappers.current.delete(entry.key)
-            }}
-            className={`absolute inset-0 grid ${screenPlacement}`}
-            data-proto-screen={entry.frameId}
-            data-proto-role={role}
-            style={{
-              zIndex: role === 'from' ? (outgoingOnTop ? 2 : 1) : role === 'to' ? (outgoingOnTop ? 1 : 2) : 1,
-              /* the incoming screen stays hidden until its document has rendered */
-              visibility: role === 'to' && !move?.ready ? 'hidden' : undefined,
-            }}
-          >
-            <ProtoScreen
-              {...screenProps(entry)}
-              layout={frame ? screenLayout(frame, viewport, scaling) : undefined}
-              interactive={role !== 'from' && !overlays.length}
-              onReady={onScreenReady}
-            />
-          </div>
-        )
-      })}
-
-      {overlays.map((entry, index) => {
-        const frame = frameById(entry.frameId)
-        const scale = frame
-          ? Math.min(baseScale, fitScale(frame, { w: viewport.w * OVERLAY_FIT, h: viewport.h * OVERLAY_FIT }))
-          : 1
-        return (
-          <div key={entry.key} className="absolute inset-0 z-[5] grid place-items-center">
-            <div className="absolute inset-0 bg-black/45" data-proto-scrim="" onClick={closeOverlay} />
-            <div
-              ref={(el) => {
-                if (el) wrappers.current.set(entry.key, el)
-                else wrappers.current.delete(entry.key)
-              }}
-              className="relative shadow-pop"
-              data-proto-overlay={entry.frameId}
-              style={{ opacity: readyOverlays.has(entry.key) ? 1 : 0 }}
-            >
-              <ProtoScreen
-                {...screenProps(entry)}
-                layout={frame ? { width: frame.width, height: frame.height, scale } : undefined}
-                interactive={index === overlays.length - 1}
-                onReady={() => onOverlayReady(entry)}
-              />
-            </div>
-          </div>
-        )
-      })}
-
-      <div className="absolute top-3 right-3 z-10 flex items-center gap-1 rounded-pill bg-black/55 p-1 text-code-ink opacity-70 backdrop-blur-[6px] transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100">
-        <span className="max-w-[180px] truncate px-2 text-caption text-code-ink/80" data-proto-current="">
-          {shownFrame?.name ?? t('panels.protoMissing')}
-        </span>
-        <IconButton
-          size="sm"
-          className={playerBtn}
-          aria-label={t('common.back')}
-          disabled={stack.length < 2 && !overlays.length}
-          onClick={() => back()}
+      <div
+        data-proto-backdrop=""
+        className={`absolute inset-0 transition-colors duration-150 ease-out motion-reduce:transition-none ${minimized ? 'bg-black/60' : ''}`}
+      />
+      <div
+        className={`relative flex min-h-0 min-w-0 flex-col bg-code transition-[width,height,border-radius] duration-150 ease-out motion-reduce:transition-none ${
+          minimized ? 'h-4/5 w-[max(80%,min(100%,300px))] rounded-panel border border-line shadow-pop' : 'size-full'
+        }`}
+        data-proto-window=""
+      >
+        <PreviewToolbar
+          addressRef={addressRef}
+          canvasId={canvasId}
+          frameId={current.frameId}
+          frameName={shownFrame?.name}
+          frames={frames ?? []}
+          searchFrames={searchFrames}
+          canBack={stack.length >= 2 || !!overlays.length}
+          canForward={!!ahead.length}
+          onBack={() => back()}
+          onForward={forward}
+          onReload={reload}
+          onNavigate={(id) => navigate(id, 'instant', 0)}
+          onRestart={restart}
+          onHotspots={flashHotspots}
+          scaling={scaling}
+          onScalingChange={setScaling}
+          onMenuClose={(event) => {
+            const screen = interactiveScreen()
+            if (!screen) return
+            event.preventDefault()
+            screen.focus()
+          }}
+          minimized={minimized}
+          onToggleWindow={onClose && (() => setMinimized((value) => !value))}
+          onClose={onClose}
+        />
+        <div
+          ref={viewportRef}
+          className={`relative isolate min-h-0 flex-1 overflow-hidden ${minimized ? 'rounded-b-panel' : ''}`}
+          data-proto-viewport=""
         >
-          <ArrowLeftIcon size="rail" />
-        </IconButton>
-        <IconButton size="sm" className={playerBtn} aria-label={t('panels.protoRestart')} onClick={restart}>
-          <HistoryIcon size="rail" />
-        </IconButton>
-        <IconButton size="sm" className={playerBtn} aria-label={t('panels.protoHotspots')} onClick={flashHotspots}>
-          <HotspotIcon size="rail" />
-        </IconButton>
-        <ScalingMenu scaling={scaling} onChange={setScaling} />
-        {onClose && canvasId && (
-          <IconButton
-            size="sm"
-            className={playerBtn}
-            aria-label={t('panels.protoNewTab')}
-            onClick={() => window.open(prototypePath(canvasId, current.frameId), '_blank', 'noopener')}
-          >
-            <ExportIcon size="rail" />
-          </IconButton>
-        )}
-        {onClose && (
-          <IconButton
-            size="sm"
-            className={playerBtn}
-            aria-label={t('panels.protoExit')}
-            title={t('panels.protoExitTitle')}
-            onClick={onClose}
-          >
-            <XIcon size="rail" />
-          </IconButton>
-        )}
+          {base.map(({ entry, role }) => {
+            const frame = frameById(entry.frameId)
+            return (
+              <div
+                key={entry.key}
+                ref={(el) => {
+                  if (el) wrappers.current.set(entry.key, el)
+                  else wrappers.current.delete(entry.key)
+                }}
+                className={`absolute inset-0 grid ${screenPlacement}`}
+                data-proto-screen={entry.frameId}
+                data-proto-role={role}
+                style={{
+                  zIndex: role === 'from' ? (outgoingOnTop ? 2 : 1) : role === 'to' ? (outgoingOnTop ? 1 : 2) : 1,
+                  /* the incoming screen stays hidden until its document has rendered */
+                  visibility: role === 'to' && !move?.ready ? 'hidden' : undefined,
+                }}
+              >
+                <ProtoScreen
+                  {...screenProps(entry)}
+                  layout={frame ? screenLayout(frame, viewport, scaling) : undefined}
+                  interactive={role !== 'from' && !overlays.length}
+                  onReady={onScreenReady}
+                />
+              </div>
+            )
+          })}
+
+          {overlays.map((entry, index) => {
+            const frame = frameById(entry.frameId)
+            const scale = frame
+              ? Math.min(baseScale, fitScale(frame, { w: viewport.w * OVERLAY_FIT, h: viewport.h * OVERLAY_FIT }))
+              : 1
+            return (
+              <div key={entry.key} className="absolute inset-0 z-[5] grid place-items-center">
+                <div className="absolute inset-0 bg-black/45" data-proto-scrim="" onClick={closeOverlay} />
+                <div
+                  ref={(el) => {
+                    if (el) wrappers.current.set(entry.key, el)
+                    else wrappers.current.delete(entry.key)
+                  }}
+                  className="relative shadow-pop"
+                  data-proto-overlay={entry.frameId}
+                  style={{ opacity: readyOverlays.has(entry.key) ? 1 : 0 }}
+                >
+                  <ProtoScreen
+                    {...screenProps(entry)}
+                    layout={frame ? { width: frame.width, height: frame.height, scale } : undefined}
+                    interactive={index === overlays.length - 1}
+                    onReady={() => onOverlayReady(entry)}
+                  />
+                </div>
+              </div>
+            )
+          })}
+        </div>
       </div>
       {notice && (
         <div className="absolute bottom-5 left-1/2 z-10 -translate-x-1/2 rounded-pill bg-black/70 px-3 py-1.5 text-body text-code-ink">
@@ -542,50 +587,6 @@ export function PrototypePlayer({
         </div>
       )}
     </div>
-  )
-}
-
-const playerBtn = 'text-code-ink/80 hover:bg-white/10 hover:text-code-ink'
-
-/** How the player scales its screens: the two recommended choices, then
- *  the scaled ones. */
-function ScalingMenu({ scaling, onChange }: { scaling: ProtoScaling; onChange: (next: ProtoScaling) => void }) {
-  const t = useT()
-  const pick = (value: string) => isProtoScaling(value) && onChange(value)
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild data-proto-menu-trigger="" onKeyDown={(e) => e.stopPropagation()}>
-        <IconButton size="sm" className={playerBtn} aria-label={t('panels.protoScaling')}>
-          <ScalingIcon size="rail" />
-        </IconButton>
-      </DropdownMenuTrigger>
-      {/* above the player, which sits over every other layer of the editor */}
-      <DropdownMenuContent
-        width="md"
-        className="z-[90]"
-        data-proto-menu=""
-        onKeyDown={(e) => e.stopPropagation()}
-        /* a closed menu hands the keys back to the prototype: the screen that
-           takes them gets the focus; with none up, the button keeps it */
-        onCloseAutoFocus={(e) => {
-          const screen = interactiveScreen()
-          if (!screen) return
-          e.preventDefault()
-          screen.focus()
-        }}
-      >
-        <DropdownMenuRadioGroup value={scaling} onValueChange={pick}>
-          <DropdownMenuCaption>{t('panels.protoScalingRecommended')}</DropdownMenuCaption>
-          <DropdownMenuRadioItem value="actual">{t('panels.protoScaleActual')}</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="responsive">{t('panels.protoScaleResponsive')}</DropdownMenuRadioItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuCaption>{t('panels.protoScalingOther')}</DropdownMenuCaption>
-          <DropdownMenuRadioItem value="fit-width">{t('panels.protoScaleFitWidth')}</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="fit">{t('panels.protoScaleFit')}</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="fill">{t('panels.protoScaleFill')}</DropdownMenuRadioItem>
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
   )
 }
 
@@ -656,7 +657,7 @@ function ProtoScreen({
   takeFocus: () => boolean
   register: (key: number, win: Window | null) => void
   onReady: (key: number) => void
-  onMessage: (data: { type?: string; interaction?: unknown; press?: boolean }) => void
+  onMessage: (data: { type?: string; interaction?: unknown; press?: boolean; command?: unknown }) => void
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [booted, setBooted] = useState(false)
