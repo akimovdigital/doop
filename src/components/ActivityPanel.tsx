@@ -1,3 +1,5 @@
+import { readContextPrompt } from '../../shared/uiElementContext'
+import { ContextChips } from './ContextChip'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { AgentTask } from '../../shared/types'
 import { canEditOpenCanvas, useStore } from '../lib/store'
@@ -353,6 +355,7 @@ function RecentTaskRow({ task }: { task: AgentTask }) {
   const failed = !!task.failedAt
   const reason = task.failureReason ?? t('panels.activityTaskUnfinished')
   /* a job's status already is its reason; a card's status is its brief */
+  const prompt = readContextPrompt(task.status)
   const separateReason = failed && reason !== task.status
   return (
     <div
@@ -387,10 +390,10 @@ function RecentTaskRow({ task }: { task: AgentTask }) {
         {/* one line, with the whole text on hover: a card's status is its
             whole brief, which must never crowd out why it failed */}
         <span
-          title={task.status}
+          title={prompt.text}
           className={cn('min-w-0 truncate', failed && !separateReason && 'text-accent-ink', task.auto && 'italic')}
         >
-          {task.status}
+          {prompt.text}
         </span>
         {running && task.queuedBy && canvasId && canEdit && (
           <Button
@@ -407,6 +410,11 @@ function RecentTaskRow({ task }: { task: AgentTask }) {
           </Button>
         )}
       </span>
+      {prompt.contexts.length > 0 && (
+        <div className="col-span-2 pl-[22px]">
+          <ContextChips contexts={prompt.contexts} />
+        </div>
+      )}
       {failed && (
         <span className="col-span-2 flex min-w-0 items-start gap-2 pl-[22px]">
           {separateReason && (

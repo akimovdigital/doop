@@ -1,3 +1,5 @@
+import { serializeContextPrompt, type UiElementContext } from '../../shared/uiElementContext'
+import { formatComposerContexts } from '../lib/designNotes'
 import { useStore, type ComposerSend } from '../lib/store'
 import { api, type Allowance } from '../lib/api'
 import { posthog } from '../lib/posthog'
@@ -65,6 +67,8 @@ export async function sendPrompt(args: {
   canvasId: string
   text: string
   files?: File[]
+  contexts?: UiElementContext[]
+  agentText?: string
   scope: CardScope | undefined
   allowance: Allowance | null
   clearDraft?: boolean
@@ -73,6 +77,10 @@ export async function sendPrompt(args: {
   const store = useStore.getState()
   if (store.composerSend?.status === 'busy') return
   const draft = store.composerDrafts[canvasId]
+  const contexts = args.contexts ?? (clearDraft ? draft?.contexts : undefined) ?? []
+  const first = contexts.find((entry) => entry.selector)
+  const cardScope = first ? { frameId: first.frameId, selector: first.selector } : scope
+  const wireText = serializeContextPrompt(args.agentText ?? formatComposerContexts(text, contexts), text, contexts)
   setSend({ canvasId, status: 'busy' })
   /* known-doomed send: no free tasks and no model account. Open the wall
      up front instead of uploading attachments only to 403 — but confirm
@@ -101,23 +109,23 @@ export async function sendPrompt(args: {
     const mentioned = mentionedRoles(text, store.canvas?.team ?? AGENT_ROLES).map((role) => role.id)
     const card = await api.addCard(
       canvasId,
-      text,
+      wireText,
       mentioned.length > 0 ? mentioned : [DEFAULT_ROLE_ID],
       refFrames.map((f) => f.id),
-      scope,
+      cardScope,
       runner,
     )
     posthog.capture('prompt_bar_submitted', {
       attachments: refFrames.length,
       agents: mentioned.length,
-      scope: scope ? (scope.selector ? 'element' : 'frame') : 'none',
+      scope: cardScope ? (cardScope.selector ? 'element' : 'frame') : 'none',
       runner: runner?.provider ?? 'default',
     })
     flyToNextFrame(
       canvasId,
       refFrames.map((f) => f.id),
     )
-    if (clearDraft && useStore.getState().composerDrafts[canvasId] === draft) store.setComposerDraft(canvasId, '')
+    if (clearDraft && useStore.getState().composerDrafts[canvasId] === draft) store.setComposerDraft(canvasId, '', [])
     const sent: ComposerSend = { canvasId, status: 'sent', at: Date.now() }
     setSend(sent)
     window.setTimeout(() => {

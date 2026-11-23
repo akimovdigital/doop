@@ -1,6 +1,7 @@
+import { ComposerContextChips } from './ContextChip'
 import { sendPrompt } from './sendPrompt'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
-import { useStore } from '../lib/store'
+import { emptyComposerDraft, useStore } from '../lib/store'
 import { meterText, useAllowance } from './TeamAllowance'
 import { Button } from './ui/button'
 import { Textarea } from './ui/textarea'
@@ -75,7 +76,9 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
   const selectedId = useStore((s) => s.selectedId)
   const selectedElement = useStore((s) => s.selectedElement)
   const focusAt = useStore((s) => s.composerFocusAt)
-  const text = useStore((s) => s.composerDrafts[canvasId] ?? '')
+  const draft = useStore((s) => s.composerDrafts[canvasId] ?? emptyComposerDraft)
+  const { text, contexts } = draft
+  const canSend = !!text.trim() || contexts.length > 0
   const setDraft = useStore((s) => s.setComposerDraft)
   /* this canvas's send only: another canvas's outcome is not ours to show */
   const send = useStore((s) => (s.composerSend?.canvasId === canvasId ? s.composerSend : null))
@@ -170,12 +173,13 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
 
   async function submit(prompt: string) {
     const clean = prompt.trim()
-    if (!clean || busy) return
+    if ((!clean && !contexts.length) || busy) return
     const files = attachments.map((a) => a.file)
     await sendPrompt({ canvasId, text: clean, files, scope: chip?.scope, allowance })
     /* the thumbnails go once the card is queued: the files were handed to
        the upload, and a failure keeps the text and the previews for a retry */
-    if (useStore.getState().composerDrafts[canvasId] === '') {
+    const remaining = useStore.getState().composerDrafts[canvasId]
+    if (!remaining?.text && !remaining?.contexts.length) {
       attachments.forEach((a) => URL.revokeObjectURL(a.preview))
       setAttachments([])
     }
@@ -226,6 +230,7 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
+      <ComposerContextChips canvasId={canvasId} draft={draft} busy={busy} />
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {attachments.map((a) => (
@@ -350,7 +355,7 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
               className="inline-flex rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-faint"
               /* while the button is disabled the wrapper takes its tab stop,
                  so the meter can be reached and read without a pointer */
-              tabIndex={busy || !text.trim() ? 0 : -1}
+              tabIndex={busy || !canSend ? 0 : -1}
               aria-label={meter ?? undefined}
             >
               <Button
@@ -359,7 +364,7 @@ export function PromptBar({ canvasId }: { canvasId: string }) {
                 className="size-7 rounded-full"
                 type="submit"
                 aria-label={t('panels.promptSend')}
-                disabled={busy || !text.trim()}
+                disabled={busy || !canSend}
               >
                 {busy ? <span aria-hidden>…</span> : <ArrowUpIcon className="size-3.5" strokeWidth={1.6} />}
               </Button>

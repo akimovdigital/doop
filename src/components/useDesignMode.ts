@@ -7,7 +7,9 @@ import {
   designEscape,
   designNotesReducer,
   emptyDesignNotes,
-  formatDesignNotes,
+  designDraftText,
+  designNotePrompt,
+  noteContexts,
   noteHtml,
   readDesignNotes,
   writeDesignNotes,
@@ -308,10 +310,10 @@ export function useDesignMode({
   function draftToChat(value: Draft) {
     if (!frame || !allowed) return
     const note = asNote(value, value.comment.trim())
-    const text = formatDesignNotes([note])
     const store = useStore.getState()
     const previous = store.composerDrafts[canvasId!]
-    store.setComposerDraft(canvasId!, previous ? `${previous}\n\n${text}` : text)
+    const text = [previous?.text, designDraftText(note)].filter(Boolean).join('\n\n')
+    store.setComposerDraft(canvasId!, text, [...(previous?.contexts ?? []), ...noteContexts(note)])
     if (value.id && value.textEdit && note.status === 'pending') dispatch({ type: 'remove', ids: [value.id] })
     exit()
     onDraft({ scope: scopeOf(note), label: note.elements[0]?.label })
@@ -630,7 +632,7 @@ export function useDesignMode({
     if (!canvasId || !allowed || !notes.length || busy) return false
     const result = await sendPrompt({
       canvasId,
-      text: formatDesignNotes(notes),
+      ...designNotePrompt(notes),
       scope: scopeOf(notes[0]!),
       allowance,
       clearDraft: false,

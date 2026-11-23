@@ -1,3 +1,4 @@
+import { agentPromptText } from '../shared/uiElementContext.ts'
 import { env } from './env.ts'
 import { MAX_DECISION_CHARS } from '../shared/designDecisions.ts'
 import { isAgentsTask } from '../shared/agentIdentity.ts'
@@ -286,7 +287,7 @@ export function requestedSkillsPrompt(
   const text = [
     role?.custom || role?.briefByTeam ? role.brief : '',
     ...work.items.flatMap((item) => [item.text, item.about]),
-    ...work.cards.map((card) => card.status),
+    ...work.cards.map((card) => agentPromptText(card.status)),
     ...work.comments.flatMap((comment) => [comment.text, ...earlierInThread(comment).map((x) => x.text)]),
   ].join('\n')
   return skillsBlock(skillsForCanvas(canvas), text)
@@ -689,7 +690,7 @@ async function runAgent(canvasId: string, agentName: string, stalled: Set<string
     }
     const workText = [
       ...items.map((item) => item.text),
-      ...cards.map((card) => card.status),
+      ...cards.map((card) => agentPromptText(card.status)),
       ...comments.map((comment) => comment.text),
     ].join('\n')
     const urls = referencedUrls(workText)

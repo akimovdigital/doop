@@ -162,7 +162,7 @@ describe('the Agents tab composer', () => {
     expect(container.querySelector('textarea')).toBeNull()
     await switchTab('tasks')
     expect(composer().value).toBe('half a thought')
-    expect(useStore.getState().composerDrafts).toEqual({ c1: 'half a thought' })
+    expect(useStore.getState().composerDrafts).toEqual({ c1: { text: 'half a thought', contexts: [] } })
   })
 
   it('still reports a send that failed while another tab was open', async () => {

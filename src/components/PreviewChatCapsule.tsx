@@ -1,8 +1,9 @@
+import { ComposerContextChips } from './ContextChip'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useT } from '@/lib/i18n'
 import type { Allowance } from '../lib/api'
 import { chatTurns } from '../lib/agentChat'
-import { useStore, type PreviewComposerTarget } from '../lib/store'
+import { emptyComposerDraft, useStore, type PreviewComposerTarget } from '../lib/store'
 import { AgentIcon } from './AgentIcon'
 import { sendPrompt } from './sendPrompt'
 import { Button } from './ui/button'
@@ -59,7 +60,7 @@ export function usePreviewChat(canvasId: string | undefined, canEdit: boolean) {
     if (
       focused instanceof HTMLTextAreaElement &&
       focused.matches('[data-preview-chat-field]') &&
-      useStore.getState().composerDrafts[canvasId]?.trim()
+      useStore.getState().composerDrafts[canvasId]?.text.trim()
     ) {
       focused.blur()
       return true
@@ -105,7 +106,8 @@ export function PreviewChatCapsule({
   }, [chat.focusRequest, chat.open])
 
   const t = useT()
-  const draft = useStore((s) => s.composerDrafts[canvasId] ?? '')
+  const draft = useStore((s) => s.composerDrafts[canvasId] ?? emptyComposerDraft)
+  const canSend = !!draft.text.trim() || draft.contexts.length > 0
   const target = useStore((s) => s.previewComposerTargets[canvasId])
   const send = useStore((s) => (s.composerSend?.canvasId === canvasId ? s.composerSend : null))
   const busy = useStore((s) => s.composerSend?.status === 'busy')
@@ -127,8 +129,8 @@ export function PreviewChatCapsule({
   const sendLabel = t('panels.promptSend')
 
   async function submit() {
-    if (!draft.trim() || busy) return
-    await sendPrompt({ canvasId, text: draft.trim(), scope: target?.scope, allowance })
+    if (!canSend || busy) return
+    await sendPrompt({ canvasId, text: draft.text.trim(), scope: target?.scope, allowance })
   }
 
   return (
@@ -168,7 +170,8 @@ export function PreviewChatCapsule({
               {reply.reply}
             </p>
           )}
-          {target?.scope && (
+          <ComposerContextChips canvasId={canvasId} draft={draft} busy={busy} />
+          {!draft.contexts.length && target?.scope && (
             <div
               className="my-1 flex w-fit max-w-full items-center gap-0.5 rounded-row bg-brand/10 pl-2 text-caption font-medium text-brand"
               data-preview-chat-scope=""
@@ -200,7 +203,7 @@ export function PreviewChatCapsule({
               rows={2}
               placeholder={placeholder}
               aria-label={hint}
-              value={draft}
+              value={draft.text}
               onChange={(event) => useStore.getState().setComposerDraft(canvasId, event.target.value)}
               onKeyDown={(event) => {
                 event.stopPropagation()
@@ -214,7 +217,7 @@ export function PreviewChatCapsule({
               type="submit"
               size="lg"
               variant="primary"
-              disabled={!draft.trim() || busy}
+              disabled={!canSend || busy}
               aria-label={sendLabel}
               title={t('panels.promptSendTooltip')}
             >

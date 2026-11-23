@@ -1,3 +1,4 @@
+import { agentPromptText } from '../shared/uiElementContext.ts'
 import { env } from './env.ts'
 import { resolveAgentBrand } from '../shared/agentBrand.ts'
 import { agentKeyOf, isAgentsTask } from '../shared/agentIdentity.ts'
@@ -271,7 +272,7 @@ function appendFeedback<T extends ToolContent>(result: T, canvasId: string, acto
   const tasks = actions.getTasks(canvasId)
   const lines = pending.map((f) => {
     const task = tasks.find((t) => t.id === f.taskId)
-    const about = task ? ` (about ${whoseWork(task, actor)} work: “${task.status}”)` : ''
+    const about = task ? ` (about ${whoseWork(task, actor)} work: “${agentPromptText(task.status)}”)` : ''
     return `- ${f.from}${about}: ${f.text}`
   })
   result.content.push({
@@ -1306,7 +1307,7 @@ export function buildMcpServer(owner?: string, ownerId?: string, clientName?: st
           return {
             from: f.from,
             text: f.text,
-            about: task ? `${whoseWork(task, actor)} work: “${task.status}”` : undefined,
+            about: task ? `${whoseWork(task, actor)} work: “${agentPromptText(task.status)}”` : undefined,
             at: new Date(f.at).toISOString(),
           }
         }),

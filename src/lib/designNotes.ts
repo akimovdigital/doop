@@ -1,3 +1,4 @@
+import { contextStyleNames, type UiElementContext } from '../../shared/uiElementContext'
 import type { MarkupStroke, MarkupTool } from './designMarkup'
 
 export interface NoteRect {
@@ -6,8 +7,6 @@ export interface NoteRect {
   width: number
   height: number
 }
-
-const styleNames = ['color', 'background-color', 'font-size', 'font-family', 'display', 'position'] as const
 
 export interface NoteElement {
   selector: string
@@ -18,7 +17,7 @@ export interface NoteElement {
   classes: string[]
   text: string
   rect: NoteRect
-  styles: Record<(typeof styleNames)[number], string>
+  styles: Record<(typeof contextStyleNames)[number], string>
   htmlExcerpt: string
   attributes: [string, string][]
   label: string
@@ -150,14 +149,14 @@ function textEditSummary(edit: DesignTextEdit): string {
   return `change text to “${excerpt(after)}” (was “${excerpt(before)}”)`
 }
 
-function elementContext(note: DesignNote, element: NoteElement): string {
-  const { x, y, width, height } = element.rect
+function elementContext(context: UiElementContext): string {
+  const { x, y, width, height } = context.rect
   return [
-    `[${note.number}] DOM Path: ${element.selector}`,
+    `[${context.number}] DOM Path: ${context.selector}`,
     `Position: top=${y}px, left=${x}px, width=${width}px, height=${height}px`,
-    `HTML Element: ${noteHtml(element)}`,
-    `Styles: ${styleNames.map((name) => `${name}: ${element.styles[name]}`).join('; ')}`,
-    `Frame: ${note.frameName} (${note.frameId})`,
+    `HTML Element: ${context.html}`,
+    `Styles: ${contextStyleNames.map((name) => `${name}: ${context.styles6[name]}`).join('; ')}`,
+    `Frame: ${context.frameName} (${context.frameId})`,
   ].join('\n')
 }
 
@@ -171,6 +170,78 @@ function markupSummary(markup: MarkupStroke[]) {
   const counts = new Map<MarkupTool, number>()
   for (const { tool } of markup) counts.set(tool, (counts.get(tool) ?? 0) + 1)
   return [...counts].map(([tool, count]) => `${count} ${labels[tool][count === 1 ? 0 : 1]}`).join(', ')
+}
+
+function regionSize(rect: NoteRect) {
+  return `${Math.round(rect.width)} × ${Math.round(rect.height)}`
+}
+
+export function noteContexts(note: DesignNote): UiElementContext[] {
+  const { number, frameId, frameName } = note
+  const source = { noteId: note.id, number, frameId, frameName, url: note.pageUrl }
+  if (note.region) {
+    return [
+      {
+        ...source,
+        kind: 'region',
+        label: `Region ${regionSize(note.region)}`,
+        selector: '',
+        rect: note.region,
+        html: '',
+        styles6: {},
+      },
+    ]
+  }
+  return note.elements.map((el) => {
+    const tag = `<${el.tag}>`
+    const text = collapse(el.text)
+    const snippet = text.length > 40 ? text.slice(0, 39) + '…' : text
+    return {
+      ...source,
+      kind: 'element',
+      label: snippet ? `${tag} ${snippet}` : tag,
+      selector: el.selector,
+      rect: el.rect,
+      html: noteHtml(el),
+      styles6: el.styles,
+      ...(el.label !== tag ? { component: el.label } : {}),
+    }
+  })
+}
+
+function withElementContext(summary: string, context: string[]) {
+  return context.length ? [summary, `Element context:\n${context.join('\n\n')}`].filter(Boolean).join('\n\n') : summary
+}
+
+export function formatComposerContexts(text: string, contexts: UiElementContext[]): string {
+  const numbers = new Map<string, number>()
+  const details = contexts.map((context) => {
+    if (!numbers.has(context.noteId)) numbers.set(context.noteId, numbers.size + 1)
+    if (context.kind === 'element') return elementContext({ ...context, number: numbers.get(context.noteId)! })
+    const { x, y, width, height } = context.rect
+    return `Screenshot region ${regionSize(context.rect)}: top=${y}px, left=${x}px, width=${width}px, height=${height}px\nFrame: ${context.frameName} (${context.frameId})`
+  })
+  return withElementContext(text, details)
+}
+
+function cssEditSummary(note: DesignNote) {
+  const changes = note.cssEdits?.map(({ prop, before, after }) => `${prop}: ${before} → ${after}`).join('; ')
+  return changes ? `CSS edits — ${changes}` : ''
+}
+
+export function designDraftText(note: DesignNote) {
+  return [note.textEdit && textEditSummary(note.textEdit), note.comment, cssEditSummary(note)].filter(Boolean).join('\n\n')
+}
+
+export function designNotePrompt(notes: DesignNote[]) {
+  return {
+    text: notes
+      .map((note) => note.comment)
+      .filter(Boolean)
+      .join('\n\n'),
+    contexts: notes.flatMap(noteContexts),
+    agentText: formatDesignNotes(notes),
+  }
 }
 
 export function formatDesignNotes(notes: DesignNote[]): string {
@@ -187,15 +258,12 @@ export function formatDesignNotes(notes: DesignNote[]): string {
         .sort((a, b) => a.number - b.number)
         .map((note) => {
           const label = note.region
-            ? `Screenshot region ${Math.round(note.region.width)} × ${Math.round(note.region.height)}${note.markup?.length ? ` with markup: ${markupSummary(note.markup)}` : ''}`
+            ? `Screenshot region ${regionSize(note.region)}${note.markup?.length ? ` with markup: ${markupSummary(note.markup)}` : ''}`
             : note.textEdit
               ? `<${note.elements[0]?.tag ?? 'element'}> text edit`
               : note.elements.map(elementLabel).join(' + ')
-          for (const element of note.elements) context.push(elementContext(note, element))
-          const css = note.cssEdits?.map(({ prop, before, after }) => `${prop}: ${before} → ${after}`).join('; ')
-          const comment = [note.textEdit && textEditSummary(note.textEdit), note.comment, css && `CSS edits — ${css}`]
-            .filter(Boolean)
-            .join('\n\n')
+          for (const item of noteContexts(note)) if (item.kind === 'element') context.push(elementContext(item))
+          const comment = designDraftText(note)
           return `${notes.length > 1 ? `${note.number}. ` : ''}${label}${comment ? `: ${comment}` : ''}`
         })
       return (
@@ -203,7 +271,7 @@ export function formatDesignNotes(notes: DesignNote[]): string {
       ).join('\n')
     })
     .join('\n\n')
-  return context.length ? `${summary}\n\nElement context:\n${context.join('\n\n')}` : summary
+  return withElementContext(summary, context)
 }
 
 export interface SavedDesignNotes {

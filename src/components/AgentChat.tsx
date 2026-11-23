@@ -1,3 +1,4 @@
+import { ContextChips } from './ContextChip'
 import { useLayoutEffect, useMemo, useRef } from 'react'
 import { useStore } from '../lib/store'
 import { authClient } from '../lib/auth'
@@ -54,9 +55,13 @@ function ChatExchange({ turn }: { turn: ChatTurn }) {
     <>
       <div className="flex max-w-[85%] flex-col items-end gap-1 self-end">
         {!turn.mine && <span className="text-caption text-ink-faint">{turn.from}</span>}
-        <p className="rounded-card bg-sub px-2.5 py-1.5 text-body break-words whitespace-pre-line text-ink">
-          {turn.text}
-        </p>
+        <div
+          data-chat-message=""
+          className="flex min-w-0 max-w-full flex-col gap-1.5 rounded-card bg-sub px-2.5 py-1.5 text-body text-ink"
+        >
+          <ContextChips contexts={turn.contexts ?? []} />
+          {turn.text && <p className="break-words whitespace-pre-line">{turn.text}</p>}
+        </div>
       </div>
       {turn.state === 'queued' ? (
         <p className="text-caption text-ink-faint">{t('panels.chatQueued')}</p>
