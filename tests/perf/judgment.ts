@@ -14,6 +14,11 @@ export function memoryDelta(sample: Sample) {
   }
 }
 
+function expectedDocuments(sample: Sample, boundary: string) {
+  const count = sample.scenario === 'fly-over' && boundary === 'after' ? sample.scene.frames : sample.scene.expectedLive
+  return Math.min(sample.liveBudget ?? Infinity, count)
+}
+
 export function rejectionReasons(sample: Sample, maxSwapins: number, maxSwapouts = 0): string[] {
   const reasons: string[] = []
   const swap = memoryDelta(sample)
@@ -39,9 +44,19 @@ export function rejectionReasons(sample: Sample, maxSwapins: number, maxSwapouts
     if ('sha256' in scene) {
       if (counts.mounted !== counts.ready)
         reasons.push(`Live documents ${boundary}: ${counts.mounted} mounted, ${counts.ready} ready`)
-    } else if (counts.ready !== scene.expectedLive || counts.mounted !== scene.expectedLive) {
-      reasons.push(`Live documents ${boundary}: ${counts.mounted}/${counts.ready}, expected ${scene.expectedLive}`)
+      continue
     }
+    const expected = expectedDocuments(sample, boundary)
+    if (counts.ready !== expected || counts.mounted !== expected) {
+      reasons.push(`Live documents ${boundary}: ${counts.mounted}/${counts.ready}, expected ${expected}`)
+    }
+  }
+  if (sample.scenario === 'fly-over') {
+    if (sample.flyOver?.visited !== scene.frames) reasons.push('Fly-over did not visit every frame')
+    if (sample.liveBudget && (sample.flyOver?.peakMounted ?? Infinity) > sample.liveBudget)
+      reasons.push('Fly-over exceeded the live-document budget')
+    if (sample.animationBudget && (sample.flyOver?.peakAnimationAllowed ?? Infinity) > sample.animationBudget)
+      reasons.push('Fly-over exceeded the animation budget')
   }
   if (sample.drag && sample.drag.moved !== sample.drag.expected)
     reasons.push('Dragged frames did not reach the planned endpoint')
@@ -55,7 +70,19 @@ export function rejectionReasons(sample: Sample, maxSwapins: number, maxSwapouts
 export function pairRejectionReasons(a: Sample, b: Sample) {
   const reasons: string[] = []
   const real = 'sha256' in a.scene || 'sha256' in b.scene
-  if (!real && (a.live.before.ready !== b.live.before.ready || a.live.after.ready !== b.live.after.ready)) {
+  const explicitBudgetDifference =
+    a.liveBudget !== b.liveBudget &&
+    [a, b].every((sample) =>
+      Object.entries(sample.live).every(([boundary, counts]) => {
+        const expected = expectedDocuments(sample, boundary)
+        return counts.ready === expected && counts.mounted === expected
+      }),
+    )
+  if (
+    !real &&
+    !explicitBudgetDifference &&
+    (a.live.before.ready !== b.live.before.ready || a.live.after.ready !== b.live.after.ready)
+  ) {
     reasons.push('A/B ready-document counts differ')
   }
   const sameScene =

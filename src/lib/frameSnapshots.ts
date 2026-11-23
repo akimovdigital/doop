@@ -76,7 +76,7 @@ export function canSnapshotFrame(
 }
 
 const NEAR_PX = 180
-const TINY_PX = 160
+export const FRAME_SNAPSHOT_TINY_PX = 160
 const MAX_BITMAP_EDGE = 640
 const CAPTURE_TIMEOUT_MS = 4000
 const CAPTURE_DEADLINE = Symbol('snapshot deadline')
@@ -197,7 +197,7 @@ export class FrameSnapshots {
   }
 
   private updateTiny({ frame, image }: Slot) {
-    image.toggleAttribute('data-frame-snapshot-tiny', frame.width * this.zoom < TINY_PX)
+    image.toggleAttribute('data-frame-snapshot-tiny', frame.width * this.zoom < FRAME_SNAPSHOT_TINY_PX)
   }
 
   private paused() {
@@ -249,11 +249,12 @@ export class FrameSnapshots {
       // An evicted frame can get a fresh snapshot when the camera returns to it.
       if (near && !slot.near && slot.captured && !this.ready.has(slot)) resetAttempts(slot)
       slot.near = near
-      if (!near || image.hasAttribute('data-frame-snapshot-blocked')) continue
+      if (!near) continue
       const area =
         Math.max(0, Math.min(width, right) - Math.max(0, left)) *
         Math.max(0, Math.min(height, bottom) - Math.max(0, top))
       if (area > 0) this.cache.touch(frame)
+      if (image.hasAttribute('data-frame-snapshot-blocked')) continue
       if (slot.retryAt > now) {
         nextRetry = Math.min(nextRetry, slot.retryAt)
         continue

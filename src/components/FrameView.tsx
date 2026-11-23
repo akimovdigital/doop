@@ -347,11 +347,13 @@ function FrameSnapshotLayer({
   frame,
   blocked,
   changing,
+  waiting,
 }: {
   snapshots: FrameSnapshots
   frame: Frame
   blocked: boolean
   changing: boolean
+  waiting: boolean
 }) {
   const image = useRef<HTMLImageElement>(null)
   const id = frame.id
@@ -366,6 +368,7 @@ function FrameSnapshotLayer({
       aria-hidden="true"
       decoding="async"
       data-frame-snapshot=""
+      data-frame-snapshot-waiting={waiting ? '' : undefined}
       data-frame-snapshot-blocked={blocked ? '' : undefined}
     />
   )
@@ -381,6 +384,7 @@ export const FrameView = memo(function FrameView({
   snapshots,
   compactSectionTitles = false,
   requestDocument,
+  protectDocument,
   onFollowLink,
   onPresentFrame,
   presenting = false,
@@ -392,6 +396,7 @@ export const FrameView = memo(function FrameView({
   snapshots?: FrameSnapshots
   compactSectionTitles?: boolean
   requestDocument?: (frameId: string) => void
+  protectDocument?: (frameId: string, active: boolean) => void
   onFollowLink?: (source: Frame, href: string) => void
   onPresentFrame?: (frameId: string, interaction?: Interaction) => void
   presenting?: boolean
@@ -417,11 +422,10 @@ export const FrameView = memo(function FrameView({
   const menuRequest = useRef(0)
   const surfaceRef = useRef<HTMLDivElement>(null)
   const linkPress = useRef<{ pointerId: number; x: number; y: number } | null>(null)
-  /* the design point the latest hover probe was asked at, and the one its
-     answer (the `hover` drawn) is for: probes are throttled with no trailing
-     one, so the drawn hover can be for a spot the pointer has left */
+  /* Keep each click candidate paired with its probe coordinates even when
+     a pointer event arrives before React renders the new hover outline. */
   const hoverAsked = useRef<{ x: number; y: number } | null>(null)
-  const hoverAnswered = useRef<{ x: number; y: number } | null>(null)
+  const hoverAnswered = useRef<{ x: number; y: number; href: string } | null>(null)
   const sentCursor = useRef<string | null>(null)
   const syncCursorRef = useRef(() => {})
   syncCursorRef.current = () => {
@@ -504,7 +508,13 @@ export const FrameView = memo(function FrameView({
     !pathEdit &&
     (selection === 'sole' || chromeHover.hovered)
   if (pageMode && !pageInputAllowed) setPageMode(null)
-  const mountRuntime = !frame.browser && (loadDocument || standalone || !!stream)
+  const mountRuntime = !frame.browser && loadDocument
+  const activeDocument = editing || suspendPost || !!pageMode || !!pathEdit
+  useLayoutEffect(() => {
+    if (!protectDocument || !activeDocument) return
+    protectDocument(frame.id, true)
+    return () => protectDocument(frame.id, false)
+  }, [protectDocument, activeDocument, frame.id])
 
   /* one throttle per frame, so a group drag broadcasts every member —
      a single throttle would keep only the last frame written each tick */
@@ -1132,9 +1142,10 @@ export const FrameView = memo(function FrameView({
   }, [runtimeReady, bleed])
   /* once the runtime answers, the element panel may talk to this document */
   useEffect(() => {
-    const win = iframeRef.current?.contentWindow
+    const iframe = iframeRef.current
+    const win = iframe?.contentWindow
     if (!runtimeReady || !win) return
-    registerFrameWindow(frame.id, win)
+    registerFrameWindow(frame.id, win, iframe)
     return () => unregisterFrameWindow(frame.id, win)
   }, [runtimeReady, frame.id, mountRuntime])
   useEffect(() => {
@@ -1260,6 +1271,7 @@ export const FrameView = memo(function FrameView({
   function clearHover() {
     hoverReq.current += 1 // drop any in-flight result
     hoverKey.current = null
+    hoverAnswered.current = null
     setHover(null)
   }
 
@@ -1279,6 +1291,7 @@ export const FrameView = memo(function FrameView({
     /* the old outline's key must match no answer, not even "nothing here",
        so the reply always redraws */
     hoverKey.current = 'stale'
+    hoverAnswered.current = null
     if (
       editing ||
       pathEdit ||
@@ -1615,7 +1628,8 @@ export const FrameView = memo(function FrameView({
       }
       if (ev.data?.type === 'doop:hover-result' && ev.data.reqId === hoverReq.current) {
         const hit = (ev.data.hit ?? null) as HoverHit | null
-        hoverAnswered.current = hoverAsked.current
+        const point = hoverAsked.current
+        hoverAnswered.current = point && hit?.href ? { ...point, href: hit.href } : null
         /* only re-render when the outlined element actually changes */
         const key = hit ? JSON.stringify([hit.selector, hit.rect, hit.href, hit.linkRect]) : null
         if (key !== hoverKey.current) {
@@ -2267,6 +2281,7 @@ export const FrameView = memo(function FrameView({
             )}
           <div
             data-frame-surface=""
+            data-frame-document-deferred={!mountRuntime && frame.html ? '' : undefined}
             ref={surfaceRef}
             className={cn(
               /* a standalone shape's stroke spills past its box */
@@ -2274,6 +2289,7 @@ export const FrameView = memo(function FrameView({
               showBrowserChrome && 'rounded-[calc(8px/var(--zoom,1))]',
               picking && 'cursor-crosshair!',
               !standalone && 'overflow-hidden',
+              standalone && !mountRuntime && 'bg-sub',
               /* the white a design without a background sits on, one screen
                  pixel in from the edge: painted to the edge, it showed past the
                  scaled iframe's antialiased edge as a light seam */
@@ -2361,20 +2377,20 @@ export const FrameView = memo(function FrameView({
                 return
               }
               const at = designPoint(e, e.currentTarget, frame.rotation)
-              /* a web link opens now, inside the click, where a popup blocker
-                 is surest to allow the tab: but only when the hover drawn was
-                 answered for this very spot. Otherwise the frame is asked
-                 what is under the press, as for every other link */
+              /* Use a hover reply for the exact click point to open a web
+                 link synchronously while the browser allows the tab.
+                 Otherwise, ask the frame what is under the pointer. */
               const answered = hoverAnswered.current
+              const canvas = useStore.getState().canvas
               if (
-                linkHovered &&
-                linkHovered.kind === 'web' &&
-                hover?.href &&
                 answered &&
-                Math.hypot(at.x - answered.x, at.y - answered.y) <= 2
+                at.x === answered.x &&
+                at.y === answered.y &&
+                canvas &&
+                resolveFrameLink(canvas, answered.href)?.kind === 'web'
               ) {
                 linkPress.current = null
-                followLink(hover.href)
+                followLink(answered.href)
                 return
               }
               void requestFrame(frame.id, 'doop:link-hit', at).then((reply) => {
@@ -2415,12 +2431,16 @@ export const FrameView = memo(function FrameView({
               leaveHover()
             }}
           >
-            {snapshots && mountRuntime && !standalone && !bleed && runtimeDocument?.html === frame.html && (
+            {snapshots && frame.html && (
               <FrameSnapshotLayer
                 snapshots={snapshots}
                 frame={frame}
+                waiting={!runtimeDocument}
                 changing={editing || !!stream || !!remoteEditor || !!pageMode || !!pathEdit}
                 blocked={
+                  !!bleed ||
+                  !mountRuntime ||
+                  runtimeDocument?.html !== frame.html ||
                   !canSnapshotFrame(frame, {
                     selected,
                     editing: editing || suspendPost || !!remoteEditor,
@@ -2431,16 +2451,16 @@ export const FrameView = memo(function FrameView({
                 }
               />
             )}
-            {/* always there, so the iframe never moves in the DOM (that reloads
-                it): it carries the iframe out by the bleed margin */}
-            <div
-              data-frame-layout-root={mountRuntime && !standalone ? frame.id : undefined}
-              className="relative"
-              /* the margin is drawn, never pointed at: presses outside the box
+            {/* A remount gets a fresh wrapper so it cannot inherit deferred
+                visibility from the layout queue's previous document. */}
+            {mountRuntime && (
+              <div
+                data-frame-layout-root={!standalone ? frame.id : undefined}
+                className="relative"
+                /* the margin is drawn, never pointed at: presses outside the box
                  belong to the canvas, so neither this box nor the iframe takes them */
-              style={{ left: -bleed, top: -bleed, ...(bleed ? { pointerEvents: 'none' } : null) }}
-            >
-              {mountRuntime && (
+                style={{ left: -bleed, top: -bleed, ...(bleed ? { pointerEvents: 'none' } : null) }}
+              >
                 <iframe
                   ref={iframeRef}
                   className="relative block border-none bg-transparent"
@@ -2476,8 +2496,8 @@ export const FrameView = memo(function FrameView({
                     ...(standalone ? { colorScheme: 'light' } : null),
                   }}
                 />
-              )}
-            </div>
+              </div>
+            )}
             {/* a standalone element is see-through: the paper's grid shows */}
             {!standalone && <PixelGrid />}
             {!frame.html && (

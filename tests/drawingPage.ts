@@ -38,6 +38,7 @@ declare global {
     }
     delayedLayerProbe: MessageEvent | null
     heldMoveHits: MessageEvent[] | null
+    heldDragReply: { type: string; event?: MessageEvent } | null
   }
 }
 
@@ -56,12 +57,17 @@ async function openPage(pages: TestPages): Promise<Page> {
   const page = await pages.open()
   page.setDefaultTimeout(10_000)
   page.on('pageerror', (err) => errors.push(String(err)))
-  /* holds the frames' hit-test answers while a test sets heldMoveHits; it
-     must listen before the app does, since a window's own listeners run in
-     the order they were added */
+  /* Hold requested replies before the app's window message listener runs. */
   await page.evaluateOnNewDocument(() => {
     window.heldMoveHits = null
+    window.heldDragReply = null
     window.addEventListener('message', (event) => {
+      const reply = window.heldDragReply
+      if (reply && !reply.event && event.data?.type === reply.type) {
+        reply.event = event
+        event.stopImmediatePropagation()
+        return
+      }
       if (event.data?.type !== 'doop:move-hit-result' || !window.heldMoveHits) return
       window.heldMoveHits.push(event)
       event.stopImmediatePropagation()

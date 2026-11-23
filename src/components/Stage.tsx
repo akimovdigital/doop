@@ -12,6 +12,7 @@ import { sendWs } from '../lib/ws'
 import { throttle } from '../lib/throttle'
 import { FrameView, HiddenFrameView } from './FrameView'
 import { useFrameAdmission } from './frameAdmission'
+import { ANIMATING_FRAME_BUDGET, LIVE_FRAME_BUDGET } from './frameBudget'
 import { FrameSnapshots } from '../lib/frameSnapshots'
 import { CanvasComments, type CanvasComposeAt } from './CanvasComments'
 import { placeComposer } from '../lib/composerPlacement'
@@ -1525,7 +1526,8 @@ export function Stage({
                     stage={ref}
                     onFollowLink={followFrameLink}
                     onPresentFrame={onPresentFrame}
-                    presenting={presenting || uiHidden}
+                    presenting={presenting}
+                    uiHidden={uiHidden}
                   />
                 </FrameLabelLayer.Provider>
                 <GhostFrames />
@@ -1783,20 +1785,22 @@ function FrameStack({
   onFollowLink,
   onPresentFrame,
   presenting,
+  uiHidden,
 }: {
   frames: Frame[]
   onFollowLink: (source: Frame, href: string) => void
   onPresentFrame?: (frameId: string, interaction?: Interaction) => void
   presenting: boolean
+  uiHidden: boolean
   stage: React.RefObject<HTMLDivElement | null>
 }) {
   const mounted = useMemo(() => [...frames].sort(byCreation), [frames])
   const rank = useMemo(() => new Map(frames.map((f, i) => [f.id, i + 1])), [frames])
   const layer = useRef<HTMLDivElement>(null)
-  const { eager, admitted, request } = useFrameAdmission(frames, stage, layer)
+  const { admitted, request, protect } = useFrameAdmission(frames, stage, layer, presenting)
   const [snapshots] = useState(() => new FrameSnapshots())
   const prototypeMode = useStore((s) => s.prototypeMode)
-  const snapshotsDisabled = presenting || prototypeMode
+  const snapshotsDisabled = presenting || uiHidden || prototypeMode
   useLayoutEffect(() => {
     const root = layer.current
     const target = stage.current ?? root?.closest<HTMLElement>('.stage')
@@ -1809,6 +1813,8 @@ function FrameStack({
     <div
       ref={layer}
       className="absolute top-0 left-0 isolate"
+      data-live-frame-budget={LIVE_FRAME_BUDGET}
+      data-animating-frame-budget={ANIMATING_FRAME_BUDGET}
       data-frame-snapshots-disabled={snapshotsDisabled ? '' : undefined}
     >
       {mounted.map((f) =>
@@ -1819,13 +1825,14 @@ function FrameStack({
             key={f.id}
             frame={f}
             stack={rank.get(f.id)}
-            loadDocument={eager || admitted.has(f.id)}
+            loadDocument={admitted.has(f.id)}
+            protectDocument={protect}
             snapshots={snapshots}
             compactSectionTitles={compactSectionTitles}
             requestDocument={request}
             onFollowLink={onFollowLink}
             onPresentFrame={onPresentFrame}
-            presenting={presenting}
+            presenting={presenting || uiHidden}
           />
         ),
       )}

@@ -101,7 +101,8 @@ final class Probe: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             case .failure(let error):
                 self.fail(String(describing: error))
             case .success(let value):
-                guard let json = value as? String else { self.fail("Expected a JSON sample from WKWebView") }
+                guard let raw = value as? String else { self.fail("Expected a JSON sample from WKWebView") }
+                let json = self.withWebContentMemory(raw, view: view)
                 if let screenshot = self.screenshot {
                     view.takeSnapshot(with: nil) { image, error in
                         guard let data = image?.tiffRepresentation,
@@ -116,6 +117,34 @@ final class Probe: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                     self.finish(json)
                 }
             }
+        }
+    }
+
+    // Bench-only SPI. Skip the metric if this WebKit does not expose the main process PID.
+    func withWebContentMemory(_ json: String, view: WKWebView) -> String {
+        guard var sample = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+              sample["scenario"] as? String == "fly-over" else { return json }
+        let selector = NSSelectorFromString("_webProcessIdentifier")
+        guard view.responds(to: selector), let getter = view.method(for: selector) else { return json }
+        let getPID = unsafeBitCast(getter, to: (@convention(c) (AnyObject, Selector) -> pid_t).self)
+        let pid = getPID(view, selector)
+        guard pid > 0 else { return json }
+        let ps = Process()
+        let pipe = Pipe()
+        ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+        ps.arguments = ["-o", "rss=", "-p", String(pid)]
+        ps.standardOutput = pipe
+        do {
+            try ps.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            ps.waitUntilExit()
+            guard ps.terminationStatus == 0, let output = String(data: data, encoding: .utf8),
+                  let rss = Int(output.trimmingCharacters(in: .whitespacesAndNewlines)) else { return json }
+            sample["webContentRssKiB"] = rss
+            let encoded = try JSONSerialization.data(withJSONObject: sample)
+            return String(data: encoded, encoding: .utf8) ?? json
+        } catch {
+            return json
         }
     }
 

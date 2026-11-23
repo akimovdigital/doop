@@ -101,6 +101,18 @@ describe('canvas benchmark', () => {
     expect(rejectionReasons(sample, 256, 7)).toEqual(['Swapouts grew by 8 pages'])
   })
 
+  it('compares explicit document budgets while still rejecting partially booted documents', () => {
+    const base = trial()
+    const candidate = trial()
+    candidate.liveBudget = 20
+    candidate.live = { before: { mounted: 20, ready: 20 }, after: { mounted: 20, ready: 20 } }
+    expect(rejectionReasons(candidate, 4)).toEqual([])
+    expect(pairRejectionReasons(base, candidate)).toEqual([])
+    candidate.live.after.ready = 19
+    expect(rejectionReasons(candidate, 4)).toEqual(['Live documents after: 20/19, expected 20'])
+    expect(pairRejectionReasons(base, candidate)).toEqual(['A/B ready-document counts differ'])
+  })
+
   it('requires agreement across pairs and a median outside the A/A noise floor', () => {
     const floor = noiseFloor([-2, 0, 1, 2, -1])
     expect(floor).toBe(2)

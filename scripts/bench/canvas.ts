@@ -51,11 +51,12 @@ function options() {
   })
   if (values.help) {
     console.log(
-      'bun run bench:canvas [--engine webkit|chromium|both] [--scenario pan|zoom|zoom-wide|drag1|drag10|open|all]\n' +
+      'bun run bench:canvas [--engine webkit|chromium|both] [--scenario pan|zoom|zoom-wide|drag1|drag10|open|fly-over|all]\n' +
         '  [--frames 20|68|200 | --scene canvas.json] [--pairs N] [--duration ms] [--out dir]\n' +
         '  [--max-swapins pages] [--max-swapouts pages]\n' +
         '  [--site dir | --base worktree-or-site --candidate worktree-or-site] [--noise result.json]\n' +
-        '  [--headed] [--hud] [--screenshot path.png] [--diagnose-snapshots]',
+        '  [--headed] [--hud] [--screenshot path.png] [--diagnose-snapshots]\n' +
+        '  fly-over requires a generated scene',
     )
     return null
   }
@@ -68,19 +69,26 @@ function options() {
   const engine = values.engine
   if (engine !== 'webkit' && engine !== 'chromium' && engine !== 'both')
     throw new Error('Expected --engine webkit, chromium or both')
-  const scenario = scenarios.find((item) => item === values.scenario)
-  if (!scenario && values.scenario !== 'all') throw new Error('Unknown --scenario')
+  const requestedScenarios = values.scenario.split(',')
+  const selectedScenarios = scenarios.filter((item) => requestedScenarios.includes(item))
+  if (selectedScenarios.length !== requestedScenarios.length && values.scenario !== 'all')
+    throw new Error('Unknown --scenario')
   const frames = framePresets.find((count) => count === Number(values.frames))
   if (!frames) throw new Error('Expected --frames 20, 68 or 200')
   if (!!values.base !== !!values.candidate || (values.base && values.site))
     throw new Error('Provide either --site or both --base and --candidate')
+  if (values.scene && selectedScenarios.includes('fly-over'))
+    throw new Error('--scenario fly-over currently requires a generated scene')
   if (values.noise && !values.base) throw new Error('--noise requires A/B mode')
   if (values.screenshot && !values.hud) throw new Error('--screenshot requires --hud')
-  if (values['diagnose-snapshots'] && (!values.scene || scenario !== 'pan' || values.base || values.site))
+  if (values['diagnose-snapshots'] && (!values.scene || values.scenario !== 'pan' || values.base || values.site))
     throw new Error('--diagnose-snapshots requires a single build with --scene and --scenario pan')
   return {
     engines: (engine === 'both' ? ['webkit', 'chromium'] : [engine]) as Engine[],
-    scenarios: scenario ? [scenario] : scenarios,
+    scenarios:
+      values.scenario === 'all'
+        ? scenarios.filter((scenario) => !values.scene || scenario !== 'fly-over')
+        : selectedScenarios,
     frames,
     pairs: integer('pairs', values.pairs, 1, 50),
     duration: integer('duration', values.duration, 400, 30_000),
@@ -91,7 +99,7 @@ function options() {
     sourceA: values.base ?? values.site ?? '.',
     sourceB: values.candidate,
     out: resolve(
-      values.out ?? join(outputRoot, `${stamp()}-${engine}-${scenario ?? 'all'}${values.scene ? '-real' : ''}`),
+      values.out ?? join(outputRoot, `${stamp()}-${engine}-${values.scenario}${values.scene ? '-real' : ''}`),
     ),
     headed: !!values.headed,
     hud: !!values.hud,
@@ -104,8 +112,8 @@ type Options = NonNullable<ReturnType<typeof options>>
 type Side = 'A' | 'B'
 type Run = {
   side: Side
-  load?: { before: number[]; after: number[] }
   sample: Sample | null
+  load: { before: number[]; after: number[] }
   swapDelta: ReturnType<typeof memoryDelta> | null
   rejected: boolean
   reasons: string[]
@@ -263,19 +271,20 @@ async function collect(
           ...(settings.diagnoseSnapshots ? { diagnoseSnapshots: '1' } : {}),
           ...(settings.hud ? { perfHud: '1' } : {}),
         }).toString()
-        const loadBefore = scene ? loadavg() : null
-        const load = () => (loadBefore ? { load: { before: loadBefore, after: loadavg() } } : {})
+        const loadBefore = loadavg()
+        const load = () => ({ before: loadBefore, after: loadavg() })
         try {
-          const timeout = settings.duration + (scene ? realReadyTimeout * (scenario === 'open' ? 1 : 2) : 0) + 36_000
+          const readyTimeout = scene ? realReadyTimeout * (scenario === 'open' ? 1 : 2) : 0
+          const timeout = scenario === 'fly-over' ? 150_000 : settings.duration + readyTimeout + 36_000
           const sample = await driver.run(url, timeout, capture())
           const reasons = rejectionReasons(sample, settings.maxSwapins, settings.maxSwapouts)
           if (settings.diagnoseSnapshots) reasons.push('Snapshot diagnostics enabled')
           if (scene && (!('sha256' in sample.scene) || sample.scene.sha256 !== scene.sha256)) {
             reasons.push('Fixture did not load the requested export; both builds must support --scene')
           }
-          runs.push({ side, ...load(), sample, swapDelta: memoryDelta(sample), rejected: !!reasons.length, reasons })
+          runs.push({ side, load: load(), sample, swapDelta: memoryDelta(sample), rejected: !!reasons.length, reasons })
         } catch (error) {
-          runs.push({ side, ...load(), sample: null, swapDelta: null, rejected: true, reasons: [errorText(error)] })
+          runs.push({ side, load: load(), sample: null, swapDelta: null, rejected: true, reasons: [errorText(error)] })
         }
       }
       const sampleA = runs.find((run) => run.side === 'A')?.sample

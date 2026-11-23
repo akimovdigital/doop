@@ -1,9 +1,25 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { rotatedBounds } from '../../shared/frameRotation'
 import type { Frame } from '../../shared/types'
-import { hasFrameDocument, onFrameDocument } from '../lib/frameBridge'
+import {
+  forgetFrameAnimationPolicy,
+  hasFrameDocument,
+  onFrameDocument,
+  setFrameAnimationsPaused,
+} from '../lib/frameBridge'
 import { currentPageSpatialIndex } from '../lib/pages'
+import { presentStartFrame } from '../lib/present'
 import { useStore } from '../lib/store'
+import {
+  ANIMATING_FRAME_BUDGET,
+  EVICTION_DELAY_MS,
+  frameCandidate,
+  FRAME_NEAR_PX,
+  LIVE_FRAME_BUDGET,
+  planFrameAdmission,
+  rankFrameCandidates,
+  reserveFrameSlots,
+  UNSEEN_MS,
+} from './frameBudget'
 
 const EAGER_FRAME_LIMIT = 16
 const EAGER_HTML_LIMIT = 256_000
@@ -12,68 +28,139 @@ const SMALL_PAGE_HTML_LIMIT = 4_000_000
 const STARTS_PER_BATCH = 3
 const PREPARING_HTML_LIMIT = 800_000
 const BOOT_TIMEOUT_MS = 2_000
-const NEAR_PX = 180
+const REQUEST_LEASE_MS = 5_000
 const PAN_SETTLE_MS = 180
 
 export function useFrameAdmission(
   frames: Frame[],
   stage: RefObject<HTMLDivElement | null>,
   layer: RefObject<HTMLDivElement | null>,
+  presenting: boolean,
 ) {
-  const signature = useMemo(() => {
-    return JSON.stringify(frames.flatMap((frame) => (frame.hidden ? [] : [[frame.id, frame.html.length]])))
-  }, [frames])
-  const liveById = useMemo(() => new Map<string, number>(JSON.parse(signature)), [signature])
-  const count = liveById.size
-  const size = useMemo(() => [...liveById.values()].reduce((total, length) => total + length, 0), [liveById])
-  const eager =
-    count <= EAGER_FRAME_LIMIT &&
-    size <= SMALL_PAGE_HTML_LIMIT &&
-    (size <= EAGER_HTML_LIMIT || count <= SMALL_PAGE_FRAME_LIMIT)
-  const [admitted, setAdmitted] = useState(new Set<string>())
+  const signature = useMemo(
+    () =>
+      JSON.stringify(frames.flatMap((frame) => (frame.hidden || frame.browser ? [] : [[frame.id, frame.html.length]]))),
+    [frames],
+  )
+  const htmlSizes = useMemo(() => new Map<string, number>(JSON.parse(signature)), [signature])
+  const browserSignature = useMemo(
+    () => JSON.stringify(frames.flatMap((frame) => (!frame.hidden && frame.browser ? [frame.id] : []))),
+    [frames],
+  )
+  const browserIds = useMemo(() => new Set<string>(JSON.parse(browserSignature)), [browserSignature])
+  const [admitted, setAdmitted] = useState<ReadonlySet<string>>(new Set())
   const started = useRef(new Set<string>())
+  const startedBrowsers = useRef(new Set<string>())
   const booting = useRef(new Map<string, number>())
-  const wake = useRef<((id: string) => void) | null>(null)
-  const request = useCallback((id: string) => wake.current?.(id), [])
+  const lastSeen = useRef(new Map<string, number>())
+  const outsideBudget = useRef(new Map<string, number>())
+  const requests = useRef(new Map<string, number>())
+  const localActivity = useRef(new Set<string>())
+  const pausedIds = useRef(new Set<string>())
+  const scheduler = useRef<(() => void) | null>(null)
+  const fillAfterCommit = useRef(false)
+  const initialAdmission = useRef(true)
 
   useLayoutEffect(() => {
-    // On the first commit the child layout effect can run before the
-    // enclosing stage's host ref has been attached.
+    if (!fillAfterCommit.current) return
+    fillAfterCommit.current = false
+    scheduler.current?.()
+  }, [admitted])
+
+  const request = useCallback((id: string) => {
+    requests.current.set(id, performance.now() + REQUEST_LEASE_MS)
+    scheduler.current?.()
+  }, [])
+  const protect = useCallback((id: string, active: boolean) => {
+    if (active) localActivity.current.add(id)
+    else localActivity.current.delete(id)
+    scheduler.current?.()
+  }, [])
+
+  useLayoutEffect(() => {
+    const paused = pausedIds.current
+    return () => {
+      for (const id of paused) setFrameAnimationsPaused(id, false)
+      paused.clear()
+    }
+  }, [])
+
+  useLayoutEffect(() => {
     const el = stage.current ?? layer.current?.closest<HTMLDivElement>('.stage')
     if (!el) return
     const ids = started.current
+    const browsers = startedBrowsers.current
     const boots = booting.current
-    let changed = false
-    for (const id of ids) {
-      if (liveById.has(id)) continue
-      ids.delete(id)
-      boots.delete(id)
-      changed = true
-    }
-    if (eager) {
-      // A frame already painted on a small page stays alive when new frames make it large.
-      for (const id of liveById.keys()) {
-        if (ids.has(id)) continue
-        ids.add(id)
-        changed = true
-      }
-      boots.clear()
-      if (changed) setAdmitted(new Set(ids))
-      return
-    }
-    if (changed) setAdmitted(new Set(ids))
+    const seen = lastSeen.current
+    const outside = outsideBudget.current
+    const leases = requests.current
+    const active = localActivity.current
+    const paused = pausedIds.current
+    const size = [...htmlSizes.values()].reduce((total, length) => total + length, 0)
+    const count = htmlSizes.size + browserIds.size
+    const warmSmallPage =
+      count <= EAGER_FRAME_LIMIT &&
+      size <= SMALL_PAGE_HTML_LIMIT &&
+      (size <= EAGER_HTML_LIMIT || count <= SMALL_PAGE_FRAME_LIMIT)
 
     let width = el.clientWidth
     let height = el.clientHeight
     let raf = 0
-    let idleTimer = 0
-    let idle = false
-    let cameraMoving = false
-    let lastViewportChange = -Infinity
+    let settleTimer = 0
+    let expiryTimer = 0
+    let moving = !initialAdmission.current && el.hasAttribute('data-frame-camera-moving')
     const watches = new Map<string, () => void>()
+    const nearBrowsers = new Set<string>()
+    for (const id of seen.keys()) if (!htmlSizes.has(id)) seen.delete(id)
+    let ranked: ReturnType<typeof rankFrameCandidates> = []
+    let dirty = true
+
+    function measure(warming: boolean) {
+      const now = performance.now()
+      const page = currentPageSpatialIndex()
+      const { viewport } = useStore.getState()
+      const { x, y, zoom } = viewport
+      nearBrowsers.clear()
+      if (!page) return []
+
+      const { index, pageId } = page
+      const nearby = warming
+        ? index.all(pageId)
+        : index.intersect(pageId, {
+            x: (-FRAME_NEAR_PX - x) / zoom,
+            y: (-FRAME_NEAR_PX - y) / zoom,
+            width: (width + 2 * FRAME_NEAR_PX) / zoom,
+            height: (height + 2 * FRAME_NEAR_PX) / zoom,
+          })
+      const candidates = new Map<string, ReturnType<typeof frameCandidate>>()
+      for (const frame of nearby) {
+        const candidate = frameCandidate(frame, viewport, width, height)
+        if (browserIds.has(frame.id)) {
+          if (candidate.near) nearBrowsers.add(frame.id)
+        } else if (htmlSizes.has(frame.id) && (candidate.near || warming)) {
+          candidates.set(frame.id, candidate)
+        }
+      }
+      // Live far frames still compete for space and must expire after leaving the query.
+      for (const id of ids) {
+        if (candidates.has(id)) continue
+        const frame = index.get(pageId, id)
+        if (frame && htmlSizes.has(id)) candidates.set(id, frameCandidate(frame, viewport, width, height))
+      }
+      return rankFrameCandidates(
+        [...candidates.values()].map((candidate) => {
+          if (candidate.visible && !moving) seen.set(candidate.id, now)
+          return { ...candidate, lastSeen: seen.get(candidate.id) ?? -Infinity }
+        }),
+      )
+    }
 
     function schedule() {
-      if (!raf) raf = requestAnimationFrame(drain)
+      if (raf || fillAfterCommit.current) return
+      raf = requestAnimationFrame(() => {
+        initialAdmission.current = false
+        drain()
+      })
     }
 
     function watch(id: string, since: number) {
@@ -97,115 +184,279 @@ export function useFrameAdmission(
       })
     }
 
-    function start(id: string) {
-      if (ids.has(id) || !liveById.has(id)) return false
+    function start(id: string, trackBoot: boolean) {
+      if (ids.has(id)) return false
       ids.add(id)
-      const since = performance.now()
-      boots.set(id, since)
-      watch(id, since)
+      if (!seen.has(id)) seen.set(id, performance.now())
+      if (trackBoot) {
+        const since = performance.now()
+        boots.set(id, since)
+        watch(id, since)
+      }
       return true
+    }
+
+    function stop(id: string) {
+      if (!paused.has(id)) {
+        paused.add(id)
+        setFrameAnimationsPaused(id, true)
+      }
+      ids.delete(id)
+      boots.delete(id)
+      outside.delete(id)
+      watches.get(id)?.()
+      watches.delete(id)
+    }
+
+    function protectedFrames(now: number) {
+      const {
+        canvas,
+        activePageId,
+        selectedId,
+        selectedIds,
+        selectedElement,
+        ctxMenu,
+        prototypeMode,
+        streams,
+        presences,
+      } = useStore.getState()
+      const flowStart = prototypeMode ? presentStartFrame(canvas, null, activePageId) : null
+      const protectedIds = new Set<string>()
+      for (const id of [
+        ...active,
+        selectedId,
+        ctxMenu?.frameId,
+        selectedElement?.frameId,
+        flowStart,
+        ...Object.keys(streams),
+        ...Object.values(presences).map((presence) => presence.activeFrameId),
+        ...selectedIds,
+      ]) {
+        if (id && htmlSizes.has(id)) protectedIds.add(id)
+      }
+      const forced = reserveFrameSlots(protectedIds, ids, presenting)
+      for (const [id, until] of leases) {
+        if (until <= now || !htmlSizes.has(id)) leases.delete(id)
+        else if (forced.size < LIVE_FRAME_BUDGET) forced.add(id)
+      }
+      return { protectedIds, forced }
+    }
+
+    function applyAnimations(protectedIds: ReadonlySet<string>) {
+      const allowAll = presenting || useStore.getState().prototypeMode
+      const focused =
+        moving || allowAll
+          ? []
+          : ranked
+              .filter((frame) => frame.visible && frame.large && ids.has(frame.id) && !protectedIds.has(frame.id))
+              .slice(0, Math.max(0, ANIMATING_FRAME_BUDGET - protectedIds.size))
+      const allowed = new Set(focused.map(({ id }) => id))
+      // Pause losers before waking any winners.
+      for (const id of ids) {
+        if (allowAll || allowed.has(id) || protectedIds.has(id) || paused.has(id)) continue
+        paused.add(id)
+        setFrameAnimationsPaused(id, true)
+      }
+      for (const id of paused) {
+        if (!ids.has(id)) {
+          // The departing iframe remains paused until React removes it.
+          paused.delete(id)
+          forgetFrameAnimationPolicy(id)
+        } else if (allowAll || allowed.has(id) || protectedIds.has(id)) {
+          paused.delete(id)
+          setFrameAnimationsPaused(id, false)
+        }
+      }
+    }
+
+    function admitBrowsers() {
+      if (!browsers.size && !browserIds.size) return false
+      const { selectedId, selectedIds, ctxMenu, prototypeMode } = useStore.getState()
+      let changed = false
+      for (const id of browsers) if (!browserIds.has(id)) changed = browsers.delete(id) || changed
+      const requested = new Set([...selectedIds, selectedId, ctxMenu?.frameId])
+      const candidates = moving
+        ? requested
+        : warmSmallPage || prototypeMode
+          ? browserIds
+          : new Set([...nearBrowsers, ...requested])
+      // Browser surfaces manage their own live site and retain it after first use.
+      for (const id of candidates) {
+        if (!id || !browserIds.has(id) || browsers.has(id)) continue
+        browsers.add(id)
+        changed = true
+      }
+      return changed
+    }
+
+    function publish() {
+      setAdmitted(new Set([...ids, ...browsers]))
     }
 
     function drain() {
       raf = 0
-      const { viewport, selectedId, ctxMenu, prototypeMode } = useStore.getState()
-      // A deliberate selection can jump the queue. The rest of the work is
-      // bounded so independent sandbox bootstraps don't all land in one paint.
-      let added = selectedId ? start(selectedId) : false
-      if (ctxMenu?.frameId) added = start(ctxMenu.frameId) || added
-      const slots = STARTS_PER_BATCH - boots.size
-      if (!cameraMoving && slots > 0 && width > 0 && height > 0) {
-        const margin = idle ? NEAR_PX : 0
-        const { x, y, zoom } = viewport
-        const page = currentPageSpatialIndex()
-        const rect = {
-          x: (-margin - x) / zoom,
-          y: (-margin - y) / zoom,
-          width: (width + 2 * margin) / zoom,
-          height: (height + 2 * margin) / zoom,
-        }
-        // Prototype idle admission also prepares destinations outside the view.
-        const nearby =
-          page && (idle && prototypeMode ? page.index.all(page.pageId) : page.index.intersect(page.pageId, rect))
-        const candidates = (nearby ?? [])
-          .flatMap((frame) => {
-            if (ids.has(frame.id) || frame.hidden || !liveById.has(frame.id)) return []
-            const box = rotatedBounds(frame, frame.rotation ?? 0)
-            const left = box.x * zoom + x
-            const top = box.y * zoom + y
-            const right = left + box.width * zoom
-            const bottom = top + box.height * zoom
-            const near = right >= -margin && bottom >= -margin && left <= width + margin && top <= height + margin
-            if (!near && !(idle && prototypeMode)) return []
-            const visibleArea =
-              Math.max(0, Math.min(width, right) - Math.max(0, left)) *
-              Math.max(0, Math.min(height, bottom) - Math.max(0, top))
-            const distance = Math.hypot((left + right - width) / 2, (top + bottom - height) / 2)
-            return [{ id: frame.id, htmlSize: frame.html.length, visibleArea, distance }]
-          })
-          .sort((a, b) => b.visibleArea - a.visibleArea || a.distance - b.distance)
-        // One large document can fill the budget on its own. Let it finish
-        // before posting another large HTML parse to the renderer.
-        let preparing = 0
-        for (const id of boots.keys()) preparing += liveById.get(id) ?? 0
-        for (const frame of candidates.slice(0, slots)) {
-          if (preparing > 0 && preparing + frame.htmlSize > PREPARING_HTML_LIMIT) break
-          if (start(frame.id)) {
-            preparing += frame.htmlSize
-            added = true
+      window.clearTimeout(expiryTimer)
+      const now = performance.now()
+      const warming = warmSmallPage && seen.size < htmlSizes.size
+      if (dirty && !moving) {
+        ranked = measure(warming)
+        dirty = false
+      }
+      let changed = false
+      for (const id of ids) {
+        if (htmlSizes.has(id)) continue
+        stop(id)
+        seen.delete(id)
+        changed = true
+      }
+      const { protectedIds, forced } = protectedFrames(now)
+      let expiry = Math.min(Infinity, ...leases.values())
+      const browserChanged = admitBrowsers()
+      const desired = moving ? forced : planFrameAdmission(ranked, ids, forced, warming, now)
+      if (!moving) {
+        for (const frame of ranked) {
+          const { id, visible } = frame
+          if (!ids.has(id)) continue
+          if (desired.has(id)) {
+            outside.delete(id)
+            if (!visible && !forced.has(id)) {
+              expiry = Math.min(expiry, (seen.get(id) ?? now) + UNSEEN_MS)
+            }
+            continue
+          }
+          const until = (outside.get(id) ?? now) + EVICTION_DELAY_MS
+          if (until <= now) {
+            stop(id)
+            changed = true
+          } else {
+            if (!outside.has(id)) outside.set(id, now)
+            expiry = Math.min(expiry, until)
           }
         }
       }
-      if (added) setAdmitted(new Set(ids))
+      const required = [...forced].filter((id) => !ids.has(id)).length
+      if (ids.size + required > LIVE_FRAME_BUDGET) {
+        const priority = new Map(ranked.map(({ id }, rank) => [id, rank]))
+        const evictable = [...ids]
+          .filter((id) => !forced.has(id))
+          .sort(
+            (a, b) =>
+              (priority.get(b) ?? Infinity) - (priority.get(a) ?? Infinity) ||
+              (seen.get(a) ?? -Infinity) - (seen.get(b) ?? -Infinity),
+          )
+        for (const id of evictable.slice(0, ids.size + required - LIVE_FRAME_BUDGET)) {
+          stop(id)
+          changed = true
+        }
+      }
+      // Commit removals before adding replacement iframes. React can visit
+      // siblings in either order, and even a transient mount costs a document.
+      if (changed) {
+        fillAfterCommit.current = true
+        applyAnimations(protectedIds)
+        publish()
+        return
+      }
+      for (const id of forced) changed = start(id, !warming) || changed
+      if (!moving) {
+        let preparing = 0
+        for (const id of boots.keys()) preparing += htmlSizes.get(id) ?? 0
+        for (const id of desired) {
+          if (ids.has(id)) continue
+          if (ids.size >= LIVE_FRAME_BUDGET || (!warming && boots.size >= STARTS_PER_BATCH)) break
+          const htmlSize = htmlSizes.get(id) ?? 0
+          if (!warming && preparing > 0 && preparing + htmlSize > PREPARING_HTML_LIMIT) break
+          changed = start(id, !warming) || changed
+          preparing += htmlSize
+        }
+      }
+      applyAnimations(protectedIds)
+      if (changed) {
+        dirty = true
+        if (warming) expiry = Math.min(expiry, now + UNSEEN_MS)
+      }
+      if (changed || browserChanged) publish()
+      if (Number.isFinite(expiry)) {
+        expiryTimer = window.setTimeout(schedule, Math.max(1, expiry - now))
+      }
     }
 
-    function settle() {
-      idle = false
-      window.clearTimeout(idleTimer)
-      idleTimer = window.setTimeout(() => {
-        idle = true
-        cameraMoving = false
-        schedule()
-      }, PAN_SETTLE_MS)
-    }
-
-    wake.current = (id) => {
-      if (start(id)) setAdmitted(new Set(ids))
-    }
+    scheduler.current = schedule
     for (const [id, since] of boots) watch(id, since)
     const unsubscribe = useStore.subscribe((state, previous) => {
-      if (state.viewport !== previous.viewport) {
-        const now = performance.now()
-        cameraMoving = now - lastViewportChange < PAN_SETTLE_MS
-        lastViewportChange = now
-        settle()
-      } else if (
-        state.selectedId === previous.selectedId &&
-        state.ctxMenu === previous.ctxMenu &&
-        state.prototypeMode === previous.prototypeMode &&
-        state.canvas?.frames === previous.canvas?.frames
-      )
+      if (
+        state.viewport !== previous.viewport &&
+        (state.viewport.x !== previous.viewport.x ||
+          state.viewport.y !== previous.viewport.y ||
+          state.viewport.zoom !== previous.viewport.zoom)
+      ) {
+        // The parent Stage fits the opening page in a layout effect. Use
+        // that camera for the first ranking without waiting for gesture settle.
+        if (initialAdmission.current) {
+          dirty = true
+          schedule()
+          return
+        }
+        if (!moving) {
+          const now = performance.now()
+          for (const frame of ranked) if (frame.visible) seen.set(frame.id, now)
+          moving = true
+          applyAnimations(protectedFrames(performance.now()).protectedIds)
+        }
+        window.clearTimeout(settleTimer)
+        settleTimer = window.setTimeout(() => {
+          moving = false
+          dirty = true
+          schedule()
+        }, PAN_SETTLE_MS)
         return
-      if (ids.size < count) schedule()
+      }
+      if (state.canvas?.frames !== previous.canvas?.frames || state.activePageId !== previous.activePageId) {
+        dirty = true
+        if (!moving) schedule()
+      }
+      if (
+        state.selectedId !== previous.selectedId ||
+        state.selectedIds !== previous.selectedIds ||
+        state.selectedElement !== previous.selectedElement ||
+        state.ctxMenu !== previous.ctxMenu ||
+        state.prototypeMode !== previous.prototypeMode ||
+        state.streams !== previous.streams ||
+        state.presences !== previous.presences
+      ) {
+        schedule()
+      }
     })
     const resize = new ResizeObserver(([entry]) => {
       if (!entry) return
       width = entry.contentRect.width
       height = entry.contentRect.height
-      if (ids.size < count) schedule()
+      dirty = true
+      if (!moving) schedule()
     })
+    // Stage may already be in its settle window when this effect reconnects.
+    if (moving) {
+      settleTimer = window.setTimeout(() => {
+        moving = false
+        dirty = true
+        schedule()
+      }, PAN_SETTLE_MS)
+    }
     resize.observe(el)
-    settle()
+    // Small pages can mount their bounded set of documents before first paint.
+    // Larger pages wait for the final opening camera and use the boot queue.
+    if (initialAdmission.current && warmSmallPage) drain()
     schedule()
     return () => {
-      wake.current = null
+      scheduler.current = null
       unsubscribe()
       resize.disconnect()
       cancelAnimationFrame(raf)
-      window.clearTimeout(idleTimer)
+      window.clearTimeout(settleTimer)
+      window.clearTimeout(expiryTimer)
       for (const off of watches.values()) off()
     }
-  }, [liveById, count, stage, layer, eager])
+  }, [htmlSizes, browserIds, presenting, stage, layer])
 
-  return { eager, admitted, request }
+  return { admitted, request, protect }
 }

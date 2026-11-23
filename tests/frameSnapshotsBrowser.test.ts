@@ -123,3 +123,160 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
     }
   })
 })
+
+describe.skipIf(!findBrowserPath())('canvas frame budgets', { timeout: 30_000 }, () => {
+  const pages = pagePerTest()
+  const iframe = (id: string) => `[data-doop-frame-shell="${id}"] iframe[data-doop-frame]`
+
+  it('keeps a selected document, hibernates to a snapshot or placeholder, and reloads on return', async () => {
+    const page = await pages.open()
+    await page.setViewport({ width: 1280, height: 800 })
+    // Exercise the settle queue used by engines that counter-zoom iframe documents.
+    await page.setUserAgent({ userAgent: 'Doop layout zoom test' })
+    const copies = (prefix: string, x: number, count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        ...sample,
+        id: prefix + i,
+        html: '<body style="background:#475d78"><p>Frame preview</p></body>',
+        x: x + (i % 5) * 115,
+        y: Math.floor(i / 5) * 94,
+        width: 112,
+        height: 91,
+      }))
+    await openCanvasPage(page, [sample, unsupported, ...copies('near-', 30, 18), ...copies('far-', 4000, 20)])
+    await page.evaluate(() => {
+      const harness = window.canvasPageHarness
+      harness.setCamera({ x: 220, y: 170, zoom: 0.6 })
+    })
+    const live = await page.waitForSelector(iframe('cached'))
+    const child = await live!.contentFrame()
+    await child!.waitForSelector('input')
+    await child!.evaluate(() => {
+      document.querySelector('input')!.value = 'before flight'
+    })
+    const snapshot = '[data-doop-frame-shell="cached"] [data-frame-snapshot-ready]'
+    await page.waitForSelector(snapshot)
+    await page.waitForFunction(() => {
+      if (document.querySelector('.stage')?.hasAttribute('data-frame-camera-moving')) return false
+      const frames = [...document.querySelectorAll('iframe[data-doop-frame]')]
+      // The opening overview may still have far documents in their grace period.
+      return frames.length === 20 && frames.every((node) => !node.closest('[data-doop-frame-shell^="far-"]'))
+    })
+    await page.evaluate(() => {
+      window.canvasPageHarness.select('cached')
+    })
+    await page.waitForSelector(snapshot + '[data-frame-snapshot-blocked]')
+    const released = await page.evaluate(() => {
+      const stage = document.querySelector('.stage')!
+      return new Promise<number[]>((resolve, reject) => {
+        const batches: number[] = []
+        const observer = new MutationObserver(() => {
+          const deferred = [...stage.querySelectorAll<HTMLElement>('[data-frame-layout-root]')].filter(
+            (wrapper) => wrapper.style.contentVisibility === 'hidden',
+          ).length
+          if (deferred === (batches.at(-1) ?? 0)) return
+          batches.push(deferred)
+          if (deferred === 0) {
+            observer.disconnect()
+            clearTimeout(timeout)
+            resolve(batches)
+          }
+        })
+        const timeout = setTimeout(() => {
+          observer.disconnect()
+          reject(new Error('Layout queue did not finish releasing far live frames'))
+        }, 5000)
+        observer.observe(stage, { subtree: true, attributes: true, attributeFilter: ['style'] })
+        window.canvasPageHarness.setCamera({ x: -4940, y: 170, zoom: 1.25 })
+      })
+    })
+    expect(released).toEqual([19, 15, 11, 7, 3, 0])
+    await page.waitForFunction(() => {
+      const frames = [...document.querySelectorAll('iframe[data-doop-frame]')]
+      const farCount = frames.filter((node) =>
+        node.closest('[data-doop-frame-shell]')?.getAttribute('data-doop-frame-shell')?.startsWith('far-'),
+      ).length
+      return frames.length === 20 && farCount === 19
+    })
+    expect(await live!.evaluate((node) => node.isConnected)).toBe(true)
+    await page.evaluate(() => window.canvasPageHarness.select(null))
+    // A snapshot can hide the iframe before the budget actually unloads it.
+    await page.waitForFunction((node) => !node.isConnected, {}, live!)
+    expect(await page.$eval(snapshot, (node) => getComputedStyle(node).visibility)).toBe('visible')
+    expect(
+      await page.$eval(
+        '[data-doop-frame-shell="unsupported"] [data-frame-document-deferred]',
+        (node) => getComputedStyle(node).backgroundColor,
+      ),
+    ).not.toBe('rgba(0, 0, 0, 0)')
+    expect(await page.$('[data-doop-frame-shell="unsupported"] [data-frame-snapshot-ready]')).toBeNull()
+
+    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 220, y: 170, zoom: 0.6 }))
+    const reloaded = await page.waitForSelector(iframe('cached'))
+    const restoredChild = await reloaded!.contentFrame()
+    await restoredChild!.waitForSelector('input')
+    expect(await restoredChild!.$eval('input', (input) => input.value)).toBe('original')
+  })
+
+  it('pauses CSS and new Web Animations during movement, resumes focus, and exempts selection', async () => {
+    const page = await pages.open()
+    await page.setViewport({ width: 1280, height: 800 })
+    const animated = Array.from({ length: 6 }, (_, i) => ({
+      ...sample,
+      id: `animated-${i}`,
+      x: i * 160,
+      width: 260,
+      height: 130,
+      html: '<style>@keyframes pulse{to{opacity:.7}}p{animation:pulse 2s infinite}b{animation:pulse 2s infinite paused}</style><p>CSS</p><b>Authored pause</b>',
+    }))
+    await openCanvasPage(page, animated)
+    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 170, y: 175, zoom: 0.8 }))
+    await page.waitForFunction(() => {
+      const nodes = [...document.querySelectorAll('iframe[data-doop-frame]')]
+      return (
+        nodes.length === 6 && nodes.filter((node) => !node.hasAttribute('data-frame-animation-paused')).length === 4
+      )
+    })
+    const focused = await page.waitForSelector('iframe[data-doop-frame]:not([data-frame-animation-paused])')
+    const child = await focused!.contentFrame()
+    await child!.waitForSelector('p')
+    const cssState = () => child!.$eval('p', (p) => p.getAnimations()[0]?.playState)
+    expect(await cssState()).toBe('running')
+
+    // Keep the gesture open while inspecting the opaque-origin child from the test driver.
+    await page.evaluate(() => {
+      let y = 175
+      const timer = setInterval(() => window.canvasPageHarness.setCamera({ x: 170, y: ++y, zoom: 0.8 }), 30)
+      setTimeout(() => clearInterval(timer), 1600)
+    })
+    await page.waitForFunction(() => document.querySelectorAll('iframe[data-frame-animation-paused]').length === 6)
+    await child!.waitForFunction(() => document.querySelector('p')!.getAnimations()[0]?.playState === 'paused')
+    await child!.$eval('p', (p) => {
+      const animation = p.animate([{ opacity: 1 }, { opacity: 0.8 }], { duration: 3000, iterations: Infinity })
+      animation.id = 'new-web-animation'
+    })
+    expect(
+      await child!.evaluate(() => document.getAnimations().find((a) => a.id === 'new-web-animation')?.playState),
+    ).toBe('paused')
+
+    const id = await focused!.evaluate((node) =>
+      node.closest('[data-doop-frame-shell]')!.getAttribute('data-doop-frame-shell'),
+    )
+    await page.evaluate((id) => window.canvasPageHarness.select(id), id)
+    await child!.waitForFunction(
+      () => document.getAnimations().find((a) => a.id === 'new-web-animation')?.playState === 'running',
+    )
+    expect(await cssState()).toBe('running')
+    expect(await child!.$eval('b', (b) => b.getAnimations()[0]?.playState)).toBe('paused')
+    await page.waitForFunction(() => !document.querySelector('.stage')?.hasAttribute('data-frame-camera-moving'))
+    await page.evaluate(() => window.canvasPageHarness.select(null))
+    await page.waitForFunction(() => document.querySelectorAll('iframe[data-frame-animation-paused]').length === 2)
+    expect(await cssState()).toBe('running')
+    const firstTime = await child!.$eval('p', (p) => Number(p.getAnimations()[0]?.currentTime))
+    await child!.waitForFunction(
+      (time) => Number(document.querySelector('p')!.getAnimations()[0]?.currentTime) > time,
+      {},
+      firstTime,
+    )
+  })
+})

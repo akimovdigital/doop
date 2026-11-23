@@ -1523,6 +1523,7 @@ body[data-panel-resizing] * {
   visibility: hidden;
 }
 
+[data-frame-snapshot-ready][data-frame-snapshot-waiting],
 :is(
   .stage[data-frame-camera-moving] [data-frame-snapshot-ready],
   .stage [data-frame-snapshot-ready][data-frame-snapshot-tiny]
@@ -1530,6 +1531,7 @@ body[data-panel-resizing] * {
   visibility: visible;
 }
 
+[data-frame-snapshot-ready][data-frame-snapshot-waiting] + div > iframe[data-doop-frame],
 :is(
     .stage[data-frame-camera-moving] [data-frame-snapshot-ready],
     .stage [data-frame-snapshot-ready][data-frame-snapshot-tiny]

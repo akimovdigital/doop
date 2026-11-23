@@ -3,7 +3,7 @@ import type { intervalStats } from '../../src/perf/metrics'
 import type { liveDocuments } from '../../src/perf/documents'
 import type { FramePreset } from './scene'
 
-export const scenarios = ['pan', 'zoom', 'zoom-wide', 'drag1', 'drag10', 'open'] as const
+export const scenarios = ['pan', 'zoom', 'zoom-wide', 'drag1', 'drag10', 'open', 'fly-over'] as const
 export type Scenario = (typeof scenarios)[number]
 export const windowSize = { width: 1280, height: 800, dpr: 2 }
 export const defaultDuration = 3000
@@ -50,6 +50,11 @@ export interface Sample {
   drag: { expected: number; moved: number } | null
   commits: { count: number; actualDuration: number }
   live: { before: ReturnType<typeof liveDocuments>; after: ReturnType<typeof liveDocuments> }
+  liveBudget?: number
+  animationBudget?: number
+  animationAllowed?: { before: number; after: number }
+  flyOver?: { peakMounted: number; visited: number; peakAnimationAllowed?: number }
+  webContentRssKiB?: number
   snapshots?: { ready: number; elapsedMs: number | null; captureMs: number[] }
   snapshotDiagnostics?: { at: number; event: string; data: object }[]
   heapBytes: number | null

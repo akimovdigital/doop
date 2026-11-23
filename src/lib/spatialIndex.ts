@@ -201,6 +201,11 @@ export class SpatialIndex {
     return inPaintOrder(this.pages.get(pageId)?.entries ?? [])
   }
 
+  get(pageId: string, id: string) {
+    const entry = this.byId.get(id)
+    if (entry && entry.page === this.pages.get(pageId)) return entry.frame
+  }
+
   intersect(pageId: string, rect: Rect) {
     return inPaintOrder(this.pages.get(pageId)?.intersect(boxOf(rect)) ?? [])
   }

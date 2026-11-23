@@ -5,7 +5,8 @@ import { access, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
-import { makeRealScene } from '../../tests/perf/scene'
+import { framePresets, makeRealScene } from '../../tests/perf/scene'
+import { flyOverScript } from './flyOver'
 import type { Memory } from '../../tests/perf/protocol'
 
 export const exec = promisify(execFile)
@@ -138,6 +139,11 @@ export async function serve(dir: string, scene?: ExportedScene) {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
       const path = url.pathname
       res.setHeader('Cache-Control', 'no-store')
+      if (path === '/assets/bench-fly-over.js' && req.method === 'GET') {
+        const frames = framePresets.find((value) => value === Number(url.searchParams.get('frames'))) ?? 68
+        res.writeHead(200, { 'Content-Type': contentTypes.js }).end(flyOverScript(frames))
+        return
+      }
       if (path === '/__memory' && req.method === 'GET') {
         const memory = url.searchParams.has('initial') ? navigationMemory : vmStat()
         if (!memory) {
@@ -165,13 +171,18 @@ export async function serve(dir: string, scene?: ExportedScene) {
         res.writeHead(404).end()
         return
       }
-      if (path === fixture && url.searchParams.get('scenario') === 'open') navigationMemory = vmStat()
+      const flyOver = path === fixture && url.searchParams.get('scenario') === 'fly-over'
+      if (path === fixture && (flyOver || url.searchParams.get('scenario') === 'open')) navigationMemory = vmStat()
       const file = await realpath(join(root, decodeURIComponent(path))).catch(() => null)
       if (!file?.startsWith(root + sep)) {
         res.writeHead(404).end()
         return
       }
-      const data = await readFile(file)
+      const raw = await readFile(file)
+      const frames = framePresets.find((value) => value === Number(url.searchParams.get('frames'))) ?? 68
+      const data = flyOver
+        ? raw.toString().replace('<head>', `<head><script src="/assets/bench-fly-over.js?frames=${frames}"></script>`)
+        : raw
       res
         .writeHead(200, {
           'Content-Type': contentTypes[file.split('.').at(-1) ?? ''] ?? 'application/octet-stream',

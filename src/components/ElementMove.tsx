@@ -628,7 +628,9 @@ export function useElementMove(frame: Frame) {
           selected: pickedHere.length > 1 ? pickedHere : selected,
         })
         if (closed) return
-        layer = (response?.hit ?? null) as ElementMoveHit | null
+        // An unresponsive document did not confirm a press on the frame itself.
+        if (!response) return cancel()
+        layer = (response.hit ?? null) as ElementMoveHit | null
         /* the standalone's own root moves with its shell, by the frame drag */
         if (layer && layer.selector === shell) layer = null
         if (layer) {
