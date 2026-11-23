@@ -8,6 +8,7 @@ import type { ComponentDef } from '../shared/components.ts'
 import { byStack, frontOf, stackOf } from '../shared/frameStack.ts'
 import { htmlLoaded, setHtml, setHtmlMissHandler, unloadHtml, withHtml } from './frameHtml.ts'
 import { afterCommit, inTransaction, recordUndo, requireBoundary } from './journal.ts'
+import { dropRoomInitBody } from './roomInitGzip.ts'
 import type { PageLayoutWrite } from './pageSections.ts'
 import type { DesignToken } from '../shared/designTokens.ts'
 import type {
@@ -88,6 +89,7 @@ function restoreFrame(frame: Frame, state: ReturnType<typeof frameState>) {
  */
 class Store {
   canvases = new Map<string, Canvas>()
+  private revisions = new WeakMap<Canvas, number>()
   private frameIndex = new Map<string, string>() // frameId -> canvasId
   /** the page copy in flight per canvas, so the next one waits for it */
   private pageCopies = new Map<string, Promise<unknown>>()
@@ -99,6 +101,18 @@ class Store {
   private holds = new Map<string, number>()
   /** rooms, agents and streams the store cannot see (wired by index.ts) */
   private inUse: (canvasId: string) => boolean = () => false
+
+  canvasRevision(canvas: Canvas): number {
+    return this.revisions.get(canvas) ?? 0
+  }
+
+  /** Room init observes live memory. Invalidate on write and again on rollback:
+   * an intervening join may have cached the state before the undo. */
+  private reviseCanvas(canvas: Canvas) {
+    const bump = () => this.revisions.set(canvas, this.canvasRevision(canvas) + 1)
+    bump()
+    recordUndo(bump)
+  }
 
   /** Put these fields of the canvas back if the transaction is undone. `deep` for the ones
    *  whose items are changed in place (tokens, guideline docs). */
@@ -117,8 +131,10 @@ class Store {
     })
   }
 
-  /** The canvas row is written once per transaction, with what the canvas holds by then. */
+  /** Revision for a canvas/frame write. The row is persisted once per
+   * transaction, with what the canvas holds by then. */
   private saveCanvasLater(c: Canvas) {
+    this.reviseCanvas(c)
     afterCommit(() => {
       if (this.canvases.get(c.id) === c) persist.saveCanvas(c)
     }, `canvas:${c.id}`)
@@ -151,6 +167,7 @@ class Store {
 
   init(canvases: Canvas[]) {
     for (const c of canvases) {
+      dropRoomInitBody(c.id)
       c.pages = canvasPages(c)
       this.canvases.set(c.id, c)
       for (const f of c.frames) {
@@ -211,6 +228,7 @@ class Store {
       if (html === undefined) console.error('[store] frame has no stored html', frame.id)
       setHtml(frame, html ?? '')
     }
+    this.reviseCanvas(canvas)
     this.loaded.set(canvasId, Date.now())
   }
 
@@ -268,6 +286,7 @@ class Store {
         continue
       }
       for (const frame of canvas?.frames ?? []) unloadHtml(frame)
+      dropRoomInitBody(canvasId)
       this.loaded.delete(canvasId)
       evicted++
     }
@@ -389,6 +408,7 @@ class Store {
     recordUndo(() => {
       if (this.canvases.get(canvas.id) !== canvas) return
       for (const frame of canvas.frames) this.frameIndex.delete(frame.id)
+      dropRoomInitBody(canvas.id)
       this.canvases.delete(canvas.id)
       this.loaded.delete(canvas.id)
     })
@@ -556,6 +576,7 @@ class Store {
     if (guides.length > room) guides.splice(room)
     if (guides.length) canvas.guides = [...(canvas.guides ?? []), ...guides]
     canvas.updatedAt = Math.max(canvas.updatedAt, now)
+    this.reviseCanvas(canvas)
     if (!samePages(canvas.pages, next) || copied) persist.saveCanvas(canvas)
     return { source, page, pages: canvas.pages, frames, guides }
   }
@@ -590,6 +611,7 @@ class Store {
           canvas.frames.sort(byStack)
         }
         canvas.updatedAt = Math.max(canvas.updatedAt, updatedAt)
+        this.reviseCanvas(canvas)
         applyComments()
       })
     } finally {
@@ -719,6 +741,7 @@ class Store {
     if (!c) return undefined
     this.requirePageLayoutIdle(id)
     requireBoundary('store.deleteCanvas')
+    dropRoomInitBody(id)
     const loadedAt = this.loaded.get(id)
     for (const f of c.frames) this.frameIndex.delete(f.id)
     this.canvases.delete(id)
@@ -856,6 +879,7 @@ class Store {
       this.remember(c, ['memberIds'])
       ;(c.memberIds ??= []).push(userId)
       const at = Date.now()
+      this.reviseCanvas(c)
       afterCommit(() => persist.saveMember(canvasId, userId, addedBy, at))
     }
     return c
@@ -868,6 +892,7 @@ class Store {
     requireBoundary('store.removeMember')
     this.remember(c, ['memberIds'])
     c.memberIds!.splice(idx, 1)
+    this.reviseCanvas(c)
     afterCommit(() => persist.deleteMember(canvasId, userId))
     return true
   }
@@ -905,6 +930,7 @@ class Store {
       if (replaced) c.components![now] = replaced
       else c.components!.splice(now, 1)
     })
+    this.reviseCanvas(c)
     /* a definition replaced again before the commit was never the stored one */
     afterCommit(() => {
       if (this.canvases.get(canvasId) === c && c.components?.includes(def)) persist.saveComponent(canvasId, def)
@@ -921,6 +947,7 @@ class Store {
       const list = (c.components ??= [])
       if (removed && !list.some((def) => def.id === id)) list.splice(Math.min(at, list.length), 0, removed)
     })
+    this.reviseCanvas(c)
     afterCommit(() => {
       if (!c.components?.some((def) => def.id === id)) persist.deleteComponent(canvasId, id)
     })
@@ -990,6 +1017,7 @@ class Store {
     if (patch.x !== undefined) doc.x = patch.x
     if (patch.y !== undefined) doc.y = patch.y
     if (patch.title !== undefined) doc.title = patch.title || undefined
+    this.reviseCanvas(c)
     afterCommit(() => persist.saveGuideline(canvasId, doc))
     return doc
   }
@@ -1163,6 +1191,7 @@ class Store {
     requireBoundary('store.addReference')
     this.remember(c, ['references'])
     ;(c.references ??= []).unshift(ref)
+    this.reviseCanvas(c)
     afterCommit(() => persist.saveReference(canvasId, ref))
     return ref
   }
@@ -1174,6 +1203,7 @@ class Store {
     requireBoundary('store.deleteReference')
     this.remember(c, ['references'])
     const [ref] = c.references!.splice(idx, 1)
+    this.reviseCanvas(c)
     afterCommit(() => persist.deleteReference(id))
     return ref
   }

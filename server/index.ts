@@ -265,6 +265,8 @@ interface Conn {
    *  signed-out guest on a link-shared canvas. */
   userId?: string
   presence: Presence
+  /** Room updates that follow the init snapshot while it is being compressed. */
+  initQueue?: string[]
   /** This client can apply a geometry batch together with the page list. */
   pageLayoutMoves?: boolean
   /** an admin viewing as someone else: receives updates, emits nothing.
@@ -346,7 +348,11 @@ function refreshRoomRoles(canvasId: string) {
 }
 
 function send(ws: WebSocket, msg: ServerMessage) {
-  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg))
+  if (ws.readyState !== WebSocket.OPEN) return
+  const text = JSON.stringify(msg)
+  const queue = conns.get(ws)?.initQueue
+  if (queue) queue.push(text)
+  else ws.send(text)
 }
 
 function broadcast(canvasId: string, msg: ServerMessage, excludeClientId?: string) {
@@ -3647,14 +3653,17 @@ wss.on('connection', (ws, upgradeReq) => {
         activeFrameId: null,
       }
       const silent = !!(session.session as { impersonatedBy?: string | null }).impersonatedBy
-      conns.set(ws, {
+      const initQueue: string[] = []
+      const joining: Conn = {
         ws,
         canvasId: msg.canvasId,
         userId: session.user.id,
         presence,
         silent,
+        initQueue,
         pageLayoutMoves: msg.pageLayoutMoves === true,
-      })
+      }
+      conns.set(ws, joining)
       const others = room(msg.canvasId)
         .filter((c) => c.ws !== ws && !c.silent)
         .map((c) => c.presence)
@@ -3672,12 +3681,19 @@ wss.on('connection', (ws, upgradeReq) => {
         selfColor: presence.color,
         serverBuild: BUILD_ID,
       }
-      if (msg.initEncoding === 'gzip') {
-        const payload = await wireRoomInitPayload(init, true)
-        ws.send(payload)
-      } else {
-        send(ws, init)
+      let payload: Buffer | string
+      try {
+        payload = await wireRoomInitPayload(init, msg.initEncoding === 'gzip', store.canvasRevision(canvas))
+      } catch (error) {
+        console.error('[room] failed to encode init:', error)
+        if (conns.get(ws) === joining) ws.close(1011, 'init failed')
+        return
       }
+      if (ws.readyState !== WebSocket.OPEN || conns.get(ws) !== joining) return
+      // The binary message already has its own compression.
+      ws.send(payload, { compress: typeof payload === 'string' })
+      delete joining.initQueue
+      for (const text of initQueue) ws.send(text)
       /* An admin looking at a canvas must not act on it. Announcing presence
          would impersonate the owner in the room; maybePlay would have the
          demo agent perform on an untouched signup canvas; the card kick would
@@ -3696,7 +3712,7 @@ wss.on('connection', (ws, upgradeReq) => {
       return
     }
 
-    if (!conn) return
+    if (!conn || conn.initQueue) return
     if (conn.silent) return // view-as connections receive updates but never emit
     const { canvasId, presence } = conn
     /* view and comment visitors share cursors and viewports; claiming a
