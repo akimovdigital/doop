@@ -279,8 +279,9 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     expect(
       await page.$$eval('[data-canvas-section] button[aria-label^="Resize section"]', (items) => items.length),
     ).toBe(4)
-    await page.click(inspector + ' button[role="switch"]')
-    await page.waitForSelector(inspector + ' button[role="switch"][aria-checked="true"]')
+    const aspectLock = inspector + ' button[aria-label="Link width and height"]'
+    await page.click(aspectLock)
+    await page.waitForSelector(aspectLock + '[aria-pressed="true"]')
     const width = await page.$eval(
       inspector + ' input[aria-label="Width"]',
       (el) => (el as HTMLInputElement).valueAsNumber,
