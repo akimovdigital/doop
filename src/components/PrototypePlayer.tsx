@@ -1,3 +1,4 @@
+import { stopActiveDictation } from '../lib/dictation'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import type { Frame } from '../../shared/types'
 import { framePageId, pageFrames } from '../../shared/pages'
@@ -370,7 +371,7 @@ export function PrototypePlayer({
   /* Escape: an open overlay closes first; then the screen's own key:Escape
      interaction; then, over the editor, the player itself */
   function escape() {
-    if (design.escape() || chat.escape()) return
+    if (stopActiveDictation() || design.escape() || chat.escape()) return
     if (overlaysRef.current.length) return closeOverlay()
     const win = topWindow()
     if (!win) return onClose?.()

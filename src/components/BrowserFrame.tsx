@@ -37,6 +37,7 @@ import { BrowserSideResize, FrameBrowserChrome } from './FrameBrowserChrome'
 import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY } from '../lib/layoutZoom'
 import { canEditOpenCanvas, useStore } from '../lib/store'
 import { cn } from '../lib/utils'
+import { stopActiveDictation } from '../lib/dictation'
 import { onFrameMessage } from '../lib/frameBridge'
 import { desktopPlatform } from '../lib/shell'
 import { DesignModeControls, DesignModeHint, DesignModeOverlay, DesignModeToggle } from './DesignModeOverlay'
@@ -240,7 +241,7 @@ export function BrowserFrame({
           if (type === 'doop:annotation-layout') design.refreshPins(event.data.scrollX, event.data.scrollY)
           if (type === 'doop:proto-space-up') design.releasePage()
           if (type === 'doop:esc' && document.activeElement === iframe.current) {
-            if (!design.escape() && !design.enabled) {
+            if (!stopActiveDictation() && !design.escape() && !design.enabled) {
               if (mode) closeBrowserSurface(frame.id)
               else setActive(false)
             }
@@ -410,7 +411,7 @@ export function BrowserFrame({
         if (
           (annotate && !event.isComposing) ||
           design.handleKey(event, element) ||
-          (event.key === 'Escape' && (design.escape() || chat.escape()))
+          (event.key === 'Escape' && (stopActiveDictation() || design.escape() || chat.escape()))
         ) {
           if (annotate && !event.repeat) {
             design.toggle()

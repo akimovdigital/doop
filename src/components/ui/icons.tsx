@@ -151,8 +151,11 @@ import {
   ZoomIn,
   Rocket,
   Mail,
+  Mic,
   Star,
 } from 'lucide-react'
+
+export { Mic as MicIcon }
 
 type SvgProps = Omit<SVGProps<SVGSVGElement>, 'ref'>
 

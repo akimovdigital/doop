@@ -121,6 +121,10 @@ The note pill and queue use the toolbar's solid dark `--surface`, light `--ink`,
 
 At the bottom center of the preview, an 80 × 16 px button presents a textless 70 × 5 px grabber. The pending count and working indicator sit beside it. A short hover or click opens the shared draft composer, up to 560 px wide, with the latest reply and selected element when available. The composer uses the same solid dark surface as the note pill and queue. It slides into place in 150 ms when motion is allowed.
 
+Element and region chips sit above the draft in the preview capsule and the Agents composer. They use the shared row radius, brand tint and inset brand ring. The tooltip shows the selector, dimensions and component name when available. Draft chips have a remove button. Sent messages show the same chips above the note text. When a crop exists, its thumbnail appears inside the chip.
+
+Dictate appears in the note's action row when it contains a comment, a text edit or CSS edits and in the capsule composer when speech recognition is available. A red recording indicator and a status hint appear while dictation is active. The indicator pulses when motion is allowed.
+
 ## Browser frame Design Mode
 
 Present and side surfaces use the prototype's Annotate control and replace the address row with the selection hint during Design Mode. The existing accent ring, note card, numbered pins and send queue sit over the browser viewport. Exiting restores the website address and direct browsing.

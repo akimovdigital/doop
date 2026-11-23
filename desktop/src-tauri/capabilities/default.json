@@ -44,6 +44,9 @@
     "allow-app-menu-state",
     "allow-update-card-ready",
     "allow-update-restart",
-    "allow-open-canvas-window"
+    "allow-open-canvas-window",
+    "allow-dictation-available",
+    "allow-dictation-start",
+    "allow-dictation-stop"
   ]
 }
