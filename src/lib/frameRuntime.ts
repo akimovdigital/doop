@@ -272,7 +272,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
     if (firstCanvasRender) {
       // The bootstrap has no previous design to transition from. Let CEF
       // lay out the new document at paint instead of forcing it in releaseStill.
-      morph(html)
+      morph(html, true)
       return
     }
     holdStill()
@@ -282,7 +282,12 @@ export function frameRuntime(browse?: { token: string; url: string }) {
       releaseStill()
     }
   }
-  function morph(html) {
+  function adoptInitialChildren(target, source) {
+    var children = document.createDocumentFragment()
+    while (source.firstChild) children.appendChild(source.firstChild)
+    target.replaceChildren(children)
+  }
+  function morph(html, firstCanvasRender) {
     var doc
     try {
       doc = new DOMParser().parseFromString(html, 'text/html')
@@ -291,8 +296,15 @@ export function frameRuntime(browse?: { token: string; url: string }) {
          with every rule scoped under .glaze) — morphing only its children left
          those designs unstyled on the canvas */
       syncAttrs(document.body, doc.body)
-      morphChildren(document.head, doc.head)
-      morphChildren(document.body, doc.body)
+      if (firstCanvasRender) {
+        // The parsed tree is already detached. Move its children into the
+        // empty artboard without deep-cloning them, while keeping head/body.
+        adoptInitialChildren(document.head, doc.head)
+        adoptInitialChildren(document.body, doc.body)
+      } else {
+        morphChildren(document.head, doc.head)
+        morphChildren(document.body, doc.body)
+      }
       activateScripts()
       syncPathVisibility()
     } catch (e) {
