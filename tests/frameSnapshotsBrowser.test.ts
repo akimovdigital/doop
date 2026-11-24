@@ -100,8 +100,17 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
       html,
     }))
     const distant = { ...frames[0]!, id: 'distant', x: 120000 }
-    await openCanvasPage(page, [...frames, distant])
-    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 100, y: 100, zoom: 0.04 }))
+    // Fit the intended viewport before admission can start the distant frame.
+    await openCanvasPage(page, [...frames, distant], '', {
+      pages: [
+        {
+          id: 'overview',
+          name: 'Overview',
+          sections: [{ id: 'initial-view', name: 'Initial view', x: 0, y: 0, width: 13_800, height: 9_900 }],
+          landingSectionId: 'initial-view',
+        },
+      ],
+    })
     await page.waitForFunction(() => document.querySelectorAll('iframe[data-doop-frame]').length === 40)
     expect(await page.$$('[data-frame-snapshot]')).toHaveLength(0)
     expect(await page.$('[data-doop-frame-shell="distant"] iframe')).toBeNull()

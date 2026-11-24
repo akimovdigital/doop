@@ -31,6 +31,8 @@ const STARTS_PER_BATCH = 3
 const PREPARING_HTML_LIMIT = 800_000
 const LIVE_OVERVIEW_STARTS_PER_BATCH = 6
 const LIVE_OVERVIEW_PREPARING_HTML_LIMIT = 1_600_000
+const WIDE_OVERVIEW_STARTS_PER_BATCH = 12
+const WIDE_OVERVIEW_PREPARING_HTML_LIMIT = 3_200_000
 const BOOT_TIMEOUT_MS = 2_000
 const REQUEST_LEASE_MS = 5_000
 const RETAINED_OVERVIEW_LIMIT = 48
@@ -411,12 +413,18 @@ export function useFrameAdmission(
       for (const id of forced) changed = start(id, !warming) || changed
       if (admitIdleFrames) {
         const fillLiveOverview = liveOverview && useStore.getState().viewport.zoom <= FRAME_OVERVIEW_MAX_ZOOM
-        const bootLimit = fillLiveOverview ? LIVE_OVERVIEW_STARTS_PER_BATCH : STARTS_PER_BATCH
-        const htmlLimit = fillLiveOverview ? LIVE_OVERVIEW_PREPARING_HTML_LIMIT : PREPARING_HTML_LIMIT
+        // A dense overview has enough visible work to use more boot slots.
+        // Keep the smaller limits for nearby offscreen documents.
+        const wideOverview = fillLiveOverview && ranked[WIDE_OVERVIEW_STARTS_PER_BATCH - 1]?.visible
+        const overviewBootLimit = fillLiveOverview ? LIVE_OVERVIEW_STARTS_PER_BATCH : STARTS_PER_BATCH
+        const overviewHtmlLimit = fillLiveOverview ? LIVE_OVERVIEW_PREPARING_HTML_LIMIT : PREPARING_HTML_LIMIT
         let preparing = 0
         for (const id of boots.keys()) preparing += htmlSizes.get(id) ?? 0
         for (const id of desired) {
           if (ids.has(id)) continue
+          const visibleInWideOverview = wideOverview && (visiblePixels.get(id) ?? 0) > 0
+          const bootLimit = visibleInWideOverview ? WIDE_OVERVIEW_STARTS_PER_BATCH : overviewBootLimit
+          const htmlLimit = visibleInWideOverview ? WIDE_OVERVIEW_PREPARING_HTML_LIMIT : overviewHtmlLimit
           if (ids.size >= budget || (!warming && boots.size >= bootLimit)) break
           const htmlSize = htmlSizes.get(id) ?? 0
           if (!warming && preparing > 0 && preparing + htmlSize > htmlLimit) break
