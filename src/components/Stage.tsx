@@ -475,6 +475,29 @@ export function Stage({
       }
     }
     let rezoomRaf = 0
+    let denseDocuments = new Set<HTMLElement>()
+
+    function settleChromiumDocuments(world: HTMLElement, viewport: Viewport, size: { width: number; height: number }) {
+      const next = new Set<HTMLElement>()
+      if (viewport.zoom > 1 && size.width && size.height) {
+        const near = framesNearViewport(viewport, size)
+        for (const wrapper of world.querySelectorAll<HTMLElement>('[data-frame-layout-root]')) {
+          if (!near.has(wrapper.dataset.frameLayoutRoot ?? '')) continue
+          const previous = Number(wrapper.style.getPropertyValue('--cef-frame-density')) || 1
+          const density = settledLayoutZoom(previous, viewport.zoom, MAX_ZOOM)
+          if (density === 1) continue
+          if (density !== previous) wrapper.style.setProperty('--cef-frame-density', String(density))
+          if (!wrapper.hasAttribute('data-cef-document-density')) wrapper.setAttribute('data-cef-document-density', '')
+          next.add(wrapper)
+        }
+      }
+      for (const wrapper of denseDocuments) {
+        if (next.has(wrapper)) continue
+        wrapper.removeAttribute('data-cef-document-density')
+        wrapper.style.removeProperty('--cef-frame-density')
+      }
+      denseDocuments = next
+    }
     /* World zoom and the inherited iframe counter-zoom change together.
        Deferred wrappers already have the new counter-zoom before they
        become visible, and no paint sees a mixed scale. */
@@ -483,12 +506,18 @@ export function Stage({
       const world = worldRef.current
       if (!world) return
       const { viewport } = useStore.getState()
+      const size = stageSize.current
+      // CEF has to rerasterize each affected live document. Leave the world
+      // at its design scale and update only the frames close to the camera.
+      if (MAC_CHROMIUM_DESKTOP) {
+        settleChromiumDocuments(world, viewport, size)
+        return
+      }
       const previous = layoutZoomRef.current
       const layoutZoom = settledLayoutZoom(previous, viewport.zoom, MAX_ZOOM)
       if (layoutZoom === previous) return
-      const size = stageSize.current
       if (
-        (!FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY || MAC_CHROMIUM_DESKTOP) &&
+        !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY &&
         size.width &&
         size.height &&
         CSS.supports('content-visibility', 'hidden')
@@ -582,17 +611,45 @@ export function Stage({
       if (ref.current) sendViewport(s.viewport, stageSize.current)
       // Every zoom at or below 100% uses the same layout. Keep the timeout
       // through a pan only when a previous zoom still needs to settle.
-      if (!settle && s.viewport.zoom === prev.viewport.zoom) return
+      if (!settle && s.viewport.zoom === prev.viewport.zoom && !MAC_CHROMIUM_DESKTOP) return
       window.clearTimeout(settle)
       settle = 0
-      if (s.viewport.zoom <= 1 && layoutZoomRef.current === 1) return
+      if (s.viewport.zoom <= 1 && layoutZoomRef.current === 1 && denseDocuments.size === 0) return
       settle = window.setTimeout(() => {
         settle = 0
         settleLayout()
       }, 250)
     })
+    // A frame admitted after the camera stopped should also get the current
+    // density. Nested iframe updates are outside this mutation observer.
+    const admission = MAC_CHROMIUM_DESKTOP
+      ? new MutationObserver((changes) => {
+          if (useStore.getState().viewport.zoom <= 1) return
+          if (
+            !changes.some(({ addedNodes }) =>
+              [...addedNodes].some(
+                (node) =>
+                  node instanceof HTMLElement &&
+                  (node.matches('[data-frame-layout-root]') || node.querySelector('[data-frame-layout-root]')),
+              ),
+            )
+          )
+            return
+          window.clearTimeout(settle)
+          settle = window.setTimeout(() => {
+            settle = 0
+            settleLayout()
+          }, 250)
+        })
+      : undefined
+    if (admission && mountedWorld) admission.observe(mountedWorld, { childList: true, subtree: true })
     return () => {
       rememberPageCamera(useStore.getState(), cameraPage.current)
+      admission?.disconnect()
+      for (const wrapper of denseDocuments) {
+        wrapper.removeAttribute('data-cef-document-density')
+        wrapper.style.removeProperty('--cef-frame-density')
+      }
       unsub()
       window.clearTimeout(settle)
       window.clearTimeout(cameraIdleTimer)

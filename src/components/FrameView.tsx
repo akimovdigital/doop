@@ -49,7 +49,7 @@ import { FRAME_BOOTSTRAP } from '../lib/frameRuntime'
 import { canSnapshotFrame, type FrameSnapshots } from '../lib/frameSnapshots'
 import { MOD_KEY } from '../lib/keys'
 import { isDesktopShell } from '../lib/shell'
-import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY } from '../lib/layoutZoom'
+import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY, MAC_CHROMIUM_DESKTOP } from '../lib/layoutZoom'
 import { dropEntry, recordCreate, recordUpdate, recordUpdates, trackSave, type HistoryEntry } from '../lib/history'
 import { snapFrame, type SnapGuide } from '../lib/snap'
 import { visibleGuides } from '../lib/guides'
@@ -1124,10 +1124,10 @@ export const FrameView = memo(function FrameView({
            turn: the point is taken from the centre, turned with the frame */
         const box = iframe.getBoundingClientRect()
         const { width, height, rotation } = wheelFrameRef.current
-        /* Stage settles layout zoom directly on the world. Chromium measures
-           wheel deltas in document pixels at that density. */
+        /* Chromium measures wheel deltas in document pixels at the effective density. */
+        const densityProperty = MAC_CHROMIUM_DESKTOP ? '--cef-frame-density' : '--world-layout-zoom'
         const density = FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY
-          ? Number(getComputedStyle(iframe).getPropertyValue('--world-layout-zoom')) || 1
+          ? Number(getComputedStyle(iframe).getPropertyValue(densityProperty)) || 1
           : 1
         const zoom = useStore.getState().viewport.zoom
         const offset = rotateVector({ x: (x - width / 2) * zoom, y: (y - height / 2) * zoom }, rotation)

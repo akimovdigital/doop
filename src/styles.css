@@ -1511,6 +1511,13 @@ body[data-panel-resizing] * {
   will-change: transform;
 }
 
+/* Keep the iframe's screen box fixed while raising only its raster density.
+   Integer CSS zoom preserves the document's viewport in Chromium. */
+[data-cef-document-density] > iframe[data-doop-frame] {
+  zoom: var(--cef-frame-density);
+  transform: scale(calc(1 / var(--cef-frame-density)));
+}
+
 [data-html-browser-chrome] {
   --browser-bar-min: 244px;
 }

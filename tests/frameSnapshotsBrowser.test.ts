@@ -116,7 +116,21 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
     })
     expect(originalWidth).toBe(1200)
     await page.evaluate(() => window.canvasPageHarness.setCamera({ x: -26_400, y: -150, zoom: 2.5 }))
-    await page.waitForFunction(() => document.querySelector<HTMLElement>('.world')?.style.zoom === '3')
+    await page.waitForFunction(() => document.querySelector('[data-cef-document-density]'))
+    const densityAtCloseUp = await page.evaluate(() => ({
+      world: getComputedStyle(document.querySelector('.world')!).zoom,
+      distant: getComputedStyle(document.querySelector('[data-doop-frame-shell="live-0"] iframe')!).zoom,
+      details: [...document.querySelectorAll('[data-cef-document-density] iframe')].map(
+        (node) => getComputedStyle(node).zoom,
+      ),
+    }))
+    expect(densityAtCloseUp.world).toBe('1')
+    expect(densityAtCloseUp.distant).toBe('1')
+    expect(densityAtCloseUp.details).toContain('3')
+    expect(densityAtCloseUp.details.length).toBeLessThan(40)
+    const sharp = (await page.$('[data-doop-frame-shell="live-7"] [data-cef-document-density] iframe'))!
+    expect(await sharp.evaluate((node) => node.getBoundingClientRect().width)).toBeCloseTo(3000, 1)
+    expect(await (await sharp.contentFrame())!.evaluate(() => innerWidth)).toBe(1200)
     // The prior admission timer evicted offscreen iframes after two seconds.
     await new Promise((resolve) => setTimeout(resolve, 2_100))
     expect(await iframe.evaluate((node) => node.isConnected && node.getBoundingClientRect().right < 0)).toBe(true)
