@@ -1513,6 +1513,12 @@ body[data-panel-resizing] * {
   visibility: hidden;
 }
 
+/* Present paints a separate document. Keep the covered world mounted so
+   returning to the canvas preserves the camera and frame runtime state. */
+body:has([data-prototype-player]:not([data-minimized])) .stage[data-stage-presenting] .world {
+  content-visibility: hidden;
+}
+
 /* A decoded bitmap and the mounted iframe exchange visibility in one paint. */
 [data-frame-snapshot] {
   position: absolute;
@@ -1523,19 +1529,19 @@ body[data-panel-resizing] * {
   visibility: hidden;
 }
 
-[data-frame-snapshot-ready][data-frame-snapshot-waiting],
 :is(
-  .stage[data-frame-camera-moving] [data-frame-snapshot-ready],
+  [data-frame-snapshot-ready][data-frame-snapshot-waiting],
+  .stage[data-frame-camera-moving] [data-frame-snapshot-ready][data-frame-snapshot-sharp],
   .stage [data-frame-overview] [data-frame-snapshot-ready],
-  .stage [data-frame-snapshot-ready][data-frame-snapshot-tiny]
+  .stage [data-frame-snapshot-ready][data-frame-snapshot-sharp][data-frame-snapshot-tiny]
 ):not([data-frame-snapshot-blocked], [data-frame-snapshots-disabled] *) {
   visibility: visible;
 }
 
-[data-frame-snapshot-ready][data-frame-snapshot-waiting] + div > iframe[data-doop-frame],
 :is(
-    .stage[data-frame-camera-moving] [data-frame-snapshot-ready],
-    .stage [data-frame-snapshot-ready][data-frame-snapshot-tiny]
+    [data-frame-snapshot-ready][data-frame-snapshot-waiting],
+    .stage[data-frame-camera-moving] [data-frame-snapshot-ready][data-frame-snapshot-sharp],
+    .stage [data-frame-snapshot-ready][data-frame-snapshot-sharp][data-frame-snapshot-tiny]
   ):not([data-frame-snapshot-blocked], [data-frame-snapshots-disabled] *)
   + div
   > iframe[data-doop-frame] {
@@ -1545,7 +1551,7 @@ body[data-panel-resizing] * {
 /* A heavy overview can expose dozens of full-size layer trees at once.
    Keep the iframe and its state, but take its live layer out of the render tree. */
 [data-frame-overview]:not([data-frame-snapshots-disabled])
-  [data-frame-snapshot]:not([data-frame-snapshot-blocked])
+  [data-frame-snapshot-ready]:not([data-frame-snapshot-blocked])
   + div
   > iframe[data-doop-frame] {
   display: none;

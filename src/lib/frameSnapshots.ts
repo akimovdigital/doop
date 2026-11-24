@@ -78,7 +78,9 @@ export function canSnapshotFrame(
 const NEAR_PX = 180
 export const FRAME_SNAPSHOT_TINY_PX = 160
 export const FRAME_OVERVIEW_MAX_ZOOM = 0.06
-const MAX_BITMAP_EDGE = 640
+const MIN_BITMAP_DENSITY = 0.125
+const MAX_BITMAP_EDGE = 8192
+const MAX_BITMAP_PIXELS = 2_400_000
 const CAPTURE_TIMEOUT_MS = 4000
 const CAPTURE_DEADLINE = Symbol('snapshot deadline')
 const RETRY_DELAYS_MS = [3500, 7000]
@@ -90,12 +92,27 @@ type Slot = {
   retryAt: number
   near: boolean
   captured: boolean
+  density: number
+  requestedDensity: number
 }
 
 function resetAttempts(slot: Slot) {
   slot.attempts = 0
   slot.retryAt = 0
   slot.captured = false
+  slot.density = 0
+  slot.requestedDensity = 0
+}
+
+function snapshotDensity(frame: Frame, zoom: number, dpr: number) {
+  // The next bucket supplies headroom for small zoom gestures without
+  // repeatedly rasterizing the same document.
+  const desired = 2 ** Math.ceil(Math.log2(zoom * dpr * 1.25))
+  return Math.min(
+    Math.max(MIN_BITMAP_DENSITY, desired),
+    MAX_BITMAP_EDGE / Math.max(frame.width, frame.height),
+    Math.sqrt(MAX_BITMAP_PIXELS / (frame.width * frame.height)),
+  )
 }
 
 function finishAttempt(slot: Slot, retry: boolean) {
@@ -152,17 +169,28 @@ export class FrameSnapshots {
     this.zoom = viewport().zoom
     const motion = new MutationObserver(() => {
       if (!stage.hasAttribute('data-frame-camera-moving')) {
-        this.zoom = viewport().zoom
         for (const slot of this.ready) this.updateTiny(slot)
       }
       this.wake()
     })
     motion.observe(stage, { attributes: true, attributeFilter: ['data-frame-camera-moving'] })
+    const root = document.documentElement
+    let colorScheme = root.style.colorScheme
+    const theme = new MutationObserver(() => {
+      if (root.style.colorScheme === colorScheme) return
+      colorScheme = root.style.colorScheme
+      this.pending?.abort.abort()
+      this.cache.clear()
+      for (const slot of this.slots.values()) resetAttempts(slot)
+      this.wake()
+    })
+    theme.observe(root, { attributes: true, attributeFilter: ['style'] })
     const size = new ResizeObserver(() => this.wake())
     size.observe(stage)
     this.wake()
     return () => {
       motion.disconnect()
+      theme.disconnect()
       size.disconnect()
       this.stage = this.layer = this.viewport = undefined
       this.cancelIdle?.()
@@ -186,7 +214,16 @@ export class FrameSnapshots {
       slot.frame = frame
     } else {
       this.remove(frame.id)
-      this.slots.set(frame.id, { frame, image, attempts: 0, retryAt: 0, near: false, captured: false })
+      this.slots.set(frame.id, {
+        frame,
+        image,
+        attempts: 0,
+        retryAt: 0,
+        near: false,
+        captured: false,
+        density: 0,
+        requestedDensity: 0,
+      })
     }
     this.wake()
   }
@@ -201,9 +238,22 @@ export class FrameSnapshots {
     image.toggleAttribute('data-frame-snapshot-tiny', frame.width * this.zoom < FRAME_SNAPSHOT_TINY_PX)
   }
 
+  setZoom(zoom: number) {
+    if (this.zoom === zoom) return
+    const previous = this.zoom
+    this.zoom = zoom
+    const dpr = window.devicePixelRatio || 1
+    for (const { density, image } of this.ready) {
+      if (density >= previous * dpr !== density >= zoom * dpr) {
+        image.toggleAttribute('data-frame-snapshot-sharp', density >= zoom * dpr)
+      }
+    }
+  }
+
   private paused() {
     return (
       !this.stage ||
+      this.stage.hasAttribute('data-stage-presenting') ||
       this.stage.hasAttribute('data-frame-camera-moving') ||
       this.layer?.hasAttribute('data-frame-snapshots-disabled')
     )
@@ -247,8 +297,10 @@ export class FrameSnapshots {
       const right = left + box.width * zoom
       const bottom = top + box.height * zoom
       const near = right >= -NEAR_PX && bottom >= -NEAR_PX && left <= width + NEAR_PX && top <= height + NEAR_PX
-      // An evicted frame can get a fresh snapshot when the camera returns to it.
-      if (near && !slot.near && slot.captured && !this.ready.has(slot)) resetAttempts(slot)
+      const density = snapshotDensity(frame, zoom, window.devicePixelRatio || 1)
+      // A zoomed-out overview can afford thumbnails for frames evicted at
+      // a higher density, even if those frames remained near the camera.
+      if (near && slot.captured && !slot.density && (!slot.near || density < slot.requestedDensity)) resetAttempts(slot)
       slot.near = near
       if (!near) continue
       const area =
@@ -256,6 +308,11 @@ export class FrameSnapshots {
         Math.max(0, Math.min(height, bottom) - Math.max(0, top))
       if (area > 0) this.cache.touch(frame)
       if (image.hasAttribute('data-frame-snapshot-blocked')) continue
+      if (density > slot.requestedDensity && (!slot.density || density > slot.density)) {
+        slot.attempts = 0
+        slot.retryAt = 0
+        slot.requestedDensity = density
+      }
       if (slot.retryAt > now) {
         nextRetry = Math.min(nextRetry, slot.retryAt)
         continue
@@ -266,8 +323,10 @@ export class FrameSnapshots {
       )
       if (
         !next ||
-        slot.attempts < next.attempts ||
-        (slot.attempts === next.attempts && (area > bestArea || (area === bestArea && distance < bestDistance)))
+        Number(!!slot.density) < Number(!!next.density) ||
+        (!!slot.density === !!next.density &&
+          (slot.attempts < next.attempts ||
+            (slot.attempts === next.attempts && (area > bestArea || (area === bestArea && distance < bestDistance)))))
       ) {
         bestArea = area
         bestDistance = distance
@@ -289,7 +348,7 @@ export class FrameSnapshots {
     try {
       const { rasterizeFrame } = await import('./frameRaster')
       abort.signal.throwIfAborted()
-      const scale = Math.min(1, MAX_BITMAP_EDGE / Math.max(frame.width, frame.height))
+      const scale = slot.requestedDensity
       const blob = await rasterizeFrame(frame, {
         type: 'png',
         scale,
@@ -308,20 +367,25 @@ export class FrameSnapshots {
       if (this.paused() || image.hasAttribute('data-frame-snapshot-blocked')) return
 
       const cachedUrl = url
-      this.cache.delete(frame.id)
       image.src = cachedUrl
       this.cache.set(frame, {
         bytes: decoded.naturalWidth * decoded.naturalHeight * 4 + blob.size,
         dispose: () => {
-          this.ready.delete(slot)
-          image.removeAttribute('data-frame-snapshot-ready')
-          image.removeAttribute('src')
+          if (image.getAttribute('src') === cachedUrl) {
+            this.ready.delete(slot)
+            slot.density = 0
+            image.removeAttribute('data-frame-snapshot-ready')
+            image.removeAttribute('data-frame-snapshot-sharp')
+            image.removeAttribute('src')
+          }
           URL.revokeObjectURL(cachedUrl)
         },
       })
       url = undefined
       this.ready.add(slot)
       slot.captured = true
+      slot.density = scale
+      image.toggleAttribute('data-frame-snapshot-sharp', scale >= this.zoom * (window.devicePixelRatio || 1))
       this.updateTiny(slot)
       image.setAttribute('data-frame-snapshot-ready', `${started}:${performance.now()}`)
       finishAttempt(slot, resourceFailure)

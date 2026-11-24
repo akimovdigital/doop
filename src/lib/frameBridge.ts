@@ -288,7 +288,11 @@ export function forgetFrameAnimationPolicy(frameId: string) {
   // Hold the departing document until React unmounts it, leaving its filters as they are.
   const previous = frameAnimationPolicies.get(frameId)
   if (!previous?.paused) {
-    sendFrameAnimationPolicy(frameId, { paused: true, restIslands: true, simplifyFilters: previous?.simplifyFilters ?? false })
+    sendFrameAnimationPolicy(frameId, {
+      paused: true,
+      restIslands: true,
+      simplifyFilters: previous?.simplifyFilters ?? false,
+    })
   }
   frameAnimationPolicies.delete(frameId)
 }
@@ -494,7 +498,7 @@ interface BrowseCropSource {
   url: string
 }
 
-async function readBrowseCropResource(source: BrowseCropSource, url: string, signal: AbortSignal) {
+export async function readBrowseCropResource(source: BrowseCropSource, url: string, signal: AbortSignal) {
   const page = URL.parse(source.url)
   const asset = URL.parse(url)
   if (!page || !asset || asset.origin !== page.origin || !/^https?:$/.test(asset.protocol)) return null

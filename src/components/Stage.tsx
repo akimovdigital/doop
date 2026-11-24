@@ -1488,11 +1488,12 @@ export function Stage({
           <div
             ref={ref}
             data-frame-panning={panning || panMode || undefined}
+            data-stage-presenting={presenting || undefined}
             /* `stage` is a behaviour hook, not a style: frameClipboard.ts queries
            `.stage` to map screen coordinates into the canvas. No CSS is
            attached to it — everything visual is in the utilities beside it. */
             className={cn(
-              'stage absolute inset-0 touch-none',
+              'stage absolute inset-0 isolate touch-none overflow-clip',
               panning
                 ? 'cursor-grabbing! [&_*]:cursor-grabbing!'
                 : panMode || tool === 'hand'
@@ -1843,7 +1844,7 @@ function FrameStack({
   const layer = useRef<HTMLDivElement>(null)
   const [snapshots] = useState(() => new FrameSnapshots())
   const prototypeMode = useStore((s) => s.prototypeMode)
-  const snapshotsDisabled = presenting || prototypeMode || (uiHidden && !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY)
+  const snapshotsDisabled = prototypeMode || (uiHidden && !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY)
   const heavyPage = useMemo(
     () =>
       SUPPORTS_FRAME_OVERVIEW &&
@@ -1861,9 +1862,16 @@ function FrameStack({
     const root = layer.current
     const target = stage.current ?? root?.closest<HTMLElement>('.stage')
     if (!root || !target) return
-    return snapshots.connect(root, target, () => useStore.getState().viewport)
+    const disconnect = snapshots.connect(root, target, () => useStore.getState().viewport)
+    const unsubscribe = useStore.subscribe((state, previous) => {
+      if (state.viewport.zoom !== previous.viewport.zoom) snapshots.setZoom(state.viewport.zoom)
+    })
+    return () => {
+      unsubscribe()
+      disconnect()
+    }
   }, [snapshots, stage])
-  useLayoutEffect(() => snapshots.wake(), [snapshots, snapshotsDisabled])
+  useLayoutEffect(() => snapshots.wake(), [snapshots, snapshotsDisabled, presenting])
   const compactSectionTitles = useStore((s) => s.selectedSectionId !== null && s.viewport.zoom <= 0.05)
   return (
     <div

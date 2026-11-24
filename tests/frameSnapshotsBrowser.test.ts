@@ -102,7 +102,7 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
       await page.waitForSelector(`[data-doop-frame-shell="${id}"] img[data-frame-snapshot-ready]`, { visible: true })
       expect(await page.$(`[data-doop-frame-shell="${id}"] iframe[data-doop-frame]`)).toBeNull()
     }
-    expect(await live!.evaluate((iframe) => getComputedStyle(iframe).display)).toBe('none')
+    await page.waitForFunction((iframe) => getComputedStyle(iframe).display === 'none', {}, live!)
 
     await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 30, y: 105, zoom: 0.57 }))
     await page.waitForFunction(() => {
@@ -110,6 +110,36 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
       return frame && getComputedStyle(frame).visibility === 'visible'
     })
     expect(await child!.evaluate(() => document.querySelector('input')!.value)).toBe('kept')
+  })
+
+  it('preserves dark root rules and increases cached density as the camera zooms in', async () => {
+    const page = await pages.open()
+    await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 })
+    const dark = {
+      ...sample,
+      html: `<!doctype html><html data-theme="dark"><style>
+        :root { --page: white }
+        :root[data-theme="dark"] { --page: #102030 }
+        body { margin: 0; background: var(--page) }
+        </style><body><p>Dark frame</p></body></html>`,
+    }
+    const far = canvasFrame({ id: 'far', name: 'Far', x: 28000, y: 0, width: 4000, height: 12000 })
+    await openCanvasPage(page, [dark, far])
+    const setZoom = (zoom: number) =>
+      page.evaluate((zoom) => window.canvasPageHarness.setCamera({ x: 240, y: 160, zoom }), zoom)
+    await setZoom(0.1)
+    const image = await page.waitForSelector('img[data-frame-snapshot-ready]')
+    const low = await image!.evaluate((node) => node.naturalWidth)
+    await setZoom(0.5)
+    await page.waitForFunction((image, width) => image.naturalWidth > width, {}, image!, low)
+    expect(await image!.evaluate((node) => node.naturalWidth)).toBeGreaterThanOrEqual(dark.width)
+    const color = await image!.evaluate((node) => {
+      const canvas = document.createElement('canvas')
+      const context = canvas.getContext('2d')!
+      context.drawImage(node, 0, 0)
+      return [...context.getImageData(120, 70, 1, 1).data]
+    })
+    expect(color).toEqual([16, 32, 48, 255])
   })
 
   it('paints the same pixels as the live-only view at rest above the size cutoff', async () => {

@@ -1,6 +1,7 @@
 import type { Frame } from '../../shared/types'
+import { importedPageSource } from '../../shared/importSource'
 import { colorAlpha } from './cssValues'
-import { computedStyles, hasFrameDocument, snapshotFrame } from './frameBridge'
+import { computedStyles, hasFrameDocument, readBrowseCropResource, snapshotFrame } from './frameBridge'
 
 /**
  * Render a frame to an image in this browser: the document is inlined into
@@ -67,6 +68,7 @@ export async function rasterizeFrame(frame: Frame, opts: RasterOptions): Promise
     height: frame.height,
     signal,
     preview: opts.preview,
+    canvasId: frame.canvasId,
     previewScale: shrinkDecoder ? opts.scale : undefined,
   })
   signal.throwIfAborted()
@@ -166,6 +168,7 @@ interface InlineOptions {
   height: number
   signal: AbortSignal
   preview?: RasterOptions['preview']
+  canvasId?: string
   previewScale?: number
   /** the part of the document the SVG shows, by its viewBox; all of it when unset */
   clip?: ClipRect
@@ -233,7 +236,8 @@ class FrameViewport {
         if (range === 'max-') return actual <= threshold
         return actual === threshold
       }
-      if (!VIEWPORT_MEDIA_FEATURE.test(condition)) return window.matchMedia(condition).matches
+      if (!VIEWPORT_MEDIA_FEATURE.test(condition) && !/prefers-color-scheme/i.test(condition))
+        return window.matchMedia(condition).matches
     }
     return this.window().matchMedia(condition).matches
   }
@@ -356,10 +360,11 @@ export async function inlineDocument(html: string, opts: InlineOptions): Promise
   const base = new URL(doc.querySelector('base[href]')?.getAttribute('href') ?? '', document.baseURI).href
   // SVG media queries and viewport units see the decoder's pixel size,
   // even when the foreignObject is laid out in the viewBox's coordinates.
-  const scaledPreview = opts.previewScale !== undefined && opts.previewScale < 1
-  const viewport = opts.standalone || scaledPreview ? new FrameViewport(opts, scaledPreview) : null
+  const viewport = opts.standalone || opts.preview ? new FrameViewport(opts, !!opts.preview) : null
+  const sourceUrl = importedPageSource(html) ?? doc.querySelector('link[rel="canonical"]')?.getAttribute('href')
+  const source = opts.preview && opts.canvasId && sourceUrl ? { canvasId: opts.canvasId, url: sourceUrl } : undefined
   try {
-    return await inlineInto(doc, base, new ResourceCache(opts.signal, viewport, opts.preview), viewport, opts)
+    return await inlineInto(doc, base, new ResourceCache(opts.signal, viewport, opts.preview, source), viewport, opts)
   } finally {
     viewport?.dispose()
   }
@@ -372,6 +377,7 @@ async function inlineInto(
   viewport: FrameViewport | null,
   opts: InlineOptions,
 ): Promise<string> {
+  doc.documentElement.setAttribute('data-doop-raster-root', '')
   const units = (css: string) => viewport?.units(css) ?? css
   const settleMedia = (css: string) => viewport?.media(css) ?? css
 
@@ -481,6 +487,16 @@ const CSS_URL = /url\(\s*(['"]?)([^'")]+)\1\s*\)/gi
 const PREVIEW_CSS_URL = /(@import\s+)?url\(\s*(['"]?)([^'")]+)\2\s*\)/gi
 /* `@import "x.css"` is `@import url("x.css")` without the function */
 const CSS_IMPORT_STRING = /@import\s+(['"])([^'"]+)\1/gi
+/* In a foreignObject the SVG, rather than the embedded HTML, is :root.
+   Keep the selector's specificity and leave quoted values, comments and
+   URLs intact. Imported styles use the same pass as inline styles. */
+const CSS_DOCUMENT_ROOT =
+  /(\/\*[\s\S]*?\*\/|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|url\([^)]*\)|\\[\s\S])|:root(?![\w-])/gi
+
+function pinDocumentRoot(css: string): string {
+  if (!/:root/i.test(css)) return css
+  return css.replace(CSS_DOCUMENT_ROOT, (_, literal: string | undefined) => literal ?? '[data-doop-raster-root]')
+}
 
 /** Every `url(...)` in `css` that points off the document becomes a data:
  *  URL; a stylesheet it imports is inlined the same way, recursively.
@@ -493,7 +509,7 @@ async function inlineCssUrls(
   chain: ReadonlySet<string> = new Set(),
 ): Promise<string> {
   resources.signal.throwIfAborted()
-  css = css.replace(CSS_IMPORT_STRING, '@import url("$2")')
+  css = pinDocumentRoot(css).replace(CSS_IMPORT_STRING, '@import url("$2")')
   if (resources.preview) {
     const matches = new Map([...css.matchAll(PREVIEW_CSS_URL)].map((match) => [match[0], match]))
     const entries = await Promise.all(
@@ -528,7 +544,7 @@ function isInlineUrl(ref: string): boolean {
   return /^(data:|#|about:)/i.test(ref)
 }
 
-const PREVIEW_FETCH_MS = 1_500
+const PREVIEW_FETCH_MS = 2_500
 const PREVIEW_FAILURE_TTL_MS = 3_000
 const PREVIEW_RESOURCE_TTL_MS = 60_000
 const PREVIEW_RESOURCE_BYTES = 16 * 1024 * 1024
@@ -553,7 +569,11 @@ function fetchBlob(url: string, signal: AbortSignal): Promise<Blob> {
   })
 }
 
-async function previewBlob(url: string, signal: AbortSignal): Promise<Blob | null> {
+async function previewBlob(
+  url: string,
+  signal: AbortSignal,
+  source?: Parameters<typeof readBrowseCropResource>[0],
+): Promise<Blob | null> {
   signal.throwIfAborted()
   const hit = previewResources.get(url)
   if (hit) {
@@ -569,6 +589,7 @@ async function previewBlob(url: string, signal: AbortSignal): Promise<Blob | nul
   const timer = window.setTimeout(() => resource.abort(), PREVIEW_FETCH_MS)
   signal.addEventListener('abort', cancel, { once: true })
   const blob = await fetchBlob(url, resource.signal)
+    .catch(() => (source && !resource.signal.aborted ? readBrowseCropResource(source, url, resource.signal) : null))
     .catch(() => null)
     .finally(() => {
       window.clearTimeout(timer)
@@ -598,12 +619,13 @@ class ResourceCache {
     /** settles each imported stylesheet as `inlineDocument` does the page's */
     private readonly viewport: FrameViewport | null = null,
     readonly preview?: RasterOptions['preview'],
+    private readonly source?: Parameters<typeof readBrowseCropResource>[0],
   ) {}
 
   private async blob(url: string): Promise<Blob | null> {
     let pending = this.pending.get(url)
     if (!pending) {
-      pending = this.preview ? previewBlob(url, this.signal) : fetchBlob(url, this.signal)
+      pending = this.preview ? previewBlob(url, this.signal, this.source) : fetchBlob(url, this.signal)
       this.pending.set(url, pending)
     }
     const blob = await pending
