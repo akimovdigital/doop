@@ -76,7 +76,8 @@ import {
   inspirationSearchEnabled,
   searchInspiration,
 } from './inspiration.ts'
-import { ESCAPED_HTML_NOTE, looksEscapedHtml } from './escapedHtml.ts'
+import { ESCAPED_HTML_NOTE, looksEscapedHtml, repairEscapedHtml } from './escapedHtml.ts'
+import { classifyHtmlExpense } from './htmlExpense.ts'
 import { describeSyncFlow, getSyncFlow } from './ingest.ts'
 import * as assets from './assets.ts'
 import { uploadCap } from './entitlements.ts'
@@ -210,6 +211,11 @@ function withComponentNotes<T extends ToolContent>(result: T, frame: Frame, opti
 /** Notes right after the result's data, ahead of the generic nudges: they name the call to make. */
 function withNotesFirst<T extends ToolContent>(result: T, notes: string[]): T {
   result.content.splice(1, 0, ...notes.map((note) => ({ type: 'text' as const, text: note })))
+  return result
+}
+
+function withExpenseNotes<T extends ToolContent>(result: T, html: string): T {
+  for (const note of classifyHtmlExpense(html).notes) result.content.push({ type: 'text', text: note })
   return result
 }
 
@@ -1568,7 +1574,11 @@ export function buildMcpServer(owner?: string, ownerId?: string, clientName?: st
         { review: frame.html.length > 0 },
       )
       return withGuidelinesNudge(
-        withStatusNudge(withFeedback(result, canvas_id, actorFrom(agent_name)), canvas_id, actorFrom(agent_name)),
+        withStatusNudge(
+          withFeedback(withExpenseNotes(result, repairEscapedHtml(html)), canvas_id, actorFrom(agent_name)),
+          canvas_id,
+          actorFrom(agent_name),
+        ),
         canvas_id,
         actorFrom(agent_name),
       )
@@ -1633,10 +1643,13 @@ export function buildMcpServer(owner?: string, ownerId?: string, clientName?: st
         withGuidelinesNudge(
           withStatusNudge(
             withFeedback(
-              withComponentNotes(
-                withEscapeNote(textWithNudge({ ok: true, frame: frameSummary(frame) }, REVIEW_NUDGE), html),
-                frame,
-                { review: true },
+              withExpenseNotes(
+                withComponentNotes(
+                  withEscapeNote(textWithNudge({ ok: true, frame: frameSummary(frame) }, REVIEW_NUDGE), html),
+                  frame,
+                  { review: true },
+                ),
+                repairEscapedHtml(html),
               ),
               frame.canvasId,
               actorFrom(agent_name),
@@ -2527,7 +2540,11 @@ export function buildMcpServer(owner?: string, ownerId?: string, clientName?: st
         ? withGuidelinesNudge(withEscapeNote(result, html_chunk), frame.canvasId, actorFrom(agent_name))
         : result
       return withStatusNudge(
-        withFeedback(nudged, frame.canvasId, actorFrom(agent_name)),
+        withFeedback(
+          withExpenseNotes(nudged, start ? repairEscapedHtml(html_chunk) : html_chunk),
+          frame.canvasId,
+          actorFrom(agent_name),
+        ),
         frame.canvasId,
         actorFrom(agent_name),
       )
@@ -2561,7 +2578,10 @@ export function buildMcpServer(owner?: string, ownerId?: string, clientName?: st
       return withPreview(
         withStatusNudge(
           withFeedback(
-            withComponentNotes(textWithNudge({ ok: true, frame: frameSummary(frame) }, REVIEW_NUDGE), frame),
+            withExpenseNotes(
+              withComponentNotes(textWithNudge({ ok: true, frame: frameSummary(frame) }, REVIEW_NUDGE), frame),
+              repairEscapedHtml(edited.html),
+            ),
             frame.canvasId,
             actorFrom(agent_name),
           ),

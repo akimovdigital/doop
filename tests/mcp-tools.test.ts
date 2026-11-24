@@ -8,7 +8,12 @@ import { RESIDENT_TOOLS } from '../server/resident.ts'
 import { MAX_DECISION_CHARS } from '../shared/designDecisions.ts'
 import packageJson from '../package.json' with { type: 'json' }
 
-vi.mock('../server/db/persist.ts', () => ({ saveCanvas: () => {}, saveFrame: () => {}, saveActivity: () => {} }))
+vi.mock('../server/db/persist.ts', () => ({
+  saveCanvas: () => {},
+  saveFrame: () => {},
+  saveActivity: () => {},
+  saveTask: () => {},
+}))
 
 interface ToolInputSchema {
   properties?: Record<string, unknown>
@@ -576,6 +581,49 @@ it('update_frame normalizes and clears rotation while retaining page validation'
     expect(straight.isError).not.toBe(true)
     expect(body(straight).frame).not.toHaveProperty('rotation')
     expect(frame).toHaveProperty('rotation', undefined)
+  } finally {
+    await close()
+  }
+})
+
+it('adds advisory performance notes to all four HTML writes and retains the authored declarations', async () => {
+  const canvas = { id: 'mcp-html-expense', ownerId: 'test-owner-id', name: 'Expense', frames: [] }
+  const { client, close, body } = await pagesClient(canvas)
+  const write = (name: string, args: Record<string, unknown>) =>
+    client.callTool({ name, arguments: { ...args, agent_name: 'Agent' } })
+  const hasBlurNote = (result: Awaited<ReturnType<Client['callTool']>>, radius: number) => {
+    expect(result.isError).toBeFalsy()
+    expect(result.content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'text', text: expect.stringContaining('blur ' + radius + 'px') }),
+      ]),
+    )
+  }
+
+  try {
+    const created = await write('create_frame', {
+      canvas_id: canvas.id,
+      name: 'Artboard',
+      html: '<style>.created{filter: blur(19px)}</style>',
+    })
+    hasBlurNote(created, 19)
+    const { id: frame_id } = body(created).frame as { id: string }
+
+    const replacement = '<style>.replacement{filter: blur(27px)}</style><div class="replacement">Copy</div>'
+    hasBlurNote(await write('set_frame_html', { frame_id, html: replacement }), 27)
+    hasBlurNote(await write('edit_frame_html', { frame_id, old_str: '27px', new_str: '37px' }), 37)
+    expect(body(await write('get_frame', { frame_id })).html).toContain('.replacement{filter: blur(37px)}')
+
+    await write('append_frame_html', { frame_id, html_chunk: '<main>Stream</main>', start: true })
+    hasBlurNote(
+      await write('append_frame_html', {
+        frame_id,
+        html_chunk: '<aside style="backdrop-filter: blur(42px)">Glass</aside>',
+        done: true,
+      }),
+      42,
+    )
+    expect(body(await write('get_frame', { frame_id })).html).toContain('backdrop-filter: blur(42px)')
   } finally {
     await close()
   }
