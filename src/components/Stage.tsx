@@ -403,6 +403,7 @@ export function Stage({
      transform, grid layer, --zoom (which counter-scales labels/pins/cursors),
      and zoom pill. This keeps camera painting off the Stage render path. */
   useLayoutEffect(() => {
+    const stage = ref.current
     let lastPaintedZoom: number | undefined
     let lastPixelGridOpacity: number | undefined
     let lastDotOpacity: number | undefined
@@ -428,6 +429,7 @@ export function Stage({
         lastDotOpacity = dotOpacity
       }
       if (zoomChanged) {
+        if (MAC_CHROMIUM_DESKTOP) stage?.toggleAttribute('data-cef-live-overview', vp.zoom <= FRAME_OVERVIEW_MAX_ZOOM)
         /* Scope inherited zoom to the world and the screen-space badge layer. */
         const zoom = String(vp.zoom)
         world.style.setProperty('--zoom', zoom)
@@ -568,7 +570,6 @@ export function Stage({
             saveDesktopPageCamera(history, { canvasId, pageId, viewport: state.viewport })
           }, 500)
         : null
-    const stage = ref.current
     const mountedWorld = worldRef.current
     const unsub = useStore.subscribe((s, prev) => {
       if (
@@ -676,6 +677,7 @@ export function Stage({
       window.clearTimeout(cameraIdleTimer)
       window.clearTimeout(overviewPaperTimer)
       stage?.removeAttribute('data-cef-overview-paper')
+      stage?.removeAttribute('data-cef-live-overview')
       cancelAnimationFrame(rezoomRaf)
       if (mountedWorld) delete mountedWorld.dataset.rezoom
       stage?.removeAttribute('data-frame-camera-moving')

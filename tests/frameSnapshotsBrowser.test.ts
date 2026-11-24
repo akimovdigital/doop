@@ -148,7 +148,7 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
         {
           id: 'overview',
           name: 'Overview',
-          sections: [{ id: 'initial-view', name: 'Initial view', x: 0, y: 0, width: 13_800, height: 9_900 }],
+          sections: [{ id: 'initial-view', name: 'Initial view', x: 0, y: 0, width: 13_800, height: 11_200 }],
           landingSectionId: 'initial-view',
         },
       ],
@@ -158,7 +158,15 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
     expect(await page.$$('[data-frame-snapshot]')).toHaveLength(0)
     expect(await page.$('[data-doop-frame-shell="distant"] iframe')).toBeNull()
 
+    const admitted = await page.evaluateHandle(() => [...document.querySelectorAll('iframe[data-doop-frame]')])
     const iframe = (await page.$('[data-doop-frame-shell="live-0"] iframe'))!
+    expect(await page.evaluate(() => window.canvasPageHarness.camera().zoom)).toBeLessThanOrEqual(0.06)
+    expect(
+      await iframe.evaluate((node) => ({
+        visibility: getComputedStyle(node).contentVisibility,
+        containment: getComputedStyle(node).contain,
+      })),
+    ).toEqual({ visibility: 'visible', containment: 'content' })
     const child = (await iframe.contentFrame())!
     await child.waitForSelector('input')
     const originalWidth = await child.evaluate(() => {
@@ -167,7 +175,7 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
       return innerWidth
     })
     expect(originalWidth).toBe(1200)
-    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: -26_400, y: -150, zoom: 2.5 }))
+    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: -24_400, y: 100, zoom: 2.5 }))
     await page.waitForFunction(() => document.querySelector('[data-cef-document-density]'))
     const densityAtCloseUp = await page.evaluate(() => ({
       world: getComputedStyle(document.querySelector('.world')!).zoom,
@@ -182,7 +190,11 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
     expect(densityAtCloseUp.details.length).toBeLessThan(40)
     const sharp = (await page.$('[data-doop-frame-shell="live-7"] [data-cef-document-density] iframe'))!
     expect(await sharp.evaluate((node) => node.getBoundingClientRect().width)).toBeCloseTo(3000, 1)
-    expect(await (await sharp.contentFrame())!.evaluate(() => innerWidth)).toBe(1200)
+    const sharpChild = (await sharp.contentFrame())!
+    expect(await sharpChild.evaluate(() => innerWidth)).toBe(1200)
+    expect(await sharp.evaluate((node) => getComputedStyle(node).contentVisibility)).toBe('auto')
+    await sharpChild.focus('input')
+    expect(await sharp.evaluate((node) => document.activeElement === node)).toBe(true)
     // The prior admission timer evicted offscreen iframes after two seconds.
     await new Promise((resolve) => setTimeout(resolve, 2_100))
     expect(await iframe.evaluate((node) => node.isConnected && node.getBoundingClientRect().right < 0)).toBe(true)
@@ -195,6 +207,8 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
         return getComputedStyle(node.closest('[data-frame-surface]')!, '::before').backgroundColor
       }),
     ).toBe('rgb(240, 240, 240)')
+    expect(await iframe.evaluate((node) => getComputedStyle(node).contentVisibility)).toBe('visible')
+    expect(await sharp.evaluate((node) => document.activeElement === node)).toBe(true)
     // A child animation callback can arrive before the desktop compositor
     // produces the new frame. Keep that gap neutral, then restore white paper.
     await page.waitForFunction((frame) => !frame.closest('[data-frame-repainting]'), {}, iframe)
@@ -218,6 +232,28 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
         width: innerWidth,
       })),
     ).toEqual({ value: 'kept', scroll: 120, width: originalWidth })
+    for (const [zoom, visibility, containment] of [
+      [0.02, 'visible', 'content'],
+      [0.06, 'visible', 'content'],
+      [0.061, 'auto', 'none'],
+    ] as const) {
+      expect(
+        await sharp.evaluate((node, nextZoom) => {
+          window.canvasPageHarness.setCamera({ x: 100, y: 100, zoom: nextZoom })
+          const style = getComputedStyle(node)
+          return {
+            visibility: style.contentVisibility,
+            containment: style.contain,
+            focused: document.activeElement === node,
+          }
+        }, zoom),
+      ).toEqual({ visibility, containment, focused: true })
+    }
+    expect(await sharpChild.evaluate(() => document.activeElement?.tagName)).toBe('INPUT')
+    expect(await admitted.evaluate((nodes) => nodes.length === 40 && nodes.every((node) => node.isConnected))).toBe(
+      true,
+    )
+    expect(await page.$$('iframe[data-doop-frame]')).toHaveLength(40)
     expect(await page.$$('[data-frame-snapshot]')).toHaveLength(0)
   })
 

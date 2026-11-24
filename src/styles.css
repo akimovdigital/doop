@@ -1518,6 +1518,17 @@ body[data-panel-resizing] * {
   transform: scale(calc(1 / var(--cef-frame-density)));
 }
 
+iframe[data-frame-content-auto] {
+  content-visibility: auto;
+}
+
+/* Paint admitted documents in overview without waiting for Blink's auto
+   visibility check. Preserve the layout, style and paint containment. */
+.stage[data-cef-live-overview] [data-frame-layout-root] > iframe[data-frame-content-auto] {
+  content-visibility: visible;
+  contain: content;
+}
+
 /* The live iframe draws over this paper as soon as Chromium repaints it. */
 [data-frame-repainting]::before,
 .stage[data-cef-overview-paper] [data-frame-surface]::before {

@@ -2562,6 +2562,7 @@ export const FrameView = memo(function FrameView({
                   data-bleed={bleed || undefined}
                   title={frame.name}
                   data-doop-frame=""
+                  data-frame-content-auto={editing || interacting || selected ? undefined : ''}
                   tabIndex={editing || interacting ? 0 : -1}
                   sandbox="allow-scripts"
                   srcDoc={FRAME_BOOTSTRAP}
@@ -2582,7 +2583,6 @@ export const FrameView = memo(function FrameView({
                       ? null
                       : { zoom: 'var(--frame-counter-zoom, 1)', transform: 'scale(var(--world-layout-zoom, 1))' }),
                     transformOrigin: '0 0',
-                    contentVisibility: editing || interacting || selected ? 'visible' : 'auto',
                     /* Chromium paints an opaque backdrop behind an iframe whose
                    colour scheme differs from its document's; the page's dark
                    scheme reaches this element by inheritance while a
