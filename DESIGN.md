@@ -96,7 +96,8 @@ two animation callbacks. A camera jump from 100% or more to the overview (6% or 
 neutral paper under those live frames for 1.5 seconds, while the browser catches up with the new
 viewport. The iframe draws as soon as the browser paints it. Transparent artboards return to
 white paper after the guard. On a wide macOS Chromium overview, at most two new visible documents
-start per animation tick.
+start per animation tick until a boot slot is freed. Subsequent ticks can start up to three while
+the same in-flight document and HTML limits apply.
 Present opens the interactive prototype player. See `src/components/frameAdmission.ts`,
 `src/components/Stage.tsx` and `src/components/FrameView.tsx`.
 
