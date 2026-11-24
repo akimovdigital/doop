@@ -551,6 +551,7 @@ export function Stage({
     apply(useStore.getState().viewport)
     let settle = 0
     let cameraIdleTimer = 0
+    let overviewPaperTimer = 0
     const saveForDesktopReload =
       desktopPlatform() === 'macos' && !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY
         ? throttle((canvasId: string, pageId: string) => {
@@ -598,6 +599,21 @@ export function Stage({
         if (s.viewport.zoom !== prev.viewport.zoom) {
           if (stage.getAttribute('data-frame-camera-moving') !== 'zoom')
             stage.setAttribute('data-frame-camera-moving', 'zoom')
+          if (MAC_CHROMIUM_DESKTOP) {
+            if (s.viewport.zoom > FRAME_OVERVIEW_MAX_ZOOM && overviewPaperTimer) {
+              window.clearTimeout(overviewPaperTimer)
+              overviewPaperTimer = 0
+              stage.removeAttribute('data-cef-overview-paper')
+            } else if (prev.viewport.zoom >= 1 && s.viewport.zoom <= FRAME_OVERVIEW_MAX_ZOOM) {
+              // Child animation callbacks can precede the desktop compositor's
+              // new surface after a large jump. Guard only the paper below it.
+              stage.setAttribute('data-cef-overview-paper', '')
+              overviewPaperTimer = window.setTimeout(() => {
+                overviewPaperTimer = 0
+                stage.removeAttribute('data-cef-overview-paper')
+              }, 1500)
+            }
+          }
         } else if (!cameraIdleTimer) {
           stage.setAttribute('data-frame-camera-moving', '')
         }
@@ -653,6 +669,8 @@ export function Stage({
       unsub()
       window.clearTimeout(settle)
       window.clearTimeout(cameraIdleTimer)
+      window.clearTimeout(overviewPaperTimer)
+      stage?.removeAttribute('data-cef-overview-paper')
       cancelAnimationFrame(rezoomRaf)
       if (mountedWorld) delete mountedWorld.dataset.rezoom
       stage?.removeAttribute('data-frame-camera-moving')

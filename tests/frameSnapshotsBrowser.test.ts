@@ -195,6 +195,10 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
         return getComputedStyle(node.closest('[data-frame-surface]')!, '::before').backgroundColor
       }),
     ).toBe('rgb(240, 240, 240)')
+    // A child animation callback can arrive before the desktop compositor
+    // produces the new frame. Keep that gap neutral, then restore white paper.
+    await page.waitForFunction((frame) => !frame.closest('[data-frame-repainting]'), {}, iframe)
+    expect(await paper()).toBe('rgb(240, 240, 240)')
     await page.waitForFunction(
       (frame) =>
         getComputedStyle(frame.closest('[data-frame-surface]')!, '::before').backgroundColor === 'rgb(255, 255, 255)',

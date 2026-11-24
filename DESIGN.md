@@ -92,8 +92,11 @@ loads, its surface uses `--sub` (#f7f7f7 light, #242424 dark). Once ready, trans
 artboard paper. The floating HTML frame toolbar is temporarily opt-in with `doop:html-frame-toolbar`.
 On macOS Chromium, a previously visible HTML frame returning to view uses
 `--paper-deep` (#f0f0f0 light, #2a2a2a dark) behind the live document until its runtime reports
-two animation callbacks. The existing iframe draws immediately when the browser repaints it. On a wide macOS Chromium
-overview, at most two new visible documents start per animation tick.
+two animation callbacks. A camera jump from 100% or more to the overview (6% or less) keeps the
+neutral paper under those live frames for 1.5 seconds, while the browser catches up with the new
+viewport. The iframe draws as soon as the browser paints it. Transparent artboards return to
+white paper after the guard. On a wide macOS Chromium overview, at most two new visible documents
+start per animation tick.
 Present opens the interactive prototype player. See `src/components/frameAdmission.ts`,
 `src/components/Stage.tsx` and `src/components/FrameView.tsx`.
 

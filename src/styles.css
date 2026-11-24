@@ -1519,7 +1519,8 @@ body[data-panel-resizing] * {
 }
 
 /* The live iframe draws over this paper as soon as Chromium repaints it. */
-[data-frame-repainting]::before {
+[data-frame-repainting]::before,
+.stage[data-cef-overview-paper] [data-frame-surface]::before {
   background-color: var(--paper-deep);
 }
 
