@@ -26,6 +26,10 @@
             .setCanvas({ id: canvasId, name: 'Canvas', frames, role: 'edit', createdAt: 0, updatedAt: 0, ...canvas }),
         setPages: (pages) => useStore.getState().setPages(pages, canvasId),
         camera: () => useStore.getState().viewport,
+        frameState: (id) => {
+          const { canvas, activePageId, selectedId } = useStore.getState()
+          return { frame: canvas?.frames.find((frame) => frame.id === id), activePageId, selectedId }
+        },
         select: (id) => useStore.getState().select(id),
         setCamera: (viewport) => useStore.getState().setViewport(viewport),
         componentTypes: { stage: Stage, frame: FrameView },

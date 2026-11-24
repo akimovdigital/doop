@@ -8,7 +8,8 @@ declare global {
       seed: (frames: Frame[], canvas?: Partial<Canvas>) => void
       /** the page list as the room would send it after someone's edit */
       setPages: (pages: CanvasPageInfo[]) => void
-      camera: () => { zoom: number }
+      camera: () => { x: number; y: number; zoom: number }
+      frameState: (id: string) => { frame?: Frame; activePageId: string | null; selectedId: string | null }
       select: (id: string | null) => void
       setCamera: (viewport: { x: number; y: number; zoom: number }) => void
       componentTypes: { stage: unknown; frame: unknown }

@@ -12,6 +12,9 @@ const SHELL = '[data-doop-frame-shell="landing"]'
 const SURFACE = `${SHELL} [data-frame-surface]`
 const ACTIVE = '[data-html-frame-active]'
 const SIDE = '[data-browser-surface="side"]:popover-open'
+const IMPORT_PATH = '/api/canvases/c/import'
+const IMPORT_HTML =
+  '<!doctype html><html><head><style>body{margin:8px}h1{width:max-content;font:16px system-ui}</style></head><body><h1>Editable import</h1></body></html>'
 const VISUAL = process.env.DOOP_FRAME_CHROME_VISUAL
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO/aZl8AAAAASUVORK5CYII=',
@@ -41,7 +44,6 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', { timeout: 30_0
   const pages = pagePerTest()
   let page: Page
   let frames: Frame[]
-  let importBody: unknown
   let uploads = 0
 
   beforeEach(async () => {
@@ -49,7 +51,6 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', { timeout: 30_0
     await page.setViewport({ width: 1440, height: 950 })
     page.setDefaultTimeout(6000)
     frames = []
-    importBody = null
     uploads = 0
     await page.evaluateOnNewDocument(() => {
       if (window === window.top) localStorage.setItem('doop:html-frame-toolbar', '1')
@@ -104,18 +105,19 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', { timeout: 30_0
         body = { ...canvasFrame({ id: 'capture', name: 'Capture', x: 0, y: 0, width: 1, height: 1 }), ...input }
         frames.push(body as Frame)
       }
-      if (pathname === '/api/canvases/c/import' && request.method() === 'POST') {
+      if (pathname === IMPORT_PATH && request.method() === 'POST') {
         const input = JSON.parse(request.postData()!) as {
           url: string
           placement: { x: number; y: number; pageId: string }
         }
-        importBody = input
-        body = {
+        const created = {
           ...canvasFrame({ id: 'imported', name: 'Imported', x: 0, y: 0, width: 500, height: 300 }),
           ...input.placement,
-          html: '<!doctype html><h1>Editable import</h1>',
-        }
-        frames.push(body as Frame)
+          html: IMPORT_HTML,
+          z: 1,
+        } satisfies Frame
+        frames.push(created)
+        body = created
       }
       const frame = frames.find((entry) => pathname === `/api/frames/${entry.id}`)
       if (frame && request.method() === 'PATCH') {
@@ -373,11 +375,48 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', { timeout: 30_0
     ])
     await page.click('[data-browser-shield]')
     const controls = '[data-canvas-browser-chrome="browser"] .browser-under-bar'
-    await page.waitForSelector(controls)
+    await page.waitForSelector(controls, { visible: true })
     expect(await page.$(`${controls} button[aria-label="Pick element"]`)).toBeNull()
-    await page.locator(`${controls} button::-p-text(Import)`).click()
-    await page.waitForSelector('[data-doop-frame-shell="imported"] iframe[data-doop-frame]')
-    expect(importBody).toMatchObject({ url: 'https://example.test/', placement: { x: 850, y: 120 } })
+    // Camera motion hides the toolbar without unmounting it. A click while
+    // it is hidden hits the stage, clears the selection and never posts.
+    const button = await page.waitForSelector(`${controls} button::-p-text(Import)`, { visible: true })
+    await page.waitForFunction(
+      (button) => {
+        const { x, y, width, height } = button.getBoundingClientRect()
+        return button.contains(document.elementFromPoint(x + width / 2, y + height / 2))
+      },
+      {},
+      button!,
+    )
+    const camera = await page.evaluate(() => window.canvasPageHarness.camera())
+    const [response] = await Promise.all([
+      page.waitForResponse((res) => new URL(res.url()).pathname === IMPORT_PATH && res.request().method() === 'POST'),
+      button!.click(),
+    ])
+    const placement = { x: 850, y: 120, pageId: 'c:page1' }
+    expect(JSON.parse(response.request().postData()!)).toEqual({ url: 'https://example.test/', placement })
+    expect(response.status()).toBe(200)
+    const imported = { id: 'imported', canvasId: 'c', ...placement, html: IMPORT_HTML }
+    expect(await response.json()).toMatchObject(imported)
+    await page.waitForFunction(() => !!window.canvasPageHarness.frameState('imported').frame)
+    expect(await page.evaluate(() => window.canvasPageHarness.frameState('imported'))).toMatchObject({
+      frame: imported,
+      selectedId: 'imported',
+      activePageId: placement.pageId,
+    })
+    expect(await page.evaluate(() => window.canvasPageHarness.camera())).toEqual(camera)
+
+    const iframe = await page.waitForSelector('[data-doop-frame-shell="imported"] iframe[data-doop-frame]')
+    const importedPage = await iframe!.contentFrame()
+    if (!importedPage) throw new Error('Imported HTML document did not mount')
+    await importedPage.waitForFunction(() => document.querySelector('h1')?.textContent === 'Editable import')
+    await screenshot('07-browser-import')
+    const heading = await pointInDocument(importedPage, 'h1')
+    await page.mouse.click(heading.x, heading.y, { count: 2 })
+    await importedPage.waitForSelector('h1[contenteditable]')
+    await page.keyboard.type('Edited import')
+    await page.keyboard.press('Escape')
+    await expect.poll(() => frames.find((frame) => frame.id === 'imported')?.html).toContain('Edited import')
   })
 
   it.runIf(!!VISUAL)('keeps the real Browser reference on port 8747 live', async () => {
