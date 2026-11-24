@@ -61,6 +61,19 @@ export async function paintFrameCrop(
   const top = clip.y + bleed
   const width = Math.max(1, Math.round(clip.width * scale))
   const height = Math.max(1, Math.round(clip.height * scale))
+  // Selection uses the iframe's viewport CSS pixels. Paint the SVG at the
+  // document origin, at one pixel per CSS pixel. WebKit can shift positioned
+  // or transformed HTML layers when the SVG scales or translates its
+  // foreignObject. Apply scroll in the canvas and DPR only to the output.
+  const dx = left + viewport.scrollX
+  const dy = top + viewport.scrollY
+  const rasterWidth = Math.max(viewport.width + 2 * bleed, dx + clip.width)
+  const rasterHeight = Math.max(viewport.height + 2 * bleed, dy + clip.height)
+  // A deep document scroll can make the origin-aligned raster too large
+  // even when the exported crop is small. Use the ordinary error fallback.
+  const probePixels = 8
+  if (rasterWidth > 16_384 || rasterHeight > 16_384 || (rasterWidth + probePixels) * rasterHeight > 16_000_000)
+    throw new Error('Crop raster exceeds the pixel budget')
   const work: Promise<void>[] = []
   const resources = new Map<string, Promise<string>>()
   const usedFonts = new Set<string>()
@@ -386,78 +399,25 @@ export async function paintFrameCrop(
   const contents = new XMLSerializer().serializeToString(root)
   if (contents.length > 12_000_000) throw new Error('Crop SVG exceeds the byte budget')
   const image = new Image()
-  const dx = left + viewport.scrollX
-  const dy = top + viewport.scrollY
-  // A foreignObject clips to its own box before the outer SVG crops it.
-  // Extend that box to the scrolled area; computed layout stays in CSS px.
-  const viewportWidth = Math.max(viewport.width + 2 * bleed, dx + clip.width)
-  const viewportHeight = Math.max(viewport.height + 2 * bleed, dy + clip.height)
   const rootStyle = getComputedStyle(source)
   const bodyStyle = getComputedStyle(document.body)
   const background =
     rootStyle.backgroundColor === 'rgba(0, 0, 0, 0)' ? bodyStyle.backgroundColor : rootStyle.backgroundColor
-  // The extra columns probe for WebKit returning a blank
-  // foreignObject even when the SVG decoded. It is outside the exported crop.
-  const probePixels = 8
-  const probeWidth = (probePixels * clip.width) / width
-  const svg =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="' +
-    (width + probePixels) +
-    '" height="' +
-    height +
-    '" viewBox="0 0 ' +
-    (clip.width + probeWidth) +
-    ' ' +
-    clip.height +
-    '" preserveAspectRatio="none">' +
-    '<foreignObject width="' +
-    clip.width +
-    '" height="' +
-    clip.height +
-    '">' +
-    '<div xmlns="' +
-    html +
-    '" style="width:' +
-    clip.width +
-    'px;height:' +
-    clip.height +
-    'px;background:' +
-    background +
-    '"></div></foreignObject>' +
-    '<svg width="' +
-    clip.width +
-    '" height="' +
-    clip.height +
-    '" overflow="hidden">' +
-    '<foreignObject x="' +
-    -dx +
-    '" y="' +
-    -dy +
-    '" width="' +
-    viewportWidth +
-    '" height="' +
-    viewportHeight +
-    '" overflow="visible">' +
-    contents +
-    '</foreignObject></svg>' +
-    '<foreignObject x="' +
-    clip.width +
-    '" width="' +
-    probeWidth +
-    '" height="' +
-    clip.height +
-    '">' +
-    '<div xmlns="' +
-    html +
-    '" style="width:100%;height:100%;background:#f0f"></div></foreignObject></svg>'
+  // The probe detects a blank foreignObject without entering the exported crop.
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${rasterWidth + probePixels}" height="${rasterHeight}">
+    <rect width="${rasterWidth}" height="${rasterHeight}" fill="${background}"/>
+    <foreignObject width="${rasterWidth}" height="${rasterHeight}">${contents}</foreignObject>
+    <foreignObject x="${rasterWidth}" width="${probePixels}" height="${rasterHeight}">
+      <div xmlns="${html}" style="width:100%;height:100%;background:#f0f"></div>
+    </foreignObject></svg>`
   // A data URL is allowed by the proxy CSP and keeps foreignObject readable
   // on engines that taint it when loaded through an object URL.
   image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)
   await image.decode()
   signal.throwIfAborted()
   const canvas = document.createElement('canvas')
-  canvas.width = width + probePixels
-  canvas.height = height
+  canvas.width = image.naturalWidth
+  canvas.height = image.naturalHeight
   const context = canvas.getContext('2d')
   if (!context) throw new Error('No 2D crop context')
   context.drawImage(image, 0, 0)
@@ -468,7 +428,7 @@ export async function paintFrameCrop(
     context.clearRect(0, 0, canvas.width, canvas.height)
     context.drawImage(image, 0, 0)
   }
-  const probe = context.getImageData(width + probePixels / 2, Math.floor(height / 2), 1, 1).data
+  const probe = context.getImageData(canvas.width - probePixels / 2, Math.floor(canvas.height / 2), 1, 1).data
   if (probe[0] !== 255 || probe[1] !== 0 || probe[2] !== 255 || probe[3] !== 255)
     throw new Error('The browser did not paint the foreignObject')
   const png = document.createElement('canvas')
@@ -478,7 +438,7 @@ export async function paintFrameCrop(
   if (!output) throw new Error('No 2D crop output context')
   output.fillStyle = '#fff'
   output.fillRect(0, 0, width, height)
-  output.drawImage(canvas, 0, 0)
+  output.drawImage(canvas, dx, dy, clip.width, clip.height, 0, 0, width, height)
   return new Promise((resolve, reject) => {
     png.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Cannot encode live crop'))), 'image/png')
   })

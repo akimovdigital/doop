@@ -1,5 +1,5 @@
 import { readContextPrompt } from '../shared/uiElementContext'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { createServer, type Server as SiteServer } from 'node:http'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -44,7 +44,11 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
       }
       if (request.url === '/site.css') {
         response.writeHead(200, { 'Content-Type': 'text/css' })
-        response.end('h1 { color: rgb(31, 39, 106); margin: 40px 32px; background-image:url(crop-bg.svg); }')
+        response.end(`
+          h1 { color: rgb(31, 39, 106); margin: 40px 32px; background-image:url(crop-bg.svg); }
+          a { background: #badfd3; }
+          #summary { width: max-content; background: #deb5f7; }
+        `)
         return
       }
       response.writeHead(200, { 'Content-Type': 'text/html' })
@@ -59,7 +63,7 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
             parent.postMessage({ type: 'doop:browse-navigate', url: 'https://spoof.example/' }, '*')
           })
         </script>
-        <h1 id="title"></h1><a href="/second">Next</a><p id="summary">Sample summary</p>`)
+        <h1 id="title"></h1><a id="next" href="/second">Next</a><ul><li id="summary">Sample summary</li></ul>`)
     })
     await new Promise<void>((resolve) => site.listen(0, '127.0.0.1', resolve))
     const address = site.address()
@@ -112,7 +116,7 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
 
   it('keeps links in Design Mode, restores a URL pin after reload and sends it with the real URL', async () => {
     const page = await pages.open()
-    await page.setViewport({ width: 1440, height: 960 })
+    await page.setViewport({ width: 1440, height: 960, deviceScaleFactor: 2 })
     await page.goto(web.origin)
     const { canvasId, frameId } = await page.evaluate(async (url) => {
       async function post(path: string, data: object) {
@@ -337,11 +341,49 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     const chipFrame = await (await iframe())!.contentFrame()
     await chipFrame!.waitForFunction(() => document.querySelector('#title')?.textContent === 'Second page')
     const chips = `${present} [data-preview-chat] [data-context-chip]`
-    for (const [index, selector] of ['#title', 'a', '#summary'].entries()) {
-      const box = await (await chipFrame!.$(selector))!.boundingBox()
+    const surface = await (await iframe())!.evaluate((el) => {
+      const { x, y, width, height } = el.getBoundingClientRect()
+      return { x, y, scaleX: width / el.clientWidth, scaleY: height / el.clientHeight }
+    })
+    const selectionCases = ['#title', '#next', '#summary']
+    for (const [index, selector] of selectionCases.entries()) {
+      const target = await chipFrame!.$eval(selector, (el) => {
+        const box = el.getBoundingClientRect()
+        return { x: box.x, y: box.y, width: box.width, height: box.height, viewport: innerWidth }
+      })
+      const box = {
+        x: surface.x + target.x * surface.scaleX,
+        y: surface.y + target.y * surface.scaleY,
+        width: target.width * surface.scaleX,
+        height: target.height * surface.scaleY,
+      }
+      await page.mouse.move(5, 5)
+      await page.waitForSelector('[data-design-hover]', { hidden: true })
+      // Use the real viewport pixels as an independent reference. The eight
+      // CSS pixels of context are part of the thumbnail, including at x=0.
+      const left = Math.max(0, Math.floor(target.x) - 8)
+      const top = Math.max(0, Math.floor(target.y) - 8)
+      const right = Math.min(target.viewport, Math.ceil(target.x + target.width) + 8)
+      const bottom = Math.ceil(target.y + target.height) + 8
+      const reference = await page.screenshot({
+        type: 'png',
+        clip: {
+          x: surface.x + left * surface.scaleX,
+          y: surface.y + top * surface.scaleY,
+          width: (right - left) * surface.scaleX,
+          height: (bottom - top) * surface.scaleY,
+        },
+      })
+      const x = box.x + box.width / 2
+      const y = box.y + box.height / 2
+      await page.mouse.move(x, y)
+      const hover = await page.waitForSelector('[data-design-hover]', { visible: true })
+      expect(await hover!.evaluate((el) => el.getAttribute('data-design-hover'))).toBe(selector)
+      const ring = (await hover!.boundingBox())!
+      for (const edge of ['x', 'y', 'width', 'height'] as const) expect(Math.abs(ring[edge] - box[edge])).toBeLessThan(1)
       await page.keyboard.down('Alt')
       try {
-        await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2)
+        await page.mouse.click(x, y)
       } finally {
         await page.keyboard.up('Alt')
       }
@@ -353,6 +395,32 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
       )
       expect(await page.$(`${bar} input[aria-label="URL"]`)).toBeNull()
       expect(await page.$(`${bar} [data-design-hint]`)).not.toBeNull()
+      const thumb = `${chips}:nth-child(${index + 1}) img[data-context-thumbnail]`
+      const image = await page.waitForSelector(thumb)
+      const png = Buffer.from(
+        await image!.evaluate(async (el) => {
+          const response = await fetch((el as HTMLImageElement).src)
+          return [...new Uint8Array(await response.arrayBuffer())]
+        }),
+      )
+      // Compare on the CSS-pixel grid so Retina antialiasing differences
+      // do not obscure movement of the element inside the crop.
+      const pixels = (bytes: Uint8Array) =>
+        sharp(bytes)
+          .resize(right - left, bottom - top, { fit: 'fill' })
+          .removeAlpha()
+          .raw()
+          .toBuffer()
+      const [actual, expected] = await Promise.all([pixels(png), pixels(reference)])
+      let different = 0
+      for (let i = 0; i < expected.length; i += 3) {
+        if ([0, 1, 2].some((channel) => Math.abs(actual[i + channel]! - expected[i + channel]!) > 32)) different++
+      }
+      if (shots) {
+        await writeFile(join(shots, `dm-27-proxy-${index}-crop.png`), png)
+        await writeFile(join(shots, `dm-27-proxy-${index}-reference.png`), reference)
+      }
+      expect(different / (expected.length / 3)).toBeLessThan(0.12)
     }
     await page.waitForFunction(
       (chips) => {
@@ -373,7 +441,7 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     expect(await page.$$eval(chips, (elements) => elements.map((element) => element.textContent))).toEqual([
       '<h1> Second page',
       '<a> Next',
-      '<p> Sample summary',
+      '<li> Sample summary',
     ])
 
     await annotate(page)
