@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import type { Request, Response } from 'express'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -73,6 +75,29 @@ describe('photos from Doop', () => {
     expect(first.headers['Content-Security-Policy']).toBeUndefined()
     expect([...bucket.keys()]).toEqual([expect.stringMatching(/^pexels\/[0-9a-f]{64}\.jpeg$/)])
     await call('3184465.jpeg', { w: '940', h: '650' })
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('serves legacy JPEG bytes, then stores a new photo with its WebP key and MIME', async () => {
+    const legacy = upstreamFor('11.jpeg', {})!
+    const legacyKey = `pexels/${createHash('sha256').update(legacy).digest('hex')}.jpeg`
+    const photo = readFileSync(new URL('./fixtures/images/photo.jpg', import.meta.url))
+    bucket.set(legacyKey, photo)
+    const fetch = vi.fn(
+      async () =>
+        new globalThis.Response(new Uint8Array(photo), {
+          headers: { 'content-type': 'image/jpeg' },
+        }),
+    )
+    vi.stubGlobal('fetch', fetch)
+    expect(await call('11.jpeg')).toMatchObject({ body: photo, headers: { 'Content-Type': 'image/jpeg' } })
+    expect(fetch).not.toHaveBeenCalled()
+
+    const stored = await call('12.jpeg')
+    expect(stored.headers['Content-Type']).toBe('image/webp')
+    expect(stored.body!.length).toBeLessThan(photo.length)
+    const newKey = `pexels/${createHash('sha256').update(upstreamFor('12.jpeg', {})!).digest('hex')}.webp`
+    expect(bucket.get(newKey)).toEqual(stored.body)
     expect(fetch).toHaveBeenCalledTimes(1)
   })
 

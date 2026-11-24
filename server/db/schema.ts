@@ -824,12 +824,13 @@ export const agentDefaults = pgTable('agent_defaults', {
 })
 
 /* The curated background library behind search_backgrounds
-   (server/backgrounds.ts). Bytes live in object storage under bg/<id>.webp
-   and bg/<id>-t.webp; this row is everything the search ranks on. */
+   (server/backgrounds.ts). The display and thumbnail have immutable keys under bg/. */
 export const backgrounds = pgTable('backgrounds', {
   id: text('id').primaryKey(),
   /** sha1 of the uploaded source file — re-uploads of the same image are skipped */
   source: text('source').notNull(),
+  displayExt: text('display_ext').notNull().default('webp'),
+  thumbExt: text('thumb_ext').notNull().default('webp'),
   width: integer('width').notNull(),
   height: integer('height').notNull(),
   tone: text('tone').notNull(),

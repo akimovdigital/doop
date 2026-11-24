@@ -123,6 +123,7 @@ import * as authSchema from './db/auth-schema.ts'
 import * as persist from './db/persist.ts'
 import { handleMcpRequest } from './mcp.ts'
 import { RendererBusyError } from './renderBrowser.ts'
+import { optimizeImportedImages } from './inlineImageWebp.ts'
 import { getAsset, reconcileAssetRefs, beginTicketUpload, endTicketUpload, createAsset } from './assets.ts'
 import * as ingest from './ingest.ts'
 import * as agentKeys from './agentKeys.ts'
@@ -661,17 +662,17 @@ app.get('/a/:id.:ext', async (req, res) => {
   }
 })
 
-/* Curated background library (server/backgrounds.ts): /bg/<id>.webp and  */
-/* /bg/<id>-t.webp straight from object storage. Public and immutable —  */
-/* the catalog is checked in, the bytes are put there by the import      */
-/* script and never rewritten under the same id.                         */
+/* The curated background library serves immutable display and thumbnail objects. */
 app.get('/bg/:file', async (req, res) => {
-  const key = backgrounds.keyForFile(req.params.file)
-  if (!key) return res.status(404).end()
+  const file = req.params.file
+  const key = backgrounds.keyForFile(file)
+  const mime = backgrounds.backgroundFileType(file)
+  if (!key || !mime) return res.status(404).end()
   try {
     const buf = await storage.getObject(key)
     if (!buf) return res.status(404).end()
-    res.set('Content-Type', 'image/webp')
+    res.set('Content-Type', mime)
+    if (mime === 'image/svg+xml') res.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'")
     res.set('Cache-Control', 'public, max-age=31536000, immutable')
     res.set('X-Content-Type-Options', 'nosniff')
     res.send(buf)
@@ -2542,14 +2543,24 @@ app.post('/api/canvases/:id/pages/:pageId/duplicate', async (req, res) => {
   }
 })
 
-app.post('/api/canvases/:id/frames', (req, res) => {
+app.post('/api/canvases/:id/frames', async (req, res, next) => {
   if (!requireCanvas(req, res, req.params.id, 'edit')) return
-  const { name, pageId, x, y, width, height, html, hidden, locked, z, rotation, browser } = req.body ?? {}
+  const { name, pageId, x, y, width, height, html, hidden, locked, z, rotation, browser, optimizeImages } =
+    req.body ?? {}
   if (pageId !== undefined && !store.getCanvas(req.params.id)?.pages?.some((p) => p.id === pageId))
     return res.status(400).json({ error: 'page not found' })
   const parsed = browserFrameSchema.optional().safeParse(browser)
   if (!parsed.success || (parsed.data && html)) return res.status(400).json({ error: 'Invalid browser frame' })
   const actor = userActor(req)
+  let frameHtml = html
+  if (optimizeImages === true && typeof html === 'string') {
+    try {
+      frameHtml = await optimizeImportedImages(html)
+    } catch (error) {
+      return next(error)
+    }
+    if (!requireCanvas(req, res, req.params.id, 'edit')) return
+  }
   /* `hidden`, `locked` and `z` let undo bring a deleted frame back as it was */
   const frame = actions.createFrame(
     req.params.id,
@@ -2560,7 +2571,7 @@ app.post('/api/canvases/:id/frames', (req, res) => {
       y,
       width,
       height,
-      html,
+      html: frameHtml,
       hidden: hidden === true,
       locked: locked === true,
       z: Number.isFinite(z) ? z : undefined,

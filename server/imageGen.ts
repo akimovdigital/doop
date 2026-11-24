@@ -74,9 +74,8 @@ export interface ImageRequest {
 }
 
 export interface GeneratedImage {
-  /** the finished image, recompressed to webp for the frame */
+  /** Original provider bytes, encoded once by the asset ingest pipeline. */
   buf: Buffer
-  mime: 'image/webp'
   width: number
   height: number
   /** a small preview the agent can look at without paying for the full image */
@@ -558,8 +557,7 @@ export async function generatorFor(payerId?: string): Promise<Generator> {
 /* the finished image                                               */
 /* ---------------------------------------------------------------- */
 
-/** Recompress the model's png (large) into what a frame should load, and
- *  cut a preview the agent can judge it by. */
+/** Read the provider image and cut a preview the agent can judge it by. */
 async function finish(png: Buffer, billedTo: string): Promise<GeneratedImage> {
   const image = sharp(png)
   const meta = await image.metadata()
@@ -568,8 +566,7 @@ async function finish(png: Buffer, billedTo: string): Promise<GeneratedImage> {
     .jpeg({ quality: 70 })
     .toBuffer()
   return {
-    buf: await image.webp({ quality: 88 }).toBuffer(),
-    mime: 'image/webp',
+    buf: png,
     width: meta.width ?? 0,
     height: meta.height ?? 0,
     preview: { data: preview.toString('base64'), mime: 'image/jpeg' },

@@ -7,6 +7,7 @@ import { syncEdges, syncKeys, syncLinks } from './db/schema.ts'
 import { store } from './store.ts'
 import * as actions from './actions.ts'
 import type { Frame } from '../shared/types.ts'
+import { optimizeImportedImages } from './inlineImageWebp.ts'
 import { MAX_FRAME_HTML_BYTES } from './limits.ts'
 
 /**
@@ -328,7 +329,12 @@ export async function handleIngest(req: express.Request, res: express.Response) 
   }
 
   const marker = `${key.id}${page}`
-  const wrapped = wrapSnapshotHtml(html, marker, baseUrl)
+  const snapshot = wrapSnapshotHtml(html, marker, baseUrl)
+  const previous = canvas.frames.find((f) => syncFrameMarker(f.html) === marker)
+  const wrapped =
+    previous && Date.now() - previous.createdAt > FREEZE_AFTER_MS
+      ? snapshot
+      : await optimizeImportedImages(snapshot, previous?.html)
   const title = typeof req.body?.title === 'string' && req.body.title.trim() ? req.body.title.trim() : page
   const width = Math.min(3840, Math.max(320, Math.round(Number(req.body?.width) || 1280)))
   const height = Math.min(8000, Math.max(400, Math.round(Number(req.body?.height) || 900)))
@@ -339,7 +345,9 @@ export async function handleIngest(req: express.Request, res: express.Response) 
     .where(eq(syncKeys.id, key.id))
     .catch((err: unknown) => console.error('[ingest] lastUsedAt write failed', err))
 
-  const mine = canvas.frames.filter((f) => syncFrameMarker(f.html)?.startsWith(`${key.id}/`))
+  const current = store.getCanvas(key.canvasId)
+  if (!current) return res.status(410).json({ error: 'canvas vanished mid-sync' })
+  const mine = current.frames.filter((f) => syncFrameMarker(f.html)?.startsWith(`${key.id}/`))
   const existing = mine.find((f) => syncFrameMarker(f.html) === marker)
   if (existing) {
     if (Date.now() - existing.createdAt > FREEZE_AFTER_MS) {
@@ -374,8 +382,8 @@ export async function handleIngest(req: express.Request, res: express.Response) 
     x = Math.max(...mine.map((f) => f.x + f.width)) + 80
     y = Math.min(...mine.map((f) => f.y))
   } else {
-    const rightmost = canvas.frames.reduce((right, f) => Math.max(right, f.x + f.width), 0)
-    x = canvas.frames.length ? rightmost + 80 : 120
+    const rightmost = current.frames.reduce((right, f) => Math.max(right, f.x + f.width), 0)
+    x = current.frames.length ? rightmost + 80 : 120
     y = 120
   }
   pageLastWrite.set(marker, Date.now())

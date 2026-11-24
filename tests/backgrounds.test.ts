@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import sharp from 'sharp'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -5,6 +7,8 @@ import { stubEnv, unstubAllEnvs } from './envStub.ts'
 import {
   fetchThumb,
   keyForFile,
+  prepareImage,
+  urlsFor,
   normalizeTags,
   browseBackgrounds,
   setCatalogForTests,
@@ -153,7 +157,8 @@ describe('/bg key mapping', () => {
     expect(keyForFile('abc123.webp')).toBe('bg/abc123.webp')
     expect(keyForFile('abc123-t.webp')).toBe('bg/abc123-t.webp')
     expect(keyForFile('../x.webp')).toBeNull()
-    expect(keyForFile('abc.png')).toBeNull()
+    expect(keyForFile('abc.png')).toBe('bg/abc.png')
+    expect(keyForFile('abc.html')).toBeNull()
   })
 })
 
@@ -269,5 +274,22 @@ describe('fetchThumb', () => {
     stubEnv('BACKGROUNDS_ORIGIN', 'https://doop.example')
     globalThis.fetch = (async () => new Response('', { status: 404 })) as typeof fetch
     expect(await fetchThumb('abc')).toBeNull()
+  })
+})
+
+it('keeps an already-compressed display and preserves its original hash and dimensions', async () => {
+  const webp = await sharp({ create: { width: 1601, height: 600, channels: 3, background: '#024' } })
+    .webp()
+    .toBuffer()
+  const prepared = await prepareImage(webp)
+  expect(prepared).toMatchObject({
+    source: createHash('sha1').update(webp).digest('hex'),
+    width: 1601,
+    height: 600,
+    display: { mime: 'image/webp', ext: 'webp', buffer: webp },
+  })
+  expect(urlsFor({ id: 'new', displayExt: 'jpg', thumbExt: 'png' }, ORIGIN)).toEqual({
+    image_url: `${ORIGIN}/bg/new.jpg`,
+    thumb_url: `${ORIGIN}/bg/new-t.png`,
   })
 })

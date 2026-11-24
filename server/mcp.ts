@@ -1908,7 +1908,11 @@ export function buildMcpServer(owner?: string, ownerId?: string, clientName?: st
       generateHits.set(limitKey, hits)
       try {
         const image = await imageGen.generateImage(ownerId, { prompt, aspect, quality })
-        const asset = await assets.createAsset(image.buf, { canvasId: canvas_id, ownerId, uploadedBy: agent_name })
+        const asset = await assets.createGeneratedAsset(image.buf, {
+          canvasId: canvas_id,
+          ownerId,
+          uploadedBy: agent_name,
+        })
         const url = `${env.BETTER_AUTH_URL}/a/${asset.id}.${asset.ext}`
         capture(ownerId ?? agent_name, 'image_generated', {
           canvas_id,

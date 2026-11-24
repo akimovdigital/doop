@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { Page } from 'puppeteer-core'
+import { toWebpIfSmaller } from '../server/imageWebp.ts'
 import { findBrowserPath } from '../server/screenshot'
 import { fixtureUrl, pagePerTest } from './browser'
 import type { Frame } from '../shared/types'
@@ -37,6 +38,7 @@ describe.skipIf(!findBrowserPath())('element design controls', () => {
   let framePatches: Partial<Frame>[] = []
   let seedId = 0
   let uploadStatus = 200
+  let uploadResponse: { url: string; mime: string; size: number }
   let uploadGate: Promise<void> | null = null
   let imageDir: string
   const replacementSvg =
@@ -53,6 +55,7 @@ describe.skipIf(!findBrowserPath())('element design controls', () => {
     framePatches = []
     seedId = 0
     uploadStatus = 200
+    uploadResponse = { url: replacementUrl, mime: 'image/svg+xml', size: replacementSvg.length }
     uploadGate = null
     page = await pages.open()
     page.setDefaultTimeout(5_000)
@@ -65,14 +68,11 @@ describe.skipIf(!findBrowserPath())('element design controls', () => {
         await request.respond({
           status: uploadStatus,
           contentType: 'application/json',
-          body: JSON.stringify(
-            uploadStatus === 200
-              ? { url: replacementUrl, mime: 'image/svg+xml', size: replacementSvg.length }
-              : { error: 'Upload failed. Please try again.' },
-          ),
+          body: JSON.stringify(uploadStatus === 200 ? uploadResponse : { error: 'Upload failed. Please try again.' }),
         })
         return
       }
+      if (new URL(request.url()).pathname === '/a/inspector-photo.webp') return
       // The delayed-font test releases this stylesheet after the panel's first read.
       if (new URL(request.url()).pathname === '/tests/fixtures/late-font.css') return
       if (new URL(request.url()).pathname === '/api/canvases/c/tokens' && request.method() === 'POST') {
@@ -379,6 +379,61 @@ describe.skipIf(!findBrowserPath())('element design controls', () => {
     await expect.poll(() => saved.html).toContain('object-fit: cover')
   }, 20_000)
 
+  it('uploads a pasted PNG image URL, renders the WebP response and restores the prior image on undo', async () => {
+    const photo = readFileSync(new URL('./fixtures/images/transparent-ui.png', import.meta.url))
+    const pastedUrl = `data:image/png;base64,${photo.toString('base64')}`
+    const webp = await toWebpIfSmaller(photo, 'image/png')
+    expect(webp.converted).toBe(true)
+    const path = '/a/inspector-photo.webp'
+    const handleAsset = async (request: import('puppeteer-core').HTTPRequest) => {
+      if (new URL(request.url()).pathname === path) {
+        await request.respond({ status: 200, contentType: 'image/webp', body: webp.buffer })
+      }
+    }
+    page.on('request', handleAsset)
+    const frame = await seedPanel(
+      `<body><img id="photo" src="${originalUrl}" style="width:120px;height:80px;object-fit:cover"></body>`,
+      '#photo',
+    )
+    await page.click('[aria-label="Image fill"]')
+    await page.setViewport({ width: 375, height: 900 })
+    await page.screenshot({ path: '/tmp/doop-webp-image-fill-before-375.png' })
+    await page.setViewport({ width: 1000, height: 900 })
+    uploadResponse = { url: new URL(path, page.url()).href, mime: 'image/webp', size: webp.after }
+    const input = 'input[aria-label="Image URL"]'
+    await page.focus(input)
+    await page.$eval(input, (field) => (field as HTMLInputElement).select())
+    await page.keyboard.sendCharacter(pastedUrl)
+    const [uploaded] = await Promise.all([
+      page.waitForRequest((request) => request.url().endsWith('/api/canvases/c/assets')),
+      page.keyboard.press('Enter'),
+    ])
+    expect(uploaded.headers()['content-type']).toBe('image/png')
+    await expect.poll(() => saved.html).toContain(uploadResponse.url)
+    await frame.waitForFunction(
+      (suffix) => {
+        const image = document.querySelector<HTMLImageElement>('#photo')
+        return image?.currentSrc.endsWith(suffix) && image.naturalWidth === 320
+      },
+      {},
+      path,
+    )
+    await page.waitForFunction(
+      (suffix) => {
+        const preview = document.querySelector<HTMLImageElement>('[aria-label="Upload image"] img')
+        return preview?.currentSrc.endsWith(suffix) && preview.naturalWidth === 320
+      },
+      {},
+      path,
+    )
+    for (const width of [375, 768, 1440]) {
+      await page.setViewport({ width, height: 900 })
+      await page.screenshot({ path: `/tmp/doop-webp-image-fill-${width}.png` })
+    }
+    await page.evaluate(() => window.elementPanelHarness.undo())
+    await expect.poll(() => saved.html).toContain(originalUrl)
+  }, 20_000)
+
   it('replaces responsive images from a local file, preserving their box and supporting undo/redo', async () => {
     const frame = await seedPanel(
       `<body><picture><source srcset="${originalUrl}"><img id="photo" src="${originalUrl}" srcset="${originalUrl}" sizes="100vw" alt="A landscape" style="object-fit:cover;border-radius:12px"></picture></body>`,
@@ -592,6 +647,7 @@ describe.skipIf(!findBrowserPath())('element design controls', () => {
       expect(saved.html).toBe(before)
     } finally {
       uploadStatus = 200
+      uploadResponse = { url: replacementUrl, mime: 'image/svg+xml', size: replacementSvg.length }
     }
     await chooseReplacement()
     await expect.poll(() => saved.html).toContain(replacementUrl)

@@ -1,5 +1,9 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import sharp from 'sharp'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { readFileSync } from 'node:fs'
+import { buildMcpServer } from '../server/mcp.ts'
 import type { PGlite, QueryOptions, Results } from '@electric-sql/pglite'
 import type { drizzle as pgliteDrizzle } from 'drizzle-orm/pglite'
 import { eq } from 'drizzle-orm'
@@ -102,6 +106,51 @@ beforeEach(() => {
 const row = async (id: string) => (await db.select().from(t.assets).where(eq(t.assets.id, id)))[0]!
 
 describe('storing an image', () => {
+  it('stores the image produced by generate_image as smaller WebP with matching metadata', async () => {
+    const input = readFileSync(new URL('./fixtures/images/photo.png', import.meta.url))
+    const canvasId = canvas()
+    mocks.account.mockResolvedValue({ kind: 'openai-key', apiKey: 'provider-test' })
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        `data: ${JSON.stringify({
+          type: 'response.output_item.done',
+          item: { type: 'image_generation_call', status: 'completed', result: input.toString('base64') },
+        })}\n\ndata: {"type":"response.completed","response":{"output":[]}}\n\n`,
+        { headers: { 'content-type': 'text/event-stream' } },
+      ),
+    )
+    const server = buildMcpServer('Owner', 'owner')
+    const client = new Client({ name: 'image-storage-test', version: '1.0.0' })
+    const [a, b] = InMemoryTransport.createLinkedPair()
+    await server.connect(b)
+    await client.connect(a)
+    try {
+      const response = await client.callTool({
+        name: 'generate_image',
+        arguments: { prompt: 'A landscape', canvas_id: canvasId, agent_name: 'Test agent' },
+      })
+      const [output] = response.content as { type: 'text'; text: string }[]
+      expect(response.isError, output?.text).toBeFalsy()
+      const result = JSON.parse(output!.text)
+      expect(result).toMatchObject({ mime: 'image/webp', url: expect.stringMatching(/\.webp$/) })
+      const key = new URL(result.url).pathname.split('/').at(-1)!
+      const stored = mocks.objects.get(key)!
+      expect(stored.length).toBeLessThan(input.length)
+      expect(result.size_bytes).toBe(stored.length)
+      expect(await sharp(stored).metadata()).toMatchObject({ format: 'webp', width: 384, height: 256 })
+      expect(await row(key.slice(0, -5))).toMatchObject({
+        canvasId,
+        mime: 'image/webp',
+        ext: 'webp',
+        size: stored.length,
+      })
+    } finally {
+      fetch.mockRestore()
+      await client.close()
+      await server.close()
+    }
+  })
+
   it('starts undescribed and announces itself as asset.stored', async () => {
     const seen: CanvasEvent[] = []
     const off = onCanvasEvent((_canvasId, event) => void seen.push(event))
@@ -282,12 +331,12 @@ describe('what agents read', () => {
     const images = await imagesForFrames(['frame-a', 'frame-b', 'frame-empty'])
     expect(images.get('frame-a')).toEqual(
       expect.arrayContaining([
-        { src: `/a/${shot.id}.png`, description: 'A login form.' },
-        { src: `/a/${pending.id}.png`, description: null },
+        { src: `/a/${shot.id}.webp`, description: 'A login form.' },
+        { src: `/a/${pending.id}.webp`, description: null },
       ]),
     )
     expect(images.get('frame-a')).toHaveLength(2)
-    expect(images.get('frame-b')).toEqual([{ src: `/a/${shot.id}.png`, description: 'A login form.' }])
+    expect(images.get('frame-b')).toEqual([{ src: `/a/${shot.id}.webp`, description: 'A login form.' }])
     expect(images.has('frame-empty')).toBe(false)
     expect(await imagesForFrames([])).toEqual(new Map())
   })

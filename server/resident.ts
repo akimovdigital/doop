@@ -2239,7 +2239,7 @@ async function runResidentTool(
           ? (raw.quality as imageGen.ImageQuality)
           : undefined
         const image = await imageGen.generateImage(runState.payerId, { prompt, aspect, quality })
-        const asset = await assets.createAsset(image.buf, {
+        const asset = await assets.createGeneratedAsset(image.buf, {
           canvasId,
           ...(runState.payerId ? { ownerId: runState.payerId } : {}),
           uploadedBy: actor.name,
@@ -2285,7 +2285,7 @@ async function runResidentTool(
         results.forEach((r, i) => {
           const thumb = thumbs[i]
           if (thumb)
-            blocks.push({ type: 'image', source: { type: 'base64', media_type: 'image/webp', data: thumb.data } })
+            blocks.push({ type: 'image', source: { type: 'base64', media_type: thumb.mime, data: thumb.data } })
           blocks.push({ type: 'text', text: backgrounds.describeBackground(r, i) })
         })
         blocks.push({ type: 'text', text: backgrounds.BACKGROUND_USAGE_NOTE })

@@ -10,14 +10,15 @@ import sharp from 'sharp'
 import { db } from './db/index.ts'
 import * as t from './db/schema.ts'
 import * as storage from './storage.ts'
+import { encodeImageForStorage } from './imageWebp.ts'
+import { sniffMime, MIME_EXT } from './assets.ts'
 
 /**
  * Curated background library for hero sections, section bands and bento
  * tiles — the answer to "every agent landing page ships the same flat CSS
  * gradient". One row per image in the backgrounds table describes it:
  * tone, style, palette, mood tags, which slots it suits, and where copy can
- * sit. The bytes live in object storage under bg/<id>.webp (display) and
- * bg/<id>-t.webp (thumbnail) and are served from /bg/<file>.
+ * sit. The display and thumbnail have immutable keys under bg/.
  *
  * scripts/import-backgrounds.ts bulk-loads a folder; the create / update /
  * retag / delete functions below are what an admin surface would call when
@@ -73,6 +74,8 @@ export interface BackgroundEntry extends BackgroundTags {
   id: string
   /** sha1 of the source file — re-uploads of the same image are skipped */
   source: string
+  displayExt?: string
+  thumbExt?: string
   width: number
   height: number
   /** average color as #rrggbb */
@@ -97,7 +100,6 @@ export interface BackgroundResult extends BackgroundEntry {
 
 export const MAX_UPLOAD_BYTES = 40 * 1024 * 1024
 const MIN_SOURCE_WIDTH = 1200
-const DISPLAY_WIDTH = 1600
 const THUMB_WIDTH = 320
 const TAGGING_WIDTH = 768
 const TAGGING_MODEL = 'claude-opus-5'
@@ -114,6 +116,8 @@ function fromRow(row: typeof t.backgrounds.$inferSelect): BackgroundEntry {
   return {
     id: row.id,
     source: row.source,
+    displayExt: row.displayExt,
+    thumbExt: row.thumbExt,
     width: row.width,
     height: row.height,
     avg_color: row.avgColor,
@@ -133,6 +137,8 @@ function toRow(entry: BackgroundEntry): typeof t.backgrounds.$inferInsert {
   return {
     id: entry.id,
     source: entry.source,
+    displayExt: entry.displayExt,
+    thumbExt: entry.thumbExt,
     width: entry.width,
     height: entry.height,
     avgColor: entry.avg_color,
@@ -198,23 +204,32 @@ function origin(publicOrigin: string): string {
   return (env.BACKGROUNDS_ORIGIN ?? publicOrigin).replace(/\/$/, '')
 }
 
-export function displayKey(id: string): string {
-  return `bg/${id}.webp`
+const BACKGROUND_MIME = new Map(Object.entries(MIME_EXT).map(([mime, ext]) => [ext as string, mime]))
+
+function displayKey(id: string, ext = 'webp'): string {
+  return `bg/${id}.${ext}`
 }
 
-export function thumbKey(id: string): string {
-  return `bg/${id}-t.webp`
+function thumbKey(id: string, ext = 'webp'): string {
+  return `bg/${id}-t.${ext}`
 }
 
-/** Storage key for a /bg/<file> request, or null when the name is not one we serve. */
+/** Validate the storage key and return the matching response type. */
+export function backgroundFileType(file: string): string | undefined {
+  const ext = /^[A-Za-z0-9_-]+\.([a-z]+)$/.exec(file)?.[1]
+  return ext ? BACKGROUND_MIME.get(ext) : undefined
+}
+
 export function keyForFile(file: string): string | null {
-  const m = /^([A-Za-z0-9_-]+)(-t)?\.webp$/.exec(file)
-  return m ? `bg/${m[1]}${m[2] ?? ''}.webp` : null
+  return backgroundFileType(file) ? `bg/${file}` : null
 }
 
-export function urlsFor(entry: Pick<BackgroundEntry, 'id'>, publicOrigin: string) {
+export function urlsFor(entry: Pick<BackgroundEntry, 'id' | 'displayExt' | 'thumbExt'>, publicOrigin: string) {
   const base = origin(publicOrigin)
-  return { image_url: `${base}/bg/${entry.id}.webp`, thumb_url: `${base}/bg/${entry.id}-t.webp` }
+  return {
+    image_url: `${base}/${displayKey(entry.id, entry.displayExt)}`,
+    thumb_url: `${base}/${thumbKey(entry.id, entry.thumbExt)}`,
+  }
 }
 
 const REMOTE_THUMB_TIMEOUT_MS = 10_000
@@ -223,18 +238,21 @@ const REMOTE_THUMB_TIMEOUT_MS = 10_000
  *  instance holds the library; over HTTP from BACKGROUNDS_ORIGIN when it is
  *  borrowing another instance's bytes. Null on any failure — a missing
  *  preview should not sink the whole search result. */
-export async function fetchThumb(id: string): Promise<{ data: string; mime: string } | null> {
+export async function fetchThumb(id: string): Promise<{ data: string; mime: 'image/webp' | 'image/png' } | null> {
   try {
+    const ext = catalog.find((entry) => entry.id === id)?.thumbExt
+    const key = thumbKey(id, ext)
+    const mime = ext === 'png' ? 'image/png' : 'image/webp'
     const remote = env.BACKGROUNDS_ORIGIN
     if (remote) {
-      const res = await fetch(`${remote}/bg/${id}-t.webp`, {
+      const res = await fetch(`${remote}/${key}`, {
         signal: AbortSignal.timeout(REMOTE_THUMB_TIMEOUT_MS),
       })
       if (!res.ok) return null
-      return { data: Buffer.from(await res.arrayBuffer()).toString('base64'), mime: 'image/webp' }
+      return { data: Buffer.from(await res.arrayBuffer()).toString('base64'), mime }
     }
-    const buf = await storage.getObject(thumbKey(id))
-    return buf ? { data: buf.toString('base64'), mime: 'image/webp' } : null
+    const buf = await storage.getObject(key)
+    return buf ? { data: buf.toString('base64'), mime } : null
   } catch {
     return null
   }
@@ -500,8 +518,8 @@ export interface PreparedImage {
   width: number
   height: number
   avg_color: string
-  display: Buffer
-  thumb: Buffer
+  display: { buffer: Buffer; mime: string; ext: string }
+  thumb: { buffer: Buffer; mime: string; ext: string }
   /** mid-size jpeg for the tagging model */
   tagging: Buffer
 }
@@ -512,30 +530,30 @@ export async function prepareImage(bytes: Buffer): Promise<PreparedImage> {
   if (bytes.length === 0) throw new Error('empty file')
   if (bytes.length > MAX_UPLOAD_BYTES) throw new Error('file exceeds the 40 MB limit')
   const source = createHash('sha1').update(bytes).digest('hex')
-  const image = sharp(bytes, { failOn: 'none' }).rotate()
+  const mime = sniffMime(bytes)
+  if (!mime) throw new Error('not an image')
+  const image = sharp(bytes, { failOn: 'none' }).autoOrient()
   const meta = await image.metadata().catch(() => {
     throw new Error('not an image')
   })
   if (!meta.width || !meta.height) throw new Error('not an image')
   if (meta.width < MIN_SOURCE_WIDTH)
     throw new Error(`image is ${meta.width}px wide — backgrounds need at least ${MIN_SOURCE_WIDTH}px`)
-  const display = await image
-    .clone()
-    .resize({ width: DISPLAY_WIDTH, withoutEnlargement: true })
-    .webp({ quality: 82 })
-    .toBuffer()
-  const displayMeta = await sharp(display).metadata()
-  const thumb = await image.clone().resize({ width: THUMB_WIDTH }).webp({ quality: 70 }).toBuffer()
+  const display = await encodeImageForStorage(bytes, mime)
+  const thumb = await encodeImageForStorage(
+    await image.clone().resize({ width: THUMB_WIDTH }).png().toBuffer(),
+    'image/png',
+  )
   const tagging = await image.clone().resize({ width: TAGGING_WIDTH }).jpeg({ quality: 80 }).toBuffer()
   const { channels } = await image.clone().stats()
   const [r = 0, g = 0, b = 0] = channels.map((c) => c.mean)
   return {
     source,
-    width: displayMeta.width ?? DISPLAY_WIDTH,
-    height: displayMeta.height ?? 0,
+    width: meta.autoOrient.width,
+    height: meta.autoOrient.height,
     avg_color: `#${toHex(r)}${toHex(g)}${toHex(b)}`,
-    display,
-    thumb,
+    display: { ...display, ext: display.converted ? 'webp' : MIME_EXT[mime] },
+    thumb: { ...thumb, ext: thumb.converted ? 'webp' : 'png' },
     tagging,
   }
 }
@@ -673,6 +691,8 @@ export async function createBackground(bytes: Buffer, opts: CreateOptions = {}):
   const entry: BackgroundEntry = {
     id: nanoid(10),
     source: prepared.source,
+    displayExt: prepared.display.ext,
+    thumbExt: prepared.thumb.ext,
     width: prepared.width,
     height: prepared.height,
     avg_color: prepared.avg_color,
@@ -682,8 +702,8 @@ export async function createBackground(bytes: Buffer, opts: CreateOptions = {}):
   }
   /* objects first, row second: an orphaned object is harmless, a row
      without bytes would serve 404s */
-  await storage.putObject(displayKey(entry.id), prepared.display, 'image/webp')
-  await storage.putObject(thumbKey(entry.id), prepared.thumb, 'image/webp')
+  await storage.putObject(displayKey(entry.id, entry.displayExt), prepared.display.buffer, prepared.display.mime)
+  await storage.putObject(thumbKey(entry.id, entry.thumbExt), prepared.thumb.buffer, prepared.thumb.mime)
   await db.insert(t.backgrounds).values(toRow(entry))
   await reload()
   return { status: 'created', entry, tagged, error }
@@ -709,7 +729,7 @@ export async function updateBackground(
 export async function retagBackground(id: string): Promise<BackgroundEntry | null> {
   const current = catalog.find((e) => e.id === id)
   if (!current) return null
-  const display = await storage.getObject(displayKey(id))
+  const display = await storage.getObject(displayKey(id, current.displayExt))
   if (!display) throw new Error('image bytes are missing from storage')
   const jpeg = await sharp(display).resize({ width: TAGGING_WIDTH }).jpeg({ quality: 80 }).toBuffer()
   const tags = await tagWithModel(jpeg)
@@ -717,9 +737,13 @@ export async function retagBackground(id: string): Promise<BackgroundEntry | nul
 }
 
 export async function deleteBackground(id: string): Promise<boolean> {
-  if (!catalog.some((e) => e.id === id)) return false
+  const current = catalog.find((e) => e.id === id)
+  if (!current) return false
   await db.delete(t.backgrounds).where(eq(t.backgrounds.id, id))
   await reload()
-  await Promise.all([storage.deleteObject(displayKey(id)), storage.deleteObject(thumbKey(id))])
+  await Promise.all([
+    storage.deleteObject(displayKey(id, current.displayExt)),
+    storage.deleteObject(thumbKey(id, current.thumbExt)),
+  ])
   return true
 }
