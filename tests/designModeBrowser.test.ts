@@ -358,10 +358,19 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
   })
 
   it('keeps full-window prototype controls outside the macOS traffic lights', async () => {
-    await mount(canvas, false, true)
+    const frame = await mount(canvas, false, true)
     const toolbar = '[data-preview-toolbar]'
     expect(await page.$eval(toolbar, (el) => getComputedStyle(el).paddingLeft)).toBe('76px')
+    await frame.evaluate(() => {
+      document.addEventListener('click', () => (document.body.dataset.clicked = 'true'), { capture: true })
+    })
+    await page.evaluate(() => {
+      window.addEventListener('click', () => (document.body.dataset.previewClickBubbled = 'true'), { once: true })
+    })
     await enter()
+    expect(await page.$eval(control('Annotate'), (el) => el.getAttribute('aria-pressed'))).toBe('true')
+    expect(await page.$eval('body', (el) => el.dataset.previewClickBubbled)).toBeUndefined()
+    expect(await frame.$eval('body', (el) => el.dataset.clicked)).toBeUndefined()
     expect(await page.$eval(toolbar, (el) => getComputedStyle(el).paddingLeft)).toBe('76px')
   })
 
@@ -1033,6 +1042,41 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await page.waitForSelector(address, { visible: true })
     await waitForInteractivity('home', true)
     expect(await page.$$eval(chip, (elements) => elements.map((element) => element.textContent))).toEqual(labels)
+  })
+
+  it('uses Option from click even when the preceding pointer and mouse releases are unmodified', async () => {
+    const frame = await mount(canvas, false, true)
+    await enter()
+    await page.$eval('[data-design-shield]', (shield) => {
+      shield.addEventListener(
+        'click',
+        (event) => {
+          const mouse = event as MouseEvent
+          event.stopImmediatePropagation()
+          // Preserve the real pointer sequence, then deliver Option on the click alone.
+          shield.dispatchEvent(
+            new MouseEvent('click', {
+              bubbles: true,
+              cancelable: true,
+              altKey: true,
+              clientX: mouse.clientX,
+              clientY: mouse.clientY,
+              detail: mouse.detail,
+            }),
+          )
+        },
+        { capture: true, once: true },
+      )
+    })
+    await clickAt(frame, '#go')
+    const chip = `${capsule} [data-context-chip]`
+    await page.waitForSelector(chip, { timeout: 5000 })
+    expect(await page.$(address)).toBeNull()
+    expect(await page.$(field)).toBeNull()
+    expect(await page.$('[data-proto-screen="next"]')).toBeNull()
+    await page.keyboard.press('Escape')
+    await page.waitForSelector(address, { visible: true })
+    expect(await page.$eval(chip, (element) => element.textContent)).toBe('<button> Open now')
   })
 
   it('attaches one padded PNG per queued note in annotation order', async () => {

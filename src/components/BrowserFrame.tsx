@@ -617,7 +617,9 @@ export function BrowserFrame({
         }}
       >
         {overlay && (
-          <div className={cn('browser-overlay-bar', previewTrafficLightsClass(overlay === 'present'))}>
+          <div
+            className={cn('browser-overlay-bar relative z-10 shrink-0', previewTrafficLightsClass(overlay === 'present'))}
+          >
             {design.enabled ? (
               <DesignModeHint mode={design} />
             ) : (
@@ -694,7 +696,7 @@ export function BrowserFrame({
           aria-busy={proxyEnabled ? busy : undefined}
           className={cn(
             'browser-viewport',
-            !overlay && (interactions ? 'browser-live' : selected ? 'browser-selected' : 'browser-hover'),
+            overlay ? 'isolate' : interactions ? 'browser-live' : selected ? 'browser-selected' : 'browser-hover',
           )}
           style={overlay ? undefined : { borderRadius: browser.cornerRadius ?? 12 }}
         >

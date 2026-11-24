@@ -103,7 +103,9 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     })
     expect(frameResponse.ok).toBe(true)
     const { id: frameId } = await frameResponse.json()
-    const response = await user.get(`/api/frames/${frameId}/screenshot.png?capture=visible&y=200&crop=10,105,60,40&scale=1`)
+    const response = await user.get(
+      `/api/frames/${frameId}/screenshot.png?capture=visible&y=200&crop=10,105,60,40&scale=1`,
+    )
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toBe('image/png')
     const { data, info } = await sharp(Buffer.from(await response.arrayBuffer()))
@@ -209,7 +211,12 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     expect(
       await page.$eval(`${bar} button[aria-label="Back"]`, (el) => el.getBoundingClientRect().left),
     ).toBeGreaterThanOrEqual(76)
-    await annotate(page)
+    const designToggle = `${bar} [data-design-toggle]`
+    await page.click(designToggle)
+    await page.waitForSelector(`${designToggle}[aria-pressed="true"]`)
+    await page.waitForSelector(`${present} [data-browser-viewport][aria-busy="false"] [data-design-shield]`, {
+      visible: true,
+    })
     expect(
       await page.$eval(`${bar} [data-design-hint]`, (el) => el.getBoundingClientRect().left),
     ).toBeGreaterThanOrEqual(76)
@@ -345,8 +352,13 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
       const { x, y, width, height } = el.getBoundingClientRect()
       return { x, y, scaleX: width / el.clientWidth, scaleY: height / el.clientHeight }
     })
-    const selectionCases = ['#title', '#next', '#summary']
-    for (const [index, selector] of selectionCases.entries()) {
+    const mouse = await page.createCDPSession()
+    const selectionCases = [
+      { selector: '#title', hoverSelector: '#title' },
+      { selector: 'a', hoverSelector: '#next' },
+      { selector: '#summary', hoverSelector: '#summary' },
+    ]
+    for (const [index, { selector, hoverSelector }] of selectionCases.entries()) {
       const target = await chipFrame!.$eval(selector, (el) => {
         const box = el.getBoundingClientRect()
         return { x: box.x, y: box.y, width: box.width, height: box.height, viewport: innerWidth }
@@ -378,15 +390,20 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
       const y = box.y + box.height / 2
       await page.mouse.move(x, y)
       const hover = await page.waitForSelector('[data-design-hover]', { visible: true })
-      expect(await hover!.evaluate((el) => el.getAttribute('data-design-hover'))).toBe(selector)
+      expect(await hover!.evaluate((el) => el.getAttribute('data-design-hover'))).toBe(hoverSelector)
       const ring = (await hover!.boundingBox())!
-      for (const edge of ['x', 'y', 'width', 'height'] as const) expect(Math.abs(ring[edge] - box[edge])).toBeLessThan(1)
-      await page.keyboard.down('Alt')
-      try {
-        await page.mouse.click(x, y)
-      } finally {
-        await page.keyboard.up('Alt')
-      }
+      for (const edge of ['x', 'y', 'width', 'height'] as const)
+        expect(Math.abs(ring[edge] - box[edge])).toBeLessThan(1)
+      // Drive trusted input with Option in the mouse event flags and no key events.
+      const click = {
+        x,
+        y,
+        button: 'left',
+        clickCount: 1,
+        modifiers: 1, // CDP's Alt bit
+      } as const
+      await mouse.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...click })
+      await mouse.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...click })
       await page.waitForFunction(
         (chips, count) => document.querySelectorAll(chips).length === count,
         {},
@@ -422,6 +439,7 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
       }
       expect(different / (expected.length / 3)).toBeLessThan(0.12)
     }
+    await mouse.detach()
     await page.waitForFunction(
       (chips) => {
         const images = [...document.querySelectorAll<HTMLImageElement>(`${chips} [data-context-thumbnail]`)]
