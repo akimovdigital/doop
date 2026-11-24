@@ -81,6 +81,7 @@ export const FRAME_OVERVIEW_MAX_ZOOM = 0.06
 export const FRAME_CAMERA_SETTLE_MS = 220
 const MIN_BITMAP_DENSITY = 0.125
 const THUMBNAIL_CACHE_BYTES = 32 * 1024 * 1024
+const OVERVIEW_CAPTURE_LIMIT = 3
 const MAX_BITMAP_EDGE = 8192
 const MAX_BITMAP_PIXELS = 2_400_000
 const CAPTURE_TIMEOUT_MS = 4000
@@ -162,16 +163,18 @@ export class FrameSnapshots {
   private readonly ready = new Set<Slot>()
   private cancelIdle: (() => void) | undefined
   private retryTimer: number | undefined
-  private pending: { slot: Slot; abort: AbortController } | undefined
+  private readonly pending = new Map<Slot, AbortController>()
   private stage: HTMLElement | undefined
   private layer: HTMLElement | undefined
   private zoom = 1
   private viewport: (() => Viewport) | undefined
+  private useOverview = false
 
-  connect(layer: HTMLElement, stage: HTMLElement, viewport: () => Viewport) {
+  connect(layer: HTMLElement, stage: HTMLElement, viewport: () => Viewport, useOverview = false) {
     this.layer = layer
     this.stage = stage
     this.viewport = viewport
+    this.useOverview = useOverview
     this.zoom = viewport().zoom
     const motion = new MutationObserver(() => {
       if (!stage.hasAttribute('data-frame-camera-moving')) {
@@ -185,7 +188,7 @@ export class FrameSnapshots {
     const theme = new MutationObserver(() => {
       if (root.style.colorScheme === colorScheme) return
       colorScheme = root.style.colorScheme
-      this.pending?.abort.abort()
+      for (const abort of this.pending.values()) abort.abort()
       this.cache.clear()
       this.thumbnails.clear()
       for (const slot of this.slots.values()) resetAttempts(slot)
@@ -204,7 +207,7 @@ export class FrameSnapshots {
       this.cancelIdle = undefined
       window.clearTimeout(this.retryTimer)
       this.retryTimer = undefined
-      this.pending?.abort.abort()
+      for (const abort of this.pending.values()) abort.abort()
       this.cache.clear()
       this.thumbnails.clear()
       for (const slot of this.slots.values()) resetAttempts(slot)
@@ -217,7 +220,7 @@ export class FrameSnapshots {
       if (changing || !sameRevision(slot.frame, frame)) {
         this.cache.delete(frame.id)
         this.thumbnails.delete(frame.id)
-        if (this.pending?.slot === slot) this.pending.abort.abort()
+        this.pending.get(slot)?.abort()
         resetAttempts(slot)
       }
       slot.frame = frame
@@ -237,7 +240,8 @@ export class FrameSnapshots {
   }
 
   remove(id: string) {
-    if (this.pending?.slot === this.slots.get(id)) this.pending?.abort.abort()
+    const slot = this.slots.get(id)
+    if (slot) this.pending.get(slot)?.abort()
     this.cache.delete(id)
     this.thumbnails.delete(id)
     this.slots.delete(id)
@@ -294,16 +298,23 @@ export class FrameSnapshots {
     if (this.paused()) {
       this.cancelIdle?.()
       this.cancelIdle = undefined
-      this.pending?.abort.abort()
+      for (const abort of this.pending.values()) abort.abort()
       return
     }
-    if (this.pending?.slot.image.hasAttribute('data-frame-snapshot-blocked')) this.pending.abort.abort()
-    if (this.cancelIdle || this.pending) return
+    for (const [slot, abort] of this.pending) {
+      if (slot.image.hasAttribute('data-frame-snapshot-blocked')) abort.abort()
+    }
+    const limit = this.useOverview && this.zoom <= FRAME_OVERVIEW_MAX_ZOOM ? OVERVIEW_CAPTURE_LIMIT : 1
+    if (this.cancelIdle || this.pending.size >= limit) return
     this.cancelIdle = onIdle(() => {
       this.cancelIdle = undefined
       if (this.paused()) return
       const slot = this.nextSlot()
-      if (slot) void this.capture(slot)
+      if (!slot) return
+      void this.capture(slot)
+      // Start at most one capture per idle callback. A resource request in
+      // one frame must not hold up the rest of the overview.
+      this.wake()
     })
   }
 
@@ -326,7 +337,8 @@ export class FrameSnapshots {
       const right = left + box.width * zoom
       const bottom = top + box.height * zoom
       const near = right >= -NEAR_PX && bottom >= -NEAR_PX && left <= width + NEAR_PX && top <= height + NEAR_PX
-      const density = snapshotDensity(frame, zoom, window.devicePixelRatio || 1)
+      const zoomDensity = snapshotDensity(frame, zoom, window.devicePixelRatio || 1)
+      const density = this.useOverview && !slot.displayed ? Math.min(zoomDensity, MIN_BITMAP_DENSITY) : zoomDensity
       const availableDensity = slot.detail?.density ?? slot.thumbnail?.density ?? 0
       if (near && slot.captured && density > availableDensity && (!slot.near || density < slot.requestedDensity)) {
         resetAttempts(slot)
@@ -340,7 +352,7 @@ export class FrameSnapshots {
         this.cache.touch(frame)
         this.thumbnails.touch(frame)
       }
-      if (image.hasAttribute('data-frame-snapshot-blocked')) continue
+      if (this.pending.has(slot) || image.hasAttribute('data-frame-snapshot-blocked')) continue
       if (density > slot.requestedDensity && density > availableDensity) {
         slot.attempts = 0
         slot.retryAt = 0
@@ -373,7 +385,7 @@ export class FrameSnapshots {
   private async capture(slot: Slot) {
     const { frame, image } = slot
     const abort = new AbortController()
-    this.pending = { slot, abort }
+    this.pending.set(slot, abort)
     const timeout = window.setTimeout(() => abort.abort(CAPTURE_DEADLINE), CAPTURE_TIMEOUT_MS)
     const started = performance.now()
     let url: string | undefined
@@ -426,7 +438,7 @@ export class FrameSnapshots {
     } finally {
       window.clearTimeout(timeout)
       if (url) URL.revokeObjectURL(url)
-      this.pending = undefined
+      this.pending.delete(slot)
       this.wake()
     }
   }

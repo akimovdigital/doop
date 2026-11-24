@@ -1856,13 +1856,12 @@ function FrameStack({
     [frames],
   )
   const limitOverview = heavyPage && !snapshotsDisabled
-  const overview = useStore((s) => limitOverview && s.viewport.zoom <= FRAME_OVERVIEW_MAX_ZOOM)
   const { admitted, request, protect } = useFrameAdmission(frames, stage, layer, presenting, limitOverview)
   useLayoutEffect(() => {
     const root = layer.current
     const target = stage.current ?? root?.closest<HTMLElement>('.stage')
     if (!root || !target) return
-    const disconnect = snapshots.connect(root, target, () => useStore.getState().viewport)
+    const disconnect = snapshots.connect(root, target, () => useStore.getState().viewport, heavyPage)
     const unsubscribe = useStore.subscribe((state, previous) => {
       if (state.viewport.zoom !== previous.viewport.zoom) snapshots.setZoom(state.viewport.zoom)
     })
@@ -1870,7 +1869,17 @@ function FrameStack({
       unsubscribe()
       disconnect()
     }
-  }, [snapshots, stage])
+  }, [snapshots, stage, heavyPage])
+  useLayoutEffect(() => {
+    const root = layer.current
+    if (!root) return
+    const inOverview = (zoom: number) => limitOverview && zoom <= FRAME_OVERVIEW_MAX_ZOOM
+    root.toggleAttribute('data-frame-overview', inOverview(useStore.getState().viewport.zoom))
+    return useStore.subscribe((state, previous) => {
+      const overview = inOverview(state.viewport.zoom)
+      if (overview !== inOverview(previous.viewport.zoom)) root.toggleAttribute('data-frame-overview', overview)
+    })
+  }, [limitOverview])
   useLayoutEffect(() => snapshots.wake(), [snapshots, snapshotsDisabled, presenting])
   const compactSectionTitles = useStore((s) => s.selectedSectionId !== null && s.viewport.zoom <= 0.05)
   return (
@@ -1880,7 +1889,6 @@ function FrameStack({
       data-live-frame-budget={LIVE_FRAME_BUDGET}
       data-animating-frame-budget={ANIMATING_FRAME_BUDGET}
       data-frame-snapshots-disabled={snapshotsDisabled ? '' : undefined}
-      data-frame-overview={overview ? '' : undefined}
     >
       {mounted.map((f) =>
         f.hidden && !f.browser ? (
