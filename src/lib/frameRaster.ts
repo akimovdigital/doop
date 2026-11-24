@@ -377,7 +377,6 @@ async function inlineInto(
   viewport: FrameViewport | null,
   opts: InlineOptions,
 ): Promise<string> {
-  doc.documentElement.setAttribute('data-doop-raster-root', '')
   const units = (css: string) => viewport?.units(css) ?? css
   const settleMedia = (css: string) => viewport?.media(css) ?? css
 
@@ -495,7 +494,10 @@ const CSS_DOCUMENT_ROOT =
 
 function pinDocumentRoot(css: string): string {
   if (!/:root/i.test(css)) return css
-  return css.replace(CSS_DOCUMENT_ROOT, (_, literal: string | undefined) => literal ?? '[data-doop-raster-root]')
+  return css.replace(
+    CSS_DOCUMENT_ROOT,
+    (_, literal: string | undefined) => literal ?? ':where(svg:root > foreignObject > html):first-child',
+  )
 }
 
 /** Every `url(...)` in `css` that points off the document becomes a data:
@@ -544,7 +546,8 @@ function isInlineUrl(ref: string): boolean {
   return /^(data:|#|about:)/i.test(ref)
 }
 
-const PREVIEW_FETCH_MS = 2_500
+const PREVIEW_FETCH_MS = 1_500
+const PREVIEW_PROXY_MS = 2_500
 const PREVIEW_FAILURE_TTL_MS = 3_000
 const PREVIEW_RESOURCE_TTL_MS = 60_000
 const PREVIEW_RESOURCE_BYTES = 16 * 1024 * 1024
@@ -588,13 +591,22 @@ async function previewBlob(
   const cancel = () => resource.abort(signal.reason)
   const timer = window.setTimeout(() => resource.abort(), PREVIEW_FETCH_MS)
   signal.addEventListener('abort', cancel, { once: true })
-  const blob = await fetchBlob(url, resource.signal)
-    .catch(() => (source && !resource.signal.aborted ? readBrowseCropResource(source, url, resource.signal) : null))
+  const direct = await fetchBlob(url, resource.signal)
     .catch(() => null)
     .finally(() => {
       window.clearTimeout(timer)
       signal.removeEventListener('abort', cancel)
     })
+  signal.throwIfAborted()
+  const blob =
+    direct ??
+    (source
+      ? await readBrowseCropResource(
+          source,
+          url,
+          AbortSignal.any([signal, AbortSignal.timeout(PREVIEW_PROXY_MS)]),
+        ).catch(() => null)
+      : null)
   signal.throwIfAborted()
   if ((blob?.size ?? 0) <= PREVIEW_RESOURCE_BYTES) {
     forgetPreviewResource(url)

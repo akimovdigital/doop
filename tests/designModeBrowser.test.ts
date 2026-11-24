@@ -222,7 +222,11 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
   it('scrolls a design-sized frame with the annotation shield active', async () => {
     await mount({ ...canvas, frames: [{ ...canvas.frames[0]!, height: 1400 }] }, false, false, true)
     await enter()
-    await page.mouse.move(500, 400)
+    const bounds = await page.$eval('[data-design-shield]', (element) => {
+      const rect = element.getBoundingClientRect()
+      return { x: rect.left + 100, y: rect.top + 100 }
+    })
+    await page.mouse.move(bounds.x, bounds.y)
     await page.mouse.wheel({ deltaY: 300 })
     await page.waitForFunction(() => document.querySelector('[data-proto-screen="home"]')!.scrollTop > 0)
     expect(await page.$eval('[data-proto-screen="home"]', (el) => el.clientWidth)).toBe(1000)

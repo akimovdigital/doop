@@ -124,12 +124,16 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
         </style><body><p>Dark frame</p></body></html>`,
     }
     const far = canvasFrame({ id: 'far', name: 'Far', x: 28000, y: 0, width: 4000, height: 12000 })
-    await openCanvasPage(page, [dark, far])
+    await openCanvasPage(page, [{ ...dark, html: '' }, far])
     const setZoom = (zoom: number) =>
       page.evaluate((zoom) => window.canvasPageHarness.setCamera({ x: 240, y: 160, zoom }), zoom)
     await setZoom(0.1)
-    const image = await page.waitForSelector('img[data-frame-snapshot-ready]')
+    // Seed the document after the initial fit, so the first capture is at
+    // the low zoom even if Chromium scheduled an idle task during opening.
+    await page.evaluate((frames) => window.canvasPageHarness.seed(frames), [dark, far])
+    const image = await page.waitForSelector('[data-doop-frame-shell="cached"] img[data-frame-snapshot-ready]')
     const low = await image!.evaluate((node) => node.naturalWidth)
+    expect(low).toBe(170)
     await setZoom(0.5)
     await page.waitForFunction((image, width) => image.naturalWidth > width, {}, image!, low)
     expect(await image!.evaluate((node) => node.naturalWidth)).toBeGreaterThanOrEqual(dark.width)

@@ -720,7 +720,7 @@ export function PrototypePlayer({
             )
           })}
           {scaling === 'actual' && !overlays.length && !move && (
-            <PreviewScrollbar key={current.key} entry={current.key} viewport={viewportRef} />
+            <PreviewScrollbar key={current.key} entry={current.key} />
           )}
           <DesignModeOverlay
             mode={design}
@@ -752,13 +752,15 @@ export function PrototypePlayer({
 
 /** An overlay on the actual-size viewport, so the site's box can reach
  * the right edge even on systems configured to always show scrollbars. */
-function PreviewScrollbar({ entry, viewport }: { entry: number; viewport: React.RefObject<HTMLDivElement> }) {
+function PreviewScrollbar({ entry }: { entry: number }) {
   const scroller = useRef<HTMLElement | null>(null)
   const thumb = useRef<HTMLDivElement>(null)
   const drag = useRef<{ y: number; top: number; ratio: number }>()
   useLayoutEffect(() => {
-    const element = viewport.current?.querySelector<HTMLElement>(`[data-proto-entry="${entry}"]`)
     const handle = thumb.current
+    const element = handle
+      ?.closest('[data-proto-viewport]')
+      ?.querySelector<HTMLElement>(`[data-proto-entry="${entry}"]`)
     if (!element || !handle) return
     scroller.current = element
     function update() {
@@ -780,7 +782,7 @@ function PreviewScrollbar({ entry, viewport }: { entry: number; viewport: React.
       element.removeEventListener('scroll', update)
       scroller.current = null
     }
-  }, [entry, viewport])
+  }, [entry])
   return (
     <div
       ref={thumb}
