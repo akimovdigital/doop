@@ -16,6 +16,42 @@ const unsupported = {
   html: '<body><iframe src="about:blank" title="Nested"></iframe></body>',
 }
 
+const overviewFrame = canvasFrame({ id: 'large', name: 'Large', x: 3000, y: 0, width: 5000, height: 16000 })
+const cachedShell = '[data-doop-frame-shell="cached"]'
+
+async function openSnapshotHandoff(page: Page) {
+  await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 })
+  // At 8% this frame uses the live document even after a sharper bitmap arrives.
+  // A tiny frame can correctly keep that bitmap after the handoff ends.
+  await openCanvasPage(page, [{ ...sample, width: 2560 }, overviewFrame])
+  await page.evaluate(() => {
+    window.canvasPageHarness.setCamera({ x: 450, y: 300, zoom: 0.02 })
+    window.canvasPageHarness.select('cached')
+  })
+  await page.waitForSelector(`${cachedShell} iframe[data-doop-frame]`)
+  await page.waitForSelector(`${cachedShell} img[data-frame-snapshot]:not([data-frame-snapshot-waiting])`)
+  await page.evaluate(() => window.canvasPageHarness.select(null))
+  await page.waitForFunction(
+    (shell) => {
+      const root = document.querySelector(shell)
+      const image = root?.querySelector<HTMLImageElement>(
+        '[data-frame-snapshot-ready]:not([data-frame-snapshot-waiting])',
+      )
+      const iframe = root?.querySelector('iframe[data-doop-frame]')
+      return (
+        root?.closest('[data-frame-overview]') &&
+        !document.querySelector('[data-frame-camera-moving]') &&
+        image?.naturalWidth &&
+        iframe &&
+        getComputedStyle(image).visibility === 'visible' &&
+        getComputedStyle(iframe).visibility === 'hidden'
+      )
+    },
+    {},
+    cachedShell,
+  )
+}
+
 function gestureLayers(page: Page, ctrlKey: boolean) {
   return page.evaluate((ctrlKey) => {
     const stage = document.querySelector('.stage')!
@@ -142,37 +178,106 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
     expect(await child!.evaluate(() => document.querySelector('input')!.value)).toBe('kept')
   })
 
-  it('holds the heavy overview layer through threshold crossings until the zoom settles', async () => {
+  it('reveals the acknowledged iframe underneath the same bitmap across density and overview thresholds', async () => {
     const page = await pages.open()
-    await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 })
-    await page.evaluateOnNewDocument(() => {
-      window.requestIdleCallback = () => 1
-      window.cancelIdleCallback = () => {}
-    })
-    const large = canvasFrame({ id: 'large', name: 'Large', x: 3000, y: 0, width: 5000, height: 16000 })
-    await openCanvasPage(page, [sample, large])
-    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 230, y: 140, zoom: 0.04 }))
-    await page.waitForSelector('[data-frame-overview] [data-doop-frame-shell="large"] img[data-frame-snapshot-ready]', {
-      visible: true,
-    })
-    const states = await page.evaluate(async () => {
-      const stage = document.querySelector('.stage')!
-      const layer = stage.querySelector('[data-frame-overview]')!
-      const image = stage.querySelector('[data-doop-frame-shell="large"] img[data-frame-snapshot-ready]')!
-      const states = []
-      for (const zoom of [0.11, 0.04, 0.11]) {
-        window.canvasPageHarness.setCamera({ x: 230, y: 140, zoom })
-        await new Promise(requestAnimationFrame)
-        states.push([layer.hasAttribute('data-frame-overview'), getComputedStyle(image).visibility])
+    await openSnapshotHandoff(page)
+    const [before, overlap, afterTwoFrames, live] = await page.$eval(cachedShell, async (shell) => {
+      const layer = shell.closest('[data-frame-overview]')!
+      const image = shell.querySelector<HTMLImageElement>('img[data-frame-snapshot-ready]')!
+      const iframe = shell.querySelector('iframe[data-doop-frame]')!
+      const bitmap = image.src
+      const handoff = 'data-frame-snapshot-handoff'
+      function state() {
+        const bounds = iframe.getBoundingClientRect()
+        const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+        return {
+          overview: layer.hasAttribute('data-frame-overview'),
+          sharp: image.hasAttribute('data-frame-snapshot-sharp'),
+          snapshot: getComputedStyle(image).visibility,
+          snapshotOpacity: getComputedStyle(image).opacity,
+          snapshotPointerEvents: getComputedStyle(image).pointerEvents,
+          iframe: getComputedStyle(iframe).visibility,
+          iframeContent: getComputedStyle(iframe).contentVisibility,
+          sameBitmap: image.src === bitmap,
+          hit: hit && shell.contains(hit) ? hit : null,
+        }
       }
-      return states
+      const before = state()
+      for (const zoom of [0.025, 0.031, 0.039, 0.049, 0.061, 0.08]) {
+        window.canvasPageHarness.setCamera({ x: 450, y: 300, zoom })
+      }
+      await new Promise(requestAnimationFrame)
+      const overlap = state()
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      const afterTwoFrames = state()
+      await new Promise<void>((resolve) => {
+        if (!image.hasAttribute(handoff)) return resolve()
+        const observer = new MutationObserver(() => {
+          if (image.hasAttribute(handoff)) return
+          observer.disconnect()
+          resolve()
+        })
+        observer.observe(image, { attributeFilter: [handoff] })
+      })
+      return [before, overlap, afterTwoFrames, state()].map(({ hit, ...state }) => ({
+        ...state,
+        sameHit: !!hit && hit === before.hit,
+      }))
+    })
+    expect(before).toMatchObject({ overview: true, sharp: true, snapshot: 'visible', iframe: 'hidden', sameHit: true })
+    expect(overlap).toMatchObject({
+      overview: true,
+      sharp: false,
+      snapshot: 'visible',
+      snapshotOpacity: '0.999',
+      snapshotPointerEvents: 'none',
+      iframe: 'visible',
+      iframeContent: 'visible',
+      sameBitmap: true,
+      sameHit: true,
+    })
+    expect(afterTwoFrames).toMatchObject({ snapshot: 'visible', iframe: 'visible', sameBitmap: true })
+    expect(live).toMatchObject({ snapshot: 'hidden', iframe: 'visible', sameHit: true })
+    await page.waitForFunction(() => !document.querySelector('.stage [data-frame-overview]'))
+    expect(await page.$(`${cachedShell} [data-frame-snapshot-handoff]`)).toBeNull()
+  })
+
+  it('cancels the handoff on zoom reversal and lets selection reveal the iframe immediately', async () => {
+    const page = await pages.open()
+    await openSnapshotHandoff(page)
+    const states = await page.$eval(cachedShell, async (shell) => {
+      const image = shell.querySelector('img[data-frame-snapshot-ready]')!
+      const iframe = shell.querySelector('iframe[data-doop-frame]')!
+      const handoff = 'data-frame-snapshot-handoff'
+      const zoom = (zoom: number) => window.canvasPageHarness.setCamera({ x: 450, y: 300, zoom })
+      const state = () => [
+        image.hasAttribute(handoff),
+        getComputedStyle(image).visibility,
+        getComputedStyle(iframe).visibility,
+      ]
+      zoom(0.08)
+      await new Promise(requestAnimationFrame)
+      const leaving = state()
+      zoom(0.02)
+      await new Promise(requestAnimationFrame)
+      const reversed = state()
+      window.canvasPageHarness.select('cached')
+      await new Promise<void>((resolve) => {
+        if (image.hasAttribute('data-frame-snapshot-blocked')) return resolve()
+        const observer = new MutationObserver(() => {
+          if (!image.hasAttribute('data-frame-snapshot-blocked')) return
+          observer.disconnect()
+          resolve()
+        })
+        observer.observe(image, { attributeFilter: ['data-frame-snapshot-blocked'] })
+      })
+      return [leaving, reversed, state()]
     })
     expect(states).toEqual([
-      [true, 'visible'],
-      [true, 'visible'],
-      [true, 'visible'],
+      [true, 'visible', 'visible'],
+      [false, 'visible', 'hidden'],
+      [false, 'hidden', 'visible'],
     ])
-    await page.waitForFunction(() => !document.querySelector('.stage [data-frame-overview]'))
   })
 
   it('preserves dark root rules and increases cached density as the camera zooms in', async () => {

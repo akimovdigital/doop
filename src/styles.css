@@ -1530,23 +1530,21 @@ body:has([data-prototype-player]:not([data-minimized])) .stage[data-stage-presen
 
 [data-frame-snapshot-handoff] {
   z-index: 1;
+  opacity: 0.999;
 }
 
-/* A snapshot can cover an unready document, including while selection
-   admits it. At handoff, draw the iframe underneath the preview. */
-[data-frame-snapshot-ready]:is(
-    [data-frame-snapshot-waiting],
-    [data-frame-snapshot-handoff],
-    [data-frame-snapshot-sharp]:not([data-frame-snapshot-blocked]):is(
-        .stage[data-frame-camera-moving] *,
-        [data-frame-overview] *,
-        .stage [data-frame-snapshot-tiny]
-      )
-  ):not([data-frame-snapshots-disabled] *) {
+/* Keep the iframe laid out. At handoff, draw it underneath the preview. */
+[data-frame-snapshot-ready]:is([data-frame-snapshot-cover], [data-frame-snapshot-handoff]):not(
+    [data-frame-snapshots-disabled] *,
+    [data-stage-presenting] *
+  ) {
   visibility: visible;
 
-  /* Keep the iframe laid out so the handoff doesn't rebuild its layout. */
-  &:not([data-frame-snapshot-handoff]) + div > iframe[data-doop-frame] {
+  &[data-frame-snapshot-cover] + div > iframe[data-doop-frame] {
     visibility: hidden;
+  }
+
+  &[data-frame-snapshot-handoff] + div > iframe[data-doop-frame] {
+    content-visibility: visible !important;
   }
 }

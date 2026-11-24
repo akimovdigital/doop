@@ -1,10 +1,17 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { FrameSnapshotCache, FrameSnapshots, canSnapshotFrame, holdSnapshotForPaint } from '../src/lib/frameSnapshots'
+import { FrameSnapshotCache, FrameSnapshots, canSnapshotFrame } from '../src/lib/frameSnapshots'
 import { rasterizeFrame } from '../src/lib/frameRaster'
 import type { Frame } from '../shared/types'
 
 vi.mock('../src/lib/frameRaster', () => ({ rasterizeFrame: vi.fn() }))
+
+const engine = vi.hoisted(() => ({ chromium: false }))
+vi.mock('../src/lib/layoutZoom', () => ({
+  get FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY() {
+    return engine.chromium
+  },
+}))
 
 const frame = { id: 'a', updatedAt: 1, html: '<h1>One</h1>', width: 680, height: 300 }
 const eligible = { selected: false, editing: false, streaming: false, interacting: false, presenting: false }
@@ -53,6 +60,7 @@ describe('frame snapshots', () => {
 
 describe('snapshot capture queue', () => {
   afterEach(() => {
+    engine.chromium = false
     vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.mocked(rasterizeFrame).mockReset()
@@ -108,36 +116,171 @@ describe('snapshot capture queue', () => {
     return { snapshots, stage, layer, move, stop, zoomTo }
   }
 
-  it('holds a ready snapshot over the newly acknowledged iframe through one paint opportunity', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+  it.each(['acknowledgement', 'density', 'overview exit'] as const)(
+    'offers a paint under the same ready snapshot on %s',
+    async (transition) => {
+      const frames = animationFrames()
+      const decode = vi.spyOn(Image.prototype, 'decode').mockResolvedValue(undefined)
+      vi.mocked(rasterizeFrame).mockResolvedValue(new Blob(['bitmap'], { type: 'image/png' }))
+      const overview = transition !== 'acknowledgement'
+      const { snapshots, layer, move, stop, zoomTo } = queue(overview ? 0.02 : 1, overview, undefined, frames)
+      const image = new Image()
+      const cover = 'data-frame-snapshot-cover'
+      const handoff = 'data-frame-snapshot-handoff'
+      layer.append(image)
+      if (!overview) image.setAttribute('data-frame-snapshot-waiting', '')
+      const revision = { ...frame, width: 9000, x: 0, y: 0 } as Frame
+      snapshots.update(revision, image, false)
+      try {
+        await vi.advanceTimersByTimeAsync(80)
+        expect(image.hasAttribute('data-frame-snapshot-ready')).toBe(true)
+        const src = image.src
+
+        if (transition === 'acknowledgement') {
+          image.removeAttribute('data-frame-snapshot-waiting')
+          snapshots.update(revision, image, false)
+        } else if (transition === 'density') {
+          move(true)
+          zoomTo(0.08)
+          await Promise.resolve()
+        } else {
+          layer.removeAttribute('data-frame-overview')
+          await vi.advanceTimersByTimeAsync(0)
+        }
+        expect(image.hasAttribute(handoff)).toBe(true)
+        expect(image.hasAttribute(cover)).toBe(false)
+        expect(image.src).toBe(src)
+        await frames.tick()
+        expect(image.hasAttribute(handoff)).toBe(true)
+        await frames.tick()
+        expect(image.hasAttribute(handoff)).toBe(false)
+      } finally {
+        stop()
+        decode.mockRestore()
+      }
+    },
+  )
+
+  it.each([
+    ['overview exit', true, true, 0.079, true],
+    ['acknowledgement', true, true, 0.11, true],
+    ['overview exit at 6.4%', true, true, 0.064, true],
+    ['above the range', true, true, 0.111, false],
+    ['WebKit', false, true, 0.08, false],
+    ['light page', true, false, 0.08, false],
+    ['camera motion', true, true, 0.08, true],
+  ] as const)('uses the expected paint hold for %s', async (transition, chromium, heavy, zoom, extended) => {
+    engine.chromium = chromium
     const frames = animationFrames()
-    vi.stubGlobal('requestAnimationFrame', frames.request)
-    vi.stubGlobal('cancelAnimationFrame', frames.cancel)
+    const decode = vi.spyOn(Image.prototype, 'decode').mockResolvedValue(undefined)
+    vi.mocked(rasterizeFrame).mockResolvedValue(new Blob(['bitmap'], { type: 'image/png' }))
+    const waiting = transition === 'acknowledgement' || !heavy
+    const startInOverview = !waiting && transition !== 'camera motion'
+    const { snapshots, layer, move, stop, zoomTo } = queue(startInOverview ? 0.02 : zoom, heavy, undefined, frames)
+    if (!startInOverview) layer.removeAttribute('data-frame-overview')
     const image = new Image()
-    const held = 'data-frame-snapshot-handoff'
-    image.setAttribute('data-frame-snapshot-waiting', '')
-    expect(holdSnapshotForPaint(image)).toBeUndefined()
-    expect(frames.callbacks.size).toBe(0)
-    image.setAttribute('data-frame-snapshot-ready', '')
-    const stop = holdSnapshotForPaint(image)
+    const handoff = 'data-frame-snapshot-handoff'
+    const revision = { ...frame, width: 9000, x: 0, y: 0 } as Frame
+    layer.append(image)
+    image.toggleAttribute('data-frame-snapshot-waiting', waiting)
+    snapshots.update(revision, image, false)
     try {
-      expect(image.hasAttribute(held)).toBe(true)
+      await vi.advanceTimersByTimeAsync(80)
+      if (transition === 'camera motion') {
+        move(true)
+        await vi.advanceTimersByTimeAsync(0)
+      }
+      expect(image.hasAttribute('data-frame-snapshot-cover')).toBe(true)
+      const src = image.src
+
+      if (waiting) {
+        image.removeAttribute('data-frame-snapshot-waiting')
+        snapshots.update(revision, image, false)
+      } else if (transition === 'camera motion') {
+        move(false)
+        await vi.advanceTimersByTimeAsync(0)
+      } else {
+        move(true)
+        zoomTo(zoom)
+        await Promise.resolve()
+      }
+      expect(image.hasAttribute(handoff)).toBe(true)
+      expect(image.hasAttribute('data-frame-snapshot-cover')).toBe(false)
+      if (extended) {
+        await vi.advanceTimersByTimeAsync(799)
+        expect(image.hasAttribute(handoff)).toBe(true)
+        expect(image.src).toBe(src)
+        expect(frames.callbacks.size).toBe(0)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(frames.callbacks.size).toBe(1)
+      }
       await frames.tick()
-      expect(image.hasAttribute(held)).toBe(true)
+      expect(image.hasAttribute(handoff)).toBe(true)
       await frames.tick()
-      expect(image.hasAttribute(held)).toBe(false)
+      expect(image.hasAttribute(handoff)).toBe(false)
+    } finally {
+      stop()
+      decode.mockRestore()
+    }
+  })
+
+  it.each([
+    'disabled',
+    'selection',
+    'Present',
+    'rotation',
+    'revision',
+    'hidden',
+    'remove',
+    'disconnect',
+    'zoom',
+  ] as const)('cancels the extended handoff on %s', async (reason) => {
+    engine.chromium = true
+    const frames = animationFrames()
+    const decode = vi.spyOn(Image.prototype, 'decode').mockResolvedValue(undefined)
+    vi.mocked(rasterizeFrame).mockResolvedValue(new Blob(['bitmap'], { type: 'image/png' }))
+    const { snapshots, stage, layer, move, stop, zoomTo } = queue(0.02, true, undefined, frames)
+    const image = new Image()
+    const revision = { ...frame, x: 0, y: 0 } as Frame
+    const handoff = 'data-frame-snapshot-handoff'
+    const hidden = reason === 'hidden' ? vi.spyOn(document, 'hidden', 'get') : undefined
+    layer.append(image)
+    snapshots.update(revision, image, false)
+    try {
+      await vi.advanceTimersByTimeAsync(80)
+      move(true)
+      zoomTo(0.08)
+      await Promise.resolve()
+      expect(image.hasAttribute(handoff)).toBe(true)
+      await vi.advanceTimersByTimeAsync(reason === 'selection' ? 800 : 400)
+      expect(image.hasAttribute(handoff)).toBe(true)
+
+      if (reason === 'disabled') layer.setAttribute('data-frame-snapshots-disabled', '')
+      if (reason === 'Present') stage.setAttribute('data-stage-presenting', '')
+      if (reason === 'selection') {
+        image.setAttribute('data-frame-snapshot-blocked', '')
+        snapshots.update(revision, image, false)
+      }
+      if (reason === 'rotation') snapshots.update({ ...revision, rotation: 15 }, image, false)
+      if (reason === 'revision') snapshots.update({ ...revision, updatedAt: 2 }, image, false)
+      if (hidden) {
+        hidden.mockReturnValue(true)
+        document.dispatchEvent(new Event('visibilitychange'))
+      }
+      if (reason === 'remove') snapshots.remove(revision.id)
+      if (reason === 'disconnect') stop()
+      if (reason === 'zoom') zoomTo(0.12)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(image.hasAttribute(handoff)).toBe(false)
+      expect(image.hasAttribute('data-frame-snapshot-cover')).toBe(false)
+      expect(frames.callbacks.size).toBe(0)
+      await vi.advanceTimersByTimeAsync(800)
       expect(frames.callbacks.size).toBe(0)
     } finally {
-      stop?.()
+      stop()
+      hidden?.mockRestore()
+      decode.mockRestore()
     }
-    const cancel = holdSnapshotForPaint(image)
-    cancel?.()
-    expect(image.hasAttribute(held)).toBe(false)
-    expect(frames.callbacks.size).toBe(0)
-
-    image.removeAttribute('data-frame-snapshot-waiting')
-    expect(holdSnapshotForPaint(image)).toBeUndefined()
-    expect(frames.callbacks.size).toBe(0)
   })
 
   it('starts one first overview capture per frame and lets slow resources retry without a frame', async () => {

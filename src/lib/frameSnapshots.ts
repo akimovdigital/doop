@@ -1,5 +1,6 @@
 import { rotatedBounds } from '../../shared/frameRotation'
 import type { Frame } from '../../shared/types'
+import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY } from './layoutZoom'
 import type { Viewport } from './store'
 
 type Revision = Pick<Frame, 'id' | 'updatedAt' | 'html' | 'width' | 'height'>
@@ -75,25 +76,12 @@ export function canSnapshotFrame(
   )
 }
 
-/** Keep a decoded preview above the iframe for a rendering opportunity after its HTML ACK. */
-export function holdSnapshotForPaint(image: HTMLImageElement) {
-  if (!image.matches('[data-frame-snapshot-ready][data-frame-snapshot-waiting]')) return
-  if (image.closest('[data-frame-snapshots-disabled]')) return
-  image.setAttribute('data-frame-snapshot-handoff', '')
-  const release = () => {
-    window.cancelAnimationFrame(frame)
-    image.removeAttribute('data-frame-snapshot-handoff')
-  }
-  let frame = window.requestAnimationFrame(() => {
-    frame = window.requestAnimationFrame(release)
-  })
-  return release
-}
-
 const NEAR_PX = 180
 export const FRAME_SNAPSHOT_TINY_PX = 160
 export const FRAME_OVERVIEW_MAX_ZOOM = 0.06
 export const FRAME_CAMERA_SETTLE_MS = 220
+const OVERVIEW_HANDOFF_MAX_ZOOM = 0.11
+const OVERVIEW_HANDOFF_MS = 800
 const MIN_BITMAP_DENSITY = 0.125
 const MIN_OVERVIEW_DENSITY = 1 / 32
 const THUMBNAIL_CACHE_BYTES = 32 * 1024 * 1024
@@ -109,6 +97,7 @@ const CAPTURE_DEADLINE = Symbol('snapshot deadline')
 const RETRY_DELAYS_MS = [3500, 7000]
 
 type Snapshot = { url: string; density: number; readyAt: string }
+type SnapshotHandoff = { timer?: number; frame?: number }
 
 type Slot = {
   frame: Frame
@@ -121,7 +110,20 @@ type Slot = {
   thumbnail?: Snapshot
   detail?: Snapshot
   displayed?: Snapshot
+  handoff?: SnapshotHandoff
   requestedDensity: number
+}
+
+const COVER = 'data-frame-snapshot-cover'
+const HANDOFF = 'data-frame-snapshot-handoff'
+
+function cancelHandoff(slot: Slot) {
+  const { handoff } = slot
+  if (!handoff) return
+  window.clearTimeout(handoff.timer)
+  if (handoff.frame !== undefined) window.cancelAnimationFrame(handoff.frame)
+  slot.handoff = undefined
+  slot.image.removeAttribute(HANDOFF)
 }
 
 function resetAttempts(slot: Slot) {
@@ -225,15 +227,22 @@ export class FrameSnapshots {
     this.zoom = viewport().zoom
     if (useOverview) this.firstOverviewUntil ??= performance.now() + FIRST_OVERVIEW_FRAME_WINDOW_MS
     const motion = new MutationObserver(() => {
-      if (!stage.hasAttribute('data-frame-camera-moving')) {
-        for (const slot of this.ready) {
-          this.display(slot)
-          this.updateTiny(slot)
-        }
+      for (const slot of this.ready) {
+        if (stage.hasAttribute('data-frame-camera-moving')) this.updateCover(slot)
+        else this.display(slot)
       }
       this.wake()
     })
     motion.observe(stage, { attributes: true, attributeFilter: ['data-frame-camera-moving'] })
+    const policy = new MutationObserver(() => {
+      for (const slot of this.ready) this.updateCover(slot)
+    })
+    policy.observe(stage, { attributes: true, attributeFilter: ['data-stage-presenting'] })
+    policy.observe(layer, {
+      attributes: true,
+      attributeFilter: ['data-frame-overview', 'data-frame-snapshots-disabled'],
+    })
+    for (const slot of this.ready) this.updateCover(slot)
     const root = document.documentElement
     let colorScheme = root.style.colorScheme
     const theme = new MutationObserver(() => {
@@ -249,16 +258,21 @@ export class FrameSnapshots {
     const size = new ResizeObserver(() => this.wake())
     size.observe(stage)
     const visibility = () => {
-      if (document.hidden) this.cancelScheduledCapture()
-      this.wake()
+      if (document.hidden) {
+        for (const slot of this.ready) cancelHandoff(slot)
+        if (useOverview) this.cancelScheduledCapture()
+      }
+      if (useOverview) this.wake()
     }
-    if (useOverview) document.addEventListener('visibilitychange', visibility)
+    document.addEventListener('visibilitychange', visibility)
     this.wake()
     return () => {
       motion.disconnect()
+      policy.disconnect()
       theme.disconnect()
       size.disconnect()
-      if (useOverview) document.removeEventListener('visibilitychange', visibility)
+      document.removeEventListener('visibilitychange', visibility)
+      for (const slot of this.ready) cancelHandoff(slot)
       this.stage = this.layer = this.viewport = undefined
       this.cancelScheduledCapture()
       this.cancelOverviewFrame()
@@ -275,12 +289,19 @@ export class FrameSnapshots {
     const slot = this.slots.get(frame.id)
     if (slot && slot.image === image) {
       if (changing || !sameRevision(slot.frame, frame)) {
+        cancelHandoff(slot)
+        image.removeAttribute(COVER)
         this.cache.delete(frame.id)
         this.thumbnails.delete(frame.id)
         this.pending.get(slot)?.abort()
         resetAttempts(slot)
       }
+      if (slot.frame.rotation !== frame.rotation) {
+        cancelHandoff(slot)
+        slot.image.removeAttribute(COVER)
+      }
       slot.frame = frame
+      this.updateCover(slot)
     } else {
       this.remove(frame.id)
       this.slots.set(frame.id, {
@@ -299,7 +320,11 @@ export class FrameSnapshots {
 
   remove(id: string) {
     const slot = this.slots.get(id)
-    if (slot) this.pending.get(slot)?.abort()
+    if (slot) {
+      cancelHandoff(slot)
+      slot.image.removeAttribute(COVER)
+      this.pending.get(slot)?.abort()
+    }
     this.cache.delete(id)
     this.thumbnails.delete(id)
     this.slots.delete(id)
@@ -307,10 +332,6 @@ export class FrameSnapshots {
       this.cancelScheduledCapture()
       this.cancelOverviewFrame()
     }
-  }
-
-  private updateTiny({ frame, image }: Slot) {
-    image.toggleAttribute('data-frame-snapshot-tiny', frame.width * this.zoom < FRAME_SNAPSHOT_TINY_PX)
   }
 
   setZoom(zoom: number) {
@@ -322,7 +343,7 @@ export class FrameSnapshots {
       if (!this.stage || this.zoom !== zoom) return
       const moving = this.stage.hasAttribute('data-frame-camera-moving')
       for (const slot of this.ready) {
-        if (moving) this.updateSharp(slot)
+        if (moving) this.updateCover(slot)
         else this.display(slot)
       }
       this.wake()
@@ -336,27 +357,71 @@ export class FrameSnapshots {
       this.zoom <= FRAME_OVERVIEW_MAX_ZOOM && thumbnail && thumbnail.density >= requiredDensity
         ? thumbnail
         : (detail ?? thumbnail)
-    if (slot.displayed !== bitmap) {
-      slot.displayed = bitmap
-      if (bitmap) {
-        image.src = bitmap.url
-        image.setAttribute('data-frame-snapshot-ready', bitmap.readyAt)
-        this.ready.add(slot)
-        this.updateTiny(slot)
-      } else {
-        this.ready.delete(slot)
-        image.removeAttribute('src')
-        image.removeAttribute('data-frame-snapshot-ready')
-      }
+    if (slot.displayed === bitmap || (slot.displayed && (slot.displayed === thumbnail || slot.displayed === detail))) {
+      this.updateCover(slot, requiredDensity)
+      if (slot.displayed === bitmap || slot.handoff) return
     }
-    this.updateSharp(slot, requiredDensity)
+    cancelHandoff(slot)
+    slot.displayed = bitmap
+    if (bitmap) {
+      image.src = bitmap.url
+      image.setAttribute('data-frame-snapshot-ready', bitmap.readyAt)
+      this.ready.add(slot)
+    } else {
+      this.ready.delete(slot)
+      image.removeAttribute('src')
+      image.removeAttribute('data-frame-snapshot-ready')
+    }
+    this.updateCover(slot, requiredDensity)
   }
 
-  private updateSharp({ image, displayed }: Slot, requiredDensity = this.zoom * (window.devicePixelRatio || 1)) {
+  private updateCover(slot: Slot, requiredDensity = this.zoom * (window.devicePixelRatio || 1)) {
+    const { image, displayed, frame } = slot
+    const waiting = image.hasAttribute('data-frame-snapshot-waiting')
+    const blocked = image.hasAttribute('data-frame-snapshot-blocked')
+    const { stage, layer } = this
     const sharp = !!displayed && displayed.density >= requiredDensity
     if (image.hasAttribute('data-frame-snapshot-sharp') !== sharp) {
       image.toggleAttribute('data-frame-snapshot-sharp', sharp)
     }
+    if (
+      !displayed ||
+      !stage ||
+      stage.hasAttribute('data-stage-presenting') ||
+      layer?.hasAttribute('data-frame-snapshots-disabled')
+    ) {
+      cancelHandoff(slot)
+      image.removeAttribute(COVER)
+      return
+    }
+    const cover =
+      waiting ||
+      (!blocked &&
+        sharp &&
+        (stage.hasAttribute('data-frame-camera-moving') ||
+          (this.inOverview() && layer?.hasAttribute('data-frame-overview')) ||
+          frame.width * this.zoom < FRAME_SNAPSHOT_TINY_PX))
+    const overviewHandoffZoom = this.zoom <= OVERVIEW_HANDOFF_MAX_ZOOM
+    if (cover || blocked || (slot.handoff?.timer !== undefined && !overviewHandoffZoom)) cancelHandoff(slot)
+    if (image.hasAttribute(COVER) === cover) return
+    if (!cover && !blocked && !document.hidden && typeof window.requestAnimationFrame === 'function') {
+      // Reveal the live iframe underneath the decoded bitmap for a paint.
+      image.setAttribute(HANDOFF, '')
+      const handoff: SnapshotHandoff = (slot.handoff = {})
+      const scheduleRelease = () => {
+        handoff.frame = window.requestAnimationFrame(() => {
+          handoff.frame = window.requestAnimationFrame(() => {
+            cancelHandoff(slot)
+            this.display(slot)
+          })
+        })
+      }
+      if (this.useOverview && FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY && overviewHandoffZoom) {
+        // A busy Chromium compositor can take longer to paint a revealed iframe.
+        handoff.timer = window.setTimeout(scheduleRelease, OVERVIEW_HANDOFF_MS)
+      } else scheduleRelease()
+    }
+    image.toggleAttribute(COVER, cover)
   }
 
   private paused() {
