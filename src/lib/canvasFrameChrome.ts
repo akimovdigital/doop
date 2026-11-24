@@ -10,6 +10,15 @@ import { imageElementHtml } from './frameClipboard'
 import { rasterizeFrame } from './frameRaster'
 import { recordCreate } from './history'
 import { t } from './i18n'
+
+/** Temporary opt-in while the floating HTML frame controls are reworked. */
+export function htmlFrameToolbarEnabled(): boolean {
+  try {
+    return localStorage.getItem('doop:html-frame-toolbar') === '1'
+  } catch {
+    return false
+  }
+}
 import { prototypePath } from './prototype'
 import { canEditOpenCanvas, useStore } from './store'
 

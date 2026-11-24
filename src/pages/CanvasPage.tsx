@@ -141,7 +141,12 @@ import { t as translate, useT } from '../lib/i18n'
 import { NO_INSETS, type StageInsets } from '../lib/viewFit'
 import { usePanelLayout } from '../lib/panelLayout'
 
-const PresentMode = lazy(() => import('../components/PresentMode').then((module) => ({ default: module.PresentMode })))
+const loadPresentMode = () => import('../components/PresentMode')
+const PresentMode = lazy(() => loadPresentMode().then((module) => ({ default: module.PresentMode })))
+
+function preloadPresentMode() {
+  void loadPresentMode().catch(() => {})
+}
 
 /* The floating chrome's geometry, in px from the canvas area's edges. The
    panels sit 14px in from the edge; on the right the resizable Agents panel
@@ -1035,6 +1040,8 @@ export function CanvasPage({
                   className={barPillIconBtn}
                   aria-label={t('canvas.presentPrototypeLabel')}
                   disabled={!playFrom}
+                  onPointerEnter={preloadPresentMode}
+                  onFocus={preloadPresentMode}
                   onClick={() => openPresent(playFrom)}
                 >
                   <PlayIcon className="size-3.5" />

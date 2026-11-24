@@ -272,10 +272,9 @@ export function PreviewChatCapsule({
           >
             <span aria-hidden="true" className="h-[5px] w-[70px] rounded-pill bg-ink-faint ring-1 ring-surface/70" />
           </Button>
-          {(pending > 0 || working) && (
+          {working && (
             <div className="absolute left-full ml-1 flex items-center gap-1">
-              {pending > 0 && <PendingBadge label={badge} count={pending} onClick={onShowQueue} />}
-              {working && <Working />}
+              <Working />
             </div>
           )}
         </div>
@@ -284,22 +283,18 @@ export function PreviewChatCapsule({
   )
 }
 
-function PendingBadge({ label, count, onClick }: { label: string; count?: number; onClick: () => void }) {
+function PendingBadge({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <Button
       data-preview-chat-pending=""
       variant="bare"
       size="pill"
-      className={
-        count === undefined
-          ? 'bg-brand/10 text-brand hover:bg-brand/15 hover:text-brand'
-          : 'pointer-events-auto h-4 min-w-4 bg-brand px-1 text-micro text-white hover:bg-brand/90 hover:text-white'
-      }
+      className="bg-brand/10 text-brand hover:bg-brand/15 hover:text-brand"
       aria-label={label}
       title={label}
       onClick={onClick}
     >
-      {count ?? label}
+      {label}
     </Button>
   )
 }

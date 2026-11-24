@@ -541,7 +541,7 @@ export function PrototypePlayer({
   const screenPlacement =
     scaling === 'fill' || scaling === 'fit'
       ? 'place-content-center overflow-clip'
-      : 'place-items-center-safe overflow-auto'
+      : `place-items-center-safe overflow-auto ${scaling === 'actual' ? '[scrollbar-width:none]' : ''}`
 
   const screenProps = (entry: Entry) => ({
     entry,
@@ -719,6 +719,9 @@ export function PrototypePlayer({
               </div>
             )
           })}
+          {scaling === 'actual' && !overlays.length && !move && (
+            <PreviewScrollbar key={current.key} entry={current.key} viewport={viewportRef} />
+          )}
           <DesignModeOverlay
             mode={design}
             screen={annotationScreen.key}
@@ -744,6 +747,64 @@ export function PrototypePlayer({
         </div>
       )}
     </div>
+  )
+}
+
+/** An overlay on the actual-size viewport, so the site's box can reach
+ * the right edge even on systems configured to always show scrollbars. */
+function PreviewScrollbar({ entry, viewport }: { entry: number; viewport: React.RefObject<HTMLDivElement> }) {
+  const scroller = useRef<HTMLElement | null>(null)
+  const thumb = useRef<HTMLDivElement>(null)
+  const drag = useRef<{ y: number; top: number; ratio: number }>()
+  useLayoutEffect(() => {
+    const element = viewport.current?.querySelector<HTMLElement>(`[data-proto-entry="${entry}"]`)
+    const handle = thumb.current
+    if (!element || !handle) return
+    scroller.current = element
+    function update() {
+      if (!element || !handle) return
+      const { clientHeight, scrollHeight, scrollTop } = element
+      const travel = scrollHeight - clientHeight
+      const size = Math.max(20, (clientHeight * clientHeight) / scrollHeight)
+      handle.hidden = travel <= 0
+      handle.style.height = `${size}px`
+      handle.style.transform = `translateY(${travel > 0 ? (scrollTop / travel) * (clientHeight - size) : 0}px)`
+    }
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(element)
+    if (element.firstElementChild) observer.observe(element.firstElementChild)
+    element.addEventListener('scroll', update, { passive: true })
+    return () => {
+      observer.disconnect()
+      element.removeEventListener('scroll', update)
+      scroller.current = null
+    }
+  }, [entry, viewport])
+  return (
+    <div
+      ref={thumb}
+      data-proto-scrollbar=""
+      aria-hidden="true"
+      className="absolute top-0 right-0.5 z-[8] w-1.5 touch-none rounded-full bg-neutral-500/70 hover:bg-neutral-400"
+      onPointerDown={(event) => {
+        const element = scroller.current
+        if (event.button !== 0 || !element) return
+        const space = element.clientHeight - event.currentTarget.offsetHeight
+        if (space <= 0) return
+        drag.current = {
+          y: event.clientY,
+          top: element.scrollTop,
+          ratio: (element.scrollHeight - element.clientHeight) / space,
+        }
+        event.currentTarget.setPointerCapture(event.pointerId)
+      }}
+      onPointerMove={(event) => {
+        if (!drag.current || !scroller.current) return
+        scroller.current.scrollTop = drag.current.top + (event.clientY - drag.current.y) * drag.current.ratio
+      }}
+      onLostPointerCapture={() => (drag.current = undefined)}
+    />
   )
 }
 

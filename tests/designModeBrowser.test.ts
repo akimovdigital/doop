@@ -219,6 +219,16 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await page.waitForSelector(field, { hidden: true })
   }
 
+  it('scrolls a design-sized frame with the annotation shield active', async () => {
+    await mount({ ...canvas, frames: [{ ...canvas.frames[0]!, height: 1400 }] }, false, false, true)
+    await enter()
+    await page.mouse.move(500, 400)
+    await page.mouse.wheel({ deltaY: 300 })
+    await page.waitForFunction(() => document.querySelector('[data-proto-screen="home"]')!.scrollTop > 0)
+    expect(await page.$eval('[data-proto-screen="home"]', (el) => el.clientWidth)).toBe(1000)
+    await page.waitForSelector('[data-proto-scrollbar]', { visible: true })
+  })
+
   const sent = () => page.evaluate(() => (window as unknown as Fixture).designSends)
   const draft = () => page.evaluate((id) => (window as unknown as Fixture).readDesignDraft(id), canvas.id)
 
@@ -925,6 +935,9 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await enter()
     await page.waitForSelector(chatField, { hidden: true })
     await addBatch(frame, '#go', 'Move button', true)
+    expect(await page.$(`${capsule} [data-preview-chat-pending]`)).toBeNull()
+    await page.hover('[data-preview-chat-handle]')
+    await page.waitForSelector(chatField)
     await page.click(`${capsule} ${control('1 pending')}`)
     await page.waitForSelector('[data-design-queue]')
     await page.keyboard.press('Escape')

@@ -52,6 +52,7 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', { timeout: 30_0
     importBody = null
     uploads = 0
     await page.evaluateOnNewDocument(() => {
+      if (window === window.top) localStorage.setItem('doop:html-frame-toolbar', '1')
       Object.defineProperty(window, 'WebSocket', {
         value: class {
           static OPEN = 1
