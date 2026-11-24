@@ -300,6 +300,23 @@ export function useFrameAdmission(
     function drain() {
       raf = 0
       window.clearTimeout(expiryTimer)
+      if (presenting) {
+        // Present owns its own document. Keep the canvas iframes mounted
+        // for return, without starting or animating the covered documents.
+        for (const id of ids) {
+          setFrameAnimationPolicy(
+            id,
+            frameAnimationPolicy({
+              playback: false,
+              active: false,
+              documentAllowed: false,
+              moving: false,
+              visiblePixelRatio: 0,
+            }),
+          )
+        }
+        return
+      }
       const now = performance.now()
       const warming = warmSmallPage && seen.size < htmlSizes.size
       if (dirty && !moving) {
@@ -393,6 +410,7 @@ export function useFrameAdmission(
     scheduler.current = schedule
     for (const [id, since] of boots) watch(id, since)
     const unsubscribe = useStore.subscribe((state, previous) => {
+      if (presenting) return
       if (
         state.viewport !== previous.viewport &&
         (state.viewport.x !== previous.viewport.x ||

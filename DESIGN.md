@@ -86,9 +86,11 @@ HTML/CSS ZIP suitable for Instatic. See `src/components/FrameworkPanel.tsx` and 
 ## Canvas rendering
 
 HTML frames show live content with scripts, animation and media. On busy pages, visible documents are
-admitted in batches and already loaded documents stay mounted as the camera moves. While a document
+admitted in batches and already loaded documents stay mounted as the camera moves. Overview previews
+preserve the frame's theme and render at a density suited to the canvas zoom. While a document
 loads, its surface uses `--sub` (#f7f7f7 light, #242424 dark). Once ready, transparent HTML sits on white
-artboard paper. Present opens the interactive prototype player. See `src/components/frameAdmission.ts`,
+artboard paper. The floating HTML frame toolbar is temporarily opt-in with `doop:html-frame-toolbar`.
+Present opens the interactive prototype player. See `src/components/frameAdmission.ts`,
 `src/components/Stage.tsx` and `src/components/FrameView.tsx`.
 
 Canvas dots fade as their on-screen spacing falls from 10 px to 4 px. At overview zoom, the page colour
@@ -100,7 +102,8 @@ The 36 px preview bar sits below the desktop strip and above the site viewport. 
 Doop's solid dark `--surface`, a one-pixel `--line` divider and quiet 24 px Doop icon buttons. The 28 px address
 field uses `--sub`, the 10 px pill radius and the shared focus ring. It truncates the preview
 address and, where there is room, displays a muted frame name. The address suggestions and scaling
-menu use the shared menu surface, radius and elevation.
+menu use the shared menu surface, radius and elevation. At Actual size the right scrollbar floats
+over the site. Trackpad and wheel can still pan wide pages horizontally.
 
 The editor can shrink the player into a centered 80% window with a 300 px minimum width where
 space permits, a panel radius, an edge and `shadow-pop`. The 150 ms ease-out resize follows the
@@ -119,7 +122,7 @@ The note pill and queue use the toolbar's solid dark `--surface`, light `--ink`,
 
 ### Prototype chat capsule
 
-At the bottom center of the preview, an 80 × 16 px button presents a textless 70 × 5 px grabber. The pending count and working indicator sit beside it. A short hover or click opens the shared draft composer, up to 560 px wide, with the latest reply and selected element when available. The composer uses the same solid dark surface as the note pill and queue. It slides into place in 150 ms when motion is allowed.
+At the bottom center of the preview, an 80 × 16 px button presents a textless 70 × 5 px grabber. The working indicator sits beside it while an agent is active. A short hover or click opens the shared draft composer, up to 560 px wide, with the latest reply and selected element when available. Pending notes are available in the expanded composer. The composer uses the same solid dark surface as the note pill and queue. It slides into place in 150 ms when motion is allowed.
 
 Element and region chips sit above the draft in the preview capsule and the Agents composer. They use the shared row radius, brand tint and inset brand ring. The tooltip shows the selector, dimensions and component name when available. Draft chips have a remove button. Sent messages show the same chips above the note text. When a crop exists, its thumbnail appears inside the chip.
 

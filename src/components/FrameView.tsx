@@ -1,6 +1,7 @@
 import type { Interaction } from '../../shared/prototype'
 import { sanitizeInteraction } from '../lib/prototypePlayer'
 import { HtmlFrameBrowserBar } from './HtmlFrameBrowserBar'
+import { htmlFrameToolbarEnabled } from '../lib/canvasFrameChrome'
 import { useFrameChromeHover } from './FrameBrowserChrome'
 import { openBrowserSurface } from '../lib/browserFrames'
 import { BrowserFrame } from './BrowserFrame'
@@ -518,6 +519,7 @@ export const FrameView = memo(function FrameView({
   const interacting = pageMode === 'interact' && pageInputAllowed && !editing
   const picking = pageMode === 'pick' && pageInputAllowed && !editing
   const showBrowserChrome =
+    htmlFrameToolbarEnabled() &&
     !!onPresentFrame &&
     browserChromeAllowed &&
     !panMode &&
@@ -2502,7 +2504,7 @@ export const FrameView = memo(function FrameView({
                     editing: editing || suspendPost || !!remoteEditor,
                     streaming: !!stream,
                     interacting: !!pageMode || !!pathEdit || contextMenuOpen,
-                    presenting,
+                    presenting: false,
                   })
                 }
               />

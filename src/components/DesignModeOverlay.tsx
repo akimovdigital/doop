@@ -281,20 +281,31 @@ export function DesignModeOverlay({
           : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
             ? bounds.height
             : 1
+      const dx = (event.shiftKey && !event.deltaX ? event.deltaY : event.deltaX) * delta
+      const dy = (event.shiftKey && !event.deltaX ? 0 : event.deltaY) * delta
+      // The shield is a sibling of the player's scroller. A design-sized
+      // iframe can be taller than the player without scrolling internally.
+      const scroller = viewportRef.current?.querySelector<HTMLElement>(
+        `[data-proto-entry="${screen}"][data-proto-screen]`,
+      )
+      const left = scroller?.scrollLeft
+      const top = scroller?.scrollTop
+      scroller?.scrollBy({ left: dx, top: dy, behavior: 'instant' })
+      if (scroller?.scrollLeft !== left || scroller?.scrollTop !== top) return
       getWindow()?.postMessage(
         {
           type: 'doop:annotation-wheel',
           x: (event.clientX - bounds.left) / scale,
           y: (event.clientY - bounds.top) / scale,
-          dx: (event.deltaX * delta) / scale,
-          dy: (event.deltaY * delta) / scale,
+          dx: dx / scale,
+          dy: dy / scale,
         },
         '*',
       )
     }
     shield.addEventListener('wheel', wheel, { passive: false })
     return () => shield.removeEventListener('wheel', wheel)
-  }, [picking, surface, getWindow])
+  }, [picking, surface, getWindow, viewportRef, screen])
 
   const gesture = useRef<{ id: number; mouse: boolean; alt: boolean }>()
   const releasedClick = useRef<{ shift: boolean; alt: boolean }>()
