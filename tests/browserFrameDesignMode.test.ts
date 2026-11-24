@@ -11,6 +11,10 @@ import { Client, freePort, startServer, type Server } from './harness'
 
 const present = '[data-browser-surface="present"]:modal'
 const field = '[data-design-note-field]'
+const sampleCrop = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+)
 
 async function annotate(page: Page) {
   await page.keyboard.down('Meta')
@@ -51,7 +55,7 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
             parent.postMessage({ type: 'doop:browse-navigate', url: 'https://spoof.example/' }, '*')
           })
         </script>
-        <h1 id="title"></h1><a href="/second">Next</a>`)
+        <h1 id="title"></h1><a href="/second">Next</a><p id="summary">Sample summary</p>`)
     })
     await new Promise<void>((resolve) => site.listen(0, '127.0.0.1', resolve))
     const address = site.address()
@@ -118,10 +122,18 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
 
     await page.setRequestInterception(true)
     const posts: unknown[] = []
+    const chipCrops: string[] = []
+    let mockChipCrops = false
     page.on('request', (request) => {
-      if (request.method() === 'POST' && new URL(request.url()).pathname === `/api/canvases/${canvasId}/cards`) {
+      const url = new URL(request.url())
+      const crop = url.searchParams.get('crop')
+      if (request.method() === 'POST' && url.pathname === `/api/canvases/${canvasId}/cards`) {
         posts.push(JSON.parse(request.postData()!))
         void request.respond({ status: 200, contentType: 'application/json', body: '{"id":"browser-annotation"}' })
+      } else if (mockChipCrops && crop && url.pathname === `/api/frames/${frameId}/screenshot.png`) {
+        // Server-side screenshots reject the fixture's private origin.
+        chipCrops.push(crop)
+        void request.respond({ status: 200, contentType: 'image/png', body: sampleCrop })
       } else void request.continue()
     })
 
@@ -249,6 +261,47 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
       url: siteOrigin + '/second',
       selector: '#title',
     })
+
+    await annotate(page)
+    const chipFrame = await (await iframe())!.contentFrame()
+    await chipFrame!.waitForFunction(() => document.querySelector('#title')?.textContent === 'Second page')
+    const chips = `${present} [data-preview-chat] [data-context-chip]`
+    mockChipCrops = true
+    for (const [index, selector] of ['#title', 'a', '#summary'].entries()) {
+      const box = await (await chipFrame!.$(selector))!.boundingBox()
+      await page.keyboard.down('Alt')
+      try {
+        await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2)
+      } finally {
+        await page.keyboard.up('Alt')
+      }
+      await page.waitForFunction(
+        (chips, count) => document.querySelectorAll(chips).length === count,
+        {},
+        chips,
+        index + 1,
+      )
+      expect(await page.$(`${bar} input[aria-label="URL"]`)).toBeNull()
+      expect(await page.$(`${bar} [data-design-hint]`)).not.toBeNull()
+    }
+    await page.waitForFunction(
+      (chips) => {
+        const images = [...document.querySelectorAll<HTMLImageElement>(`${chips} [data-context-thumbnail]`)]
+        return images.length === 3 && images.every((image) => image.complete && image.naturalWidth > 0)
+      },
+      {},
+      chips,
+    )
+    expect(new Set(chipCrops).size).toBe(3)
+    mockChipCrops = false
+    if (shots) await page.screenshot({ path: join(shots, 'dm-option-click-browser-three-chips.png') })
+    await page.keyboard.press('Escape')
+    await page.waitForSelector(`${bar} input[aria-label="URL"]`, { visible: true })
+    expect(await page.$$eval(chips, (elements) => elements.map((element) => element.textContent))).toEqual([
+      '<h1> Second page',
+      '<a> Next',
+      '<p> Sample summary',
+    ])
 
     await annotate(page)
     const editFrame = await (await iframe())!.contentFrame()

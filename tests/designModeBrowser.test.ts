@@ -30,7 +30,7 @@ const canvas: Canvas = {
         #go{display:block;width:160px;height:60px;color:rgb(0,0,0);background-color:rgb(255,255,255);font:16px Arial}
         #title{margin:24px 0} #more{position:absolute;top:1100px}
         </style><main id="wrap"><button id="go" data-doop-on="click" data-doop-action="navigate:next">Open now</button>
-        <h1 id="title">A sample heading</h1></main><p id="more">Scroll target</p>`,
+        <h1 id="title">A sample heading</h1><a id="link" href="#more">More details</a></main><p id="more">Scroll target</p>`,
     },
     {
       id: 'next',
@@ -721,10 +721,8 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     expect(await page.$$(`${capsule} [data-context-chip]`)).toHaveLength(2)
     await enter()
     await clickAt(frame, '#go', 'Alt')
-    await page.waitForSelector('[data-design-hint]', { hidden: true })
+    await page.waitForFunction(() => document.querySelectorAll('[data-preview-chat] [data-context-chip]').length === 3)
     expect(await draft()).toBe('Existing draft\n\nMatch both')
-    expect(await page.$$(`${capsule} [data-context-chip]`)).toHaveLength(3)
-    await enter()
     const at = await page.$eval('[data-design-shield]', (el) => {
       const rect = el.getBoundingClientRect()
       return { x: rect.left + rect.width * 0.65, y: rect.top + rect.height * 0.1 }
@@ -842,7 +840,6 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     expect(await draft()).toBe('')
     await page.locator(`${chip} button[aria-label^="Remove"]`).click()
     await page.waitForSelector(chip, { hidden: true })
-    await enter()
     await clickAt(frame, '#title', 'Alt')
     await page.waitForSelector(chip)
     await page.type(chatField, 'Move the heading')
@@ -871,6 +868,33 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     expect(await page.$eval(message, (el) => el.textContent)).not.toContain('DOM Path:')
     if (process.env.DOOP_DESIGN_SHOTS === '1')
       await page.screenshot({ path: join(dir, 'chat-07-chips-in-sent-card.png') })
+  })
+
+  it('keeps Design Mode on across three Option-clicks and keeps all three chips after Escape', async () => {
+    const frame = await mount()
+    await enter()
+    const chip = `${capsule} [data-context-chip]`
+    const targets = ['#go', '#title', '#link']
+    for (const [index, selector] of targets.entries()) {
+      await clickAt(frame, selector, 'Alt')
+      await page.waitForFunction((chip, count) => document.querySelectorAll(chip).length === count, {}, chip, index + 1)
+      expect(await page.$(address)).toBeNull()
+      expect(await page.$(field)).toBeNull()
+    }
+    const labels = ['<button> Open now', '<h1> A sample heading', '<a> More details']
+    await page.waitForFunction(
+      (chip) => {
+        const images = [...document.querySelectorAll<HTMLImageElement>(`${chip} [data-context-thumbnail]`)]
+        return images.length === 3 && images.every((image) => image.complete && image.naturalWidth > 0)
+      },
+      {},
+      chip,
+    )
+    await capture('dm-option-click-three-chips')
+    await page.keyboard.press('Escape')
+    await page.waitForSelector(address, { visible: true })
+    await waitForInteractivity('home', true)
+    expect(await page.$$eval(chip, (elements) => elements.map((element) => element.textContent))).toEqual(labels)
   })
 
   it('attaches one padded PNG per queued note in annotation order', async () => {
