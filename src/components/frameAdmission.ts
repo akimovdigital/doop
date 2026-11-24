@@ -7,7 +7,7 @@ import {
   setFrameAnimationPolicy,
 } from '../lib/frameBridge'
 import { frameAnimationPolicy } from '../lib/frameAnimationPolicy'
-import { FRAME_OVERVIEW_MAX_ZOOM } from '../lib/frameSnapshots'
+import { FRAME_CAMERA_SETTLE_MS, FRAME_OVERVIEW_MAX_ZOOM } from '../lib/frameSnapshots'
 import { currentPageSpatialIndex } from '../lib/pages'
 import { presentStartFrame } from '../lib/present'
 import { useStore } from '../lib/store'
@@ -31,7 +31,6 @@ const STARTS_PER_BATCH = 3
 const PREPARING_HTML_LIMIT = 800_000
 const BOOT_TIMEOUT_MS = 2_000
 const REQUEST_LEASE_MS = 5_000
-const PAN_SETTLE_MS = 180
 
 export function useFrameAdmission(
   frames: Frame[],
@@ -435,7 +434,7 @@ export function useFrameAdmission(
           moving = false
           dirty = true
           schedule()
-        }, PAN_SETTLE_MS)
+        }, FRAME_CAMERA_SETTLE_MS)
         return
       }
       if (state.canvas?.frames !== previous.canvas?.frames || state.activePageId !== previous.activePageId) {
@@ -467,7 +466,7 @@ export function useFrameAdmission(
         moving = false
         dirty = true
         schedule()
-      }, PAN_SETTLE_MS)
+      }, FRAME_CAMERA_SETTLE_MS)
     }
     resize.observe(el)
     // Small pages can mount their bounded set of documents before first paint.
