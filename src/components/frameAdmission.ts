@@ -4,8 +4,9 @@ import {
   forgetFrameAnimationPolicy,
   hasFrameDocument,
   onFrameDocument,
-  setFrameAnimationsPaused,
+  setFrameAnimationPolicy,
 } from '../lib/frameBridge'
+import { frameAnimationPolicy } from '../lib/frameAnimationPolicy'
 import { FRAME_OVERVIEW_MAX_ZOOM } from '../lib/frameSnapshots'
 import { currentPageSpatialIndex } from '../lib/pages'
 import { presentStartFrame } from '../lib/present'
@@ -58,7 +59,6 @@ export function useFrameAdmission(
   const outsideBudget = useRef(new Map<string, number>())
   const requests = useRef(new Map<string, number>())
   const localActivity = useRef(new Set<string>())
-  const pausedIds = useRef(new Set<string>())
   const scheduler = useRef<(() => void) | null>(null)
   const fillAfterCommit = useRef(false)
   const initialAdmission = useRef(true)
@@ -80,10 +80,9 @@ export function useFrameAdmission(
   }, [])
 
   useLayoutEffect(() => {
-    const paused = pausedIds.current
+    const ids = started.current
     return () => {
-      for (const id of paused) setFrameAnimationsPaused(id, false)
-      paused.clear()
+      for (const id of ids) setFrameAnimationPolicy(id, null)
     }
   }, [])
 
@@ -97,7 +96,6 @@ export function useFrameAdmission(
     const outside = outsideBudget.current
     const leases = requests.current
     const active = localActivity.current
-    const paused = pausedIds.current
     const size = [...htmlSizes.values()].reduce((total, length) => total + length, 0)
     const count = htmlSizes.size + browserIds.size
     const warmSmallPage =
@@ -116,6 +114,7 @@ export function useFrameAdmission(
     const nearBrowsers = new Set<string>()
     for (const id of seen.keys()) if (!htmlSizes.has(id)) seen.delete(id)
     let ranked: ReturnType<typeof rankFrameCandidates> = []
+    let visiblePixels = new Map<string, number>()
     let dirty = true
 
     function measure(warming: boolean) {
@@ -200,10 +199,7 @@ export function useFrameAdmission(
     }
 
     function stop(id: string) {
-      if (!paused.has(id)) {
-        paused.add(id)
-        setFrameAnimationsPaused(id, true)
-      }
+      forgetFrameAnimationPolicy(id)
       ids.delete(id)
       boots.delete(id)
       outside.delete(id)
@@ -254,20 +250,25 @@ export function useFrameAdmission(
               .filter((frame) => frame.visible && frame.large && ids.has(frame.id) && !protectedIds.has(frame.id))
               .slice(0, Math.max(0, ANIMATING_FRAME_BUDGET - protectedIds.size))
       const allowed = new Set(focused.map(({ id }) => id))
+      const publishPolicy = (id: string, documentAllowed: boolean) =>
+        setFrameAnimationPolicy(
+          id,
+          frameAnimationPolicy({
+            playback: allowAll,
+            active: protectedIds.has(id),
+            documentAllowed,
+            moving,
+            visiblePixelRatio: visiblePixels.get(id) ?? 0,
+          }),
+        )
       // Pause losers before waking any winners.
       for (const id of ids) {
-        if (allowAll || allowed.has(id) || protectedIds.has(id) || paused.has(id)) continue
-        paused.add(id)
-        setFrameAnimationsPaused(id, true)
+        if (allowAll || allowed.has(id) || protectedIds.has(id)) continue
+        publishPolicy(id, false)
       }
-      for (const id of paused) {
-        if (!ids.has(id)) {
-          // The departing iframe remains paused until React removes it.
-          paused.delete(id)
-          forgetFrameAnimationPolicy(id)
-        } else if (allowAll || allowed.has(id) || protectedIds.has(id)) {
-          paused.delete(id)
-          setFrameAnimationsPaused(id, false)
+      for (const id of ids) {
+        if (allowAll || allowed.has(id) || protectedIds.has(id)) {
+          publishPolicy(id, true)
         }
       }
     }
@@ -303,6 +304,7 @@ export function useFrameAdmission(
       const warming = warmSmallPage && seen.size < htmlSizes.size
       if (dirty && !moving) {
         ranked = measure(warming)
+        visiblePixels = new Map(ranked.map(({ id, visiblePixelRatio }) => [id, visiblePixelRatio]))
         dirty = false
       }
       let changed = false

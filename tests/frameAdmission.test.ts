@@ -14,6 +14,7 @@ const candidate = (id: string, distance: number, visible = true, lastSeen = 0): 
   lastSeen,
   near: visible,
   large: true,
+  visiblePixelRatio: visible ? 1 : 0,
 })
 
 describe('frame admission budget', () => {

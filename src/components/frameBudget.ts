@@ -15,6 +15,7 @@ export interface FrameCandidate {
   visible: boolean
   near: boolean
   large: boolean
+  visiblePixelRatio: number
   lastSeen: number
 }
 
@@ -25,6 +26,8 @@ export function frameCandidate(frame: Frame, camera: Viewport, width: number, he
   const top = box.y * zoom + y
   const right = left + box.width * zoom
   const bottom = top + box.height * zoom
+  const visibleWidth = Math.max(0, Math.min(width, right) - Math.max(0, left))
+  const visibleHeight = Math.max(0, Math.min(height, bottom) - Math.max(0, top))
   return {
     id: frame.id,
     distance: Math.hypot((left + right - width) / 2, (top + bottom - height) / 2),
@@ -35,6 +38,8 @@ export function frameCandidate(frame: Frame, camera: Viewport, width: number, he
       left <= width + FRAME_NEAR_PX &&
       top <= height + FRAME_NEAR_PX,
     large: frame.width * zoom >= FRAME_SNAPSHOT_TINY_PX,
+    // Use the rotated box for clipping and the native size for scale.
+    visiblePixelRatio: (visibleWidth * visibleHeight) / (box.width * box.height || 1),
   }
 }
 

@@ -7,6 +7,7 @@
 import type { DropTarget, FlowPlacement } from './layers'
 import type { Interaction } from '../../shared/prototype'
 import type { TextFormatCommand } from './richText'
+import type { FrameAnimationPolicy } from './frameAnimationPolicy'
 
 export interface LayoutDrop {
   target: DropTarget
@@ -259,19 +260,36 @@ export function finishFrameSettle(win: Window, reqId: number) {
   finishRequest(win, 'doop:settle-result', reqId, { type: 'doop:settle-result', reqId })
 }
 
-const pausedFrameAnimations = new Set<string>()
+const frameAnimationPolicies = new Map<string, FrameAnimationPolicy>()
 const frameElements = new Map<string, HTMLIFrameElement>()
 
+function sendFrameAnimationPolicy(frameId: string, policy: FrameAnimationPolicy | null) {
+  frameElements.get(frameId)?.toggleAttribute('data-frame-animation-paused', policy?.paused === true)
+  windows.get(frameId)?.postMessage({ type: 'doop:pause-animations', policy }, '*')
+}
+
 /** The canvas owns the policy. Remember it across a deferred runtime boot. */
-export function setFrameAnimationsPaused(frameId: string, paused: boolean) {
-  if (paused) pausedFrameAnimations.add(frameId)
-  else pausedFrameAnimations.delete(frameId)
-  frameElements.get(frameId)?.toggleAttribute('data-frame-animation-paused', paused)
-  windows.get(frameId)?.postMessage({ type: 'doop:pause-animations', paused }, '*')
+export function setFrameAnimationPolicy(frameId: string, policy: FrameAnimationPolicy | null) {
+  const previous = frameAnimationPolicies.get(frameId)
+  if (
+    previous?.paused === policy?.paused &&
+    previous?.restIslands === policy?.restIslands &&
+    previous?.simplifyFilters === policy?.simplifyFilters
+  ) {
+    return
+  }
+  if (policy) frameAnimationPolicies.set(frameId, policy)
+  else frameAnimationPolicies.delete(frameId)
+  sendFrameAnimationPolicy(frameId, policy)
 }
 
 export function forgetFrameAnimationPolicy(frameId: string) {
-  pausedFrameAnimations.delete(frameId)
+  // Hold the departing document until React unmounts it, leaving its filters as they are.
+  const previous = frameAnimationPolicies.get(frameId)
+  if (!previous?.paused) {
+    sendFrameAnimationPolicy(frameId, { paused: true, restIslands: true, simplifyFilters: previous?.simplifyFilters ?? false })
+  }
+  frameAnimationPolicies.delete(frameId)
 }
 
 export function registerFrameWindow(frameId: string, win: Window, iframe?: HTMLIFrameElement) {
@@ -281,7 +299,8 @@ export function registerFrameWindow(frameId: string, win: Window, iframe?: HTMLI
   frameByWindow.set(win, frameId)
   if (outlines) win.postMessage({ type: 'doop:outlines', on: true }, '*')
   if (iframe) frameElements.set(frameId, iframe)
-  if (pausedFrameAnimations.has(frameId)) setFrameAnimationsPaused(frameId, true)
+  const policy = frameAnimationPolicies.get(frameId)
+  if (policy) sendFrameAnimationPolicy(frameId, policy)
   changeListeners.get(frameId)?.forEach((cb) => cb())
 }
 
