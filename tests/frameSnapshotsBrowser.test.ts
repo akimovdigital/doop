@@ -249,7 +249,7 @@ describe.skipIf(!findBrowserPath())('canvas frame budgets', { timeout: 30_000 },
     expect(await restoredChild!.$eval('input', (input) => input.value)).toBe('original')
   })
 
-  it('pauses CSS and new Web Animations during movement, resumes focus, and exempts selection', async () => {
+  it('keeps infinite effects held across the document budget, and plays them on selection', async () => {
     const page = await pages.open()
     await page.setViewport({ width: 1280, height: 800 })
     const animated = Array.from({ length: 6 }, (_, i) => ({
@@ -272,7 +272,7 @@ describe.skipIf(!findBrowserPath())('canvas frame budgets', { timeout: 30_000 },
     const child = await focused!.contentFrame()
     await child!.waitForSelector('p')
     const cssState = () => child!.$eval('p', (p) => p.getAnimations()[0]?.playState)
-    expect(await cssState()).toBe('running')
+    expect(await cssState()).toBe('paused')
 
     // Keep the gesture open while inspecting the opaque-origin child from the test driver.
     await page.evaluate(() => {
@@ -302,12 +302,6 @@ describe.skipIf(!findBrowserPath())('canvas frame budgets', { timeout: 30_000 },
     await page.waitForFunction(() => !document.querySelector('.stage')?.hasAttribute('data-frame-camera-moving'))
     await page.evaluate(() => window.canvasPageHarness.select(null))
     await page.waitForFunction(() => document.querySelectorAll('iframe[data-frame-animation-paused]').length === 2)
-    expect(await cssState()).toBe('running')
-    const firstTime = await child!.$eval('p', (p) => Number(p.getAnimations()[0]?.currentTime))
-    await child!.waitForFunction(
-      (time) => Number(document.querySelector('p')!.getAnimations()[0]?.currentTime) > time,
-      {},
-      firstTime,
-    )
+    expect(await cssState()).toBe('paused')
   })
 })

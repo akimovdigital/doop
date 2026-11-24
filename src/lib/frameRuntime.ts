@@ -550,7 +550,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
     }
     var adopted = document.adoptedStyleSheets || []
     for (var t = 0; t < adopted.length; t++) {
-      if (adopted[t] === vSheet || adopted[t] === vOutlineSheet || adopted[t] === vCursorSheet || adopted[t] === bleedSheet || adopted[t] === stillSheet || adopted[t] === animationSheet) continue // the runtime's own
+      if (adopted[t] === vSheet || adopted[t] === vOutlineSheet || adopted[t] === vCursorSheet || adopted[t] === bleedSheet || adopted[t] === stillSheet || isFrameAnimationSheet(adopted[t])) continue // the runtime's own
       var adoptedText = rulesText(adopted[t])
       if (adoptedText === null) continue
       var adoptedStyle = document.createElement('style')
@@ -1848,7 +1848,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
      cross-origin sheet cannot be read and is passed over. */
   function isRuntimeSheet(sheet) {
     var owner = sheet.ownerNode
-    return sheet === vSheet || sheet === vOutlineSheet || sheet === vCursorSheet || sheet === bleedSheet || sheet === stillSheet || sheet === protoSheet ||
+    return sheet === vSheet || sheet === vOutlineSheet || sheet === vCursorSheet || sheet === bleedSheet || sheet === stillSheet || sheet === protoSheet || isFrameAnimationSheet(sheet) ||
       !!(owner && owner.hasAttribute && owner.hasAttribute('data-v-edit'))
   }
   function sheetOutranksInline(el, name, value) {
@@ -2152,7 +2152,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
     if (d.type === 'doop:root-fill') {
       parent.postMessage({ type: 'doop:root-fill-result', reqId: d.reqId, fill: rootFill() }, '*')
     }
-    if (d.type === 'doop:pause-animations') setAnimationsPaused(d.paused === true)
+    if (!browse && d.type === 'doop:pause-animations') setFrameAnimationPolicy(d.policy ?? null)
     if (d.type === 'doop:outlines') setOutlines(d.on === true)
     if (d.type === 'doop:bleed' && typeof d.px === 'number') setBleed(d.px)
     if (d.type === 'doop:computed' && Array.isArray(d.properties)) {
@@ -2207,6 +2207,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
       endAnnotationText('revert')
       syncAnnotationCss([])
       render(d.html)
+      refreshFrameAnimationContent()
       notifyFrameUpdated()
       protoHtmlChanged()
       if (d.reqId) parent.postMessage({ type: 'doop:html-result', reqId: d.reqId }, '*')

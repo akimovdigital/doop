@@ -341,7 +341,7 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
     expect(name).toBe('Section 1')
   }, 20_000)
 
-  it('renders tall live HTML and plays visible animations on a large page before selection', async () => {
+  it('renders tall live HTML and plays finite animations on a large page before selection', async () => {
     const tallId = await page.evaluate(async () => {
       const id = location.pathname.split('/').at(-1)
       let tallId = ''
@@ -363,7 +363,7 @@ describe.skipIf(!findBrowserPath())('page list controls and keyboard history', (
                 ? `<!doctype html><html><style>body{margin:0;background:#112233}
                   #footer{position:absolute;left:0;right:0;bottom:0;height:200px;background:#228844}
                   #interactive{position:absolute;width:240px;height:100px;left:280px;top:300px}
-                  @keyframes move{to{transform:translateX(50px)}} #motion{animation:move 1s infinite alternate}
+                  @keyframes move{to{transform:translateX(50px)}} #motion{animation:move 1s 60 alternate}
                   </style><body><button id="interactive" onclick="this.textContent='Clicked'">Interactive</button>
                   <div id="motion">Animated</div><div id="footer">Bottom content</div>
                   <script>document.body.dataset.started = 'yes'</script></body></html>`
