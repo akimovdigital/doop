@@ -6,7 +6,6 @@ use tauri::webview::Cookie;
 use tauri::{AppHandle, Manager, Url, WebviewWindow};
 
 const ORIGIN: &str = "http://127.0.0.1:4437";
-const APP_ID: &str = "digital.akimov.doop-test";
 const SESSION_COOKIE: &str = "better-auth.session_token";
 
 #[derive(Deserialize)]
@@ -23,7 +22,7 @@ struct Canvas {
 
 pub fn enabled(app: &AppHandle) -> bool {
     option_env!("DOOP_TEST_LOGIN") == Some("1")
-        && app.config().identifier == APP_ID
+        && app.config().identifier == crate::DEV_BUNDLE_IDENTIFIER
         && crate::server::active(app) == ORIGIN
 }
 
@@ -53,7 +52,7 @@ async fn startup_url(window: &WebviewWindow) -> Option<Url> {
         .build()
         .ok()?;
     let root = Url::parse(ORIGIN).ok()?;
-    let existing = window.cookies().unwrap_or_default();
+    let existing = window.cookies_for_url(root.clone()).unwrap_or_default();
     if let Some(cookie) = existing.iter().find(|cookie| is_local_session(cookie)) {
         let response = canvas_list_response(&client, cookie).await.ok()?;
         if response.status() != reqwest::StatusCode::UNAUTHORIZED {
@@ -82,7 +81,7 @@ async fn startup_url(window: &WebviewWindow) -> Option<Url> {
         .ok()?
         .error_for_status()
         .ok()?;
-    let mut cookie = response
+    let cookie = response
         .headers()
         .get_all(reqwest::header::SET_COOKIE)
         .iter()
@@ -103,9 +102,15 @@ async fn startup_url(window: &WebviewWindow) -> Option<Url> {
         .find(|canvas| canvas.id == account.canvas_id)
         .and_then(|canvas| canvas_url(&canvas.id))
         .unwrap_or(root);
-    cookie.set_domain("127.0.0.1");
-    cookie.set_path("/");
-    window.set_cookie(cookie).ok()?;
+    #[cfg(not(chromium))]
+    {
+        let mut cookie = cookie;
+        cookie.set_domain("127.0.0.1");
+        cookie.set_path("/");
+        window.set_cookie(cookie).ok()?;
+    }
+    #[cfg(chromium)]
+    chromium::store_cookie(window, &cookie).await?;
     eprintln!("Doop Test signed in to its local test account.");
     Some(target)
 }
@@ -134,6 +139,90 @@ fn canvas_url(id: &str) -> Option<Url> {
     let mut target = Url::parse(ORIGIN).ok()?;
     target.path_segments_mut().ok()?.extend(["c", id]);
     Some(target)
+}
+
+#[cfg(chromium)]
+mod chromium {
+    use super::{Duration, ORIGIN, WebviewWindow};
+    use cef::{rc::*, *};
+    use tauri::async_runtime::{Sender, channel};
+
+    cef::wrap_set_cookie_callback! {
+        struct SessionInstalled { result: Sender<bool> }
+        impl SetCookieCallback {
+            fn on_complete(&self, success: i32) {
+                let _ = self.result.try_send(success != 0);
+            }
+        }
+    }
+
+    fn cef_cookie(cookie: &tauri::webview::Cookie<'_>) -> cef::Cookie {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        use tauri::webview::cookie::SameSite;
+
+        let expires = cookie
+            .max_age()
+            .and_then(|age| {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
+                Some(now.as_secs_f64() + age.whole_seconds() as f64)
+            })
+            .or_else(|| cookie.expires_datetime().map(|date| date.unix_timestamp() as f64));
+        let mut cef_cookie = cef::Cookie {
+            name: cookie.name().into(),
+            value: cookie.value().into(),
+            path: "/".into(),
+            secure: cookie.secure().unwrap_or(false).into(),
+            httponly: 1,
+            same_site: match cookie.same_site() {
+                Some(SameSite::Strict) => CookieSameSite::STRICT_MODE,
+                Some(SameSite::Lax) => CookieSameSite::LAX_MODE,
+                Some(SameSite::None) => CookieSameSite::NO_RESTRICTION,
+                None => CookieSameSite::UNSPECIFIED,
+            },
+            ..Default::default()
+        };
+        if let Some(expires) = expires {
+            cef_cookie.has_expires = 1;
+            cef_cookie.expires = Basetime {
+                val: crate::webkit_migration::chromium_time(expires),
+            };
+        }
+        cef_cookie
+    }
+
+    // The alpha Tauri wrapper infers the URL from the current frame (here
+    // about:blank) and drops expiry and SameSite. Use the CEF request
+    // context with the loopback URL and wait for the write before navigating.
+    pub(super) async fn store_cookie(
+        window: &WebviewWindow,
+        cookie: &tauri::webview::Cookie<'_>,
+    ) -> Option<()> {
+        let cookie = cookie.clone().into_owned();
+        let (result, mut installed) = channel(1);
+        window
+            .with_webview(move |webview| {
+                let Some(manager) = webview
+                    .downcast_ref::<tauri_runtime_cef::Webview>()
+                    .and_then(|webview| webview.browser().host())
+                    .and_then(|host| host.request_context())
+                    .and_then(|context| context.cookie_manager(None))
+                else {
+                    return;
+                };
+                let mut callback = SessionInstalled::new(result);
+                manager.set_cookie(
+                    Some(&ORIGIN.into()),
+                    Some(&cef_cookie(&cookie)),
+                    Some(&mut callback),
+                );
+            })
+            .ok()?;
+        tokio::time::timeout(Duration::from_secs(2), installed.recv())
+            .await
+            .ok()?
+            .filter(|success| *success)
+            .map(|_| ())
+    }
 }
 
 #[cfg(test)]

@@ -1,10 +1,10 @@
-// Only the local Doop Dev WKWebView may use the OS microphone bridge.
+// Only the local Doop page may use the OS microphone bridge.
 use std::ffi::{c_char, CStr, CString};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Mutex,
 };
-use tauri::{ipc::Channel, Runtime, WebviewWindow};
+use tauri::{ipc::Channel, Manager, WebviewWindow};
 
 #[derive(Clone, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -40,10 +40,11 @@ extern "C" {
     fn doop_dictation_stop(id: u64, cancel: bool);
 }
 
-fn is_dev_window<R: Runtime>(window: &WebviewWindow<R>) -> bool {
-    window.url().is_ok_and(|url| {
-        url.scheme() == "http" && url.host_str() == Some("127.0.0.1") && url.port() == Some(4437)
-    })
+fn is_dev_window(window: &WebviewWindow) -> bool {
+    crate::native_dictation_enabled(window.app_handle())
+        && window.url().is_ok_and(|url| {
+            url.scheme() == "http" && url.host_str() == Some("127.0.0.1") && url.port() == Some(4437)
+        })
 }
 
 extern "C" fn speech_event(id: u64, kind: u32, text: *const c_char) {
@@ -71,7 +72,7 @@ extern "C" fn speech_event(id: u64, kind: u32, text: *const c_char) {
 }
 
 #[tauri::command]
-pub fn dictation_available<R: Runtime>(window: WebviewWindow<R>, locale: String) -> bool {
+pub fn dictation_available(window: WebviewWindow, locale: String) -> bool {
     is_dev_window(&window)
         && locale.len() <= 32
         && CString::new(locale)
@@ -79,8 +80,8 @@ pub fn dictation_available<R: Runtime>(window: WebviewWindow<R>, locale: String)
 }
 
 #[tauri::command]
-pub fn dictation_start<R: Runtime>(
-    window: WebviewWindow<R>,
+pub fn dictation_start(
+    window: WebviewWindow,
     token: String,
     locale: String,
     events: Channel<DictationEvent>,
@@ -116,8 +117,8 @@ pub fn dictation_start<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn dictation_stop<R: Runtime>(
-    window: WebviewWindow<R>,
+pub fn dictation_stop(
+    window: WebviewWindow,
     token: String,
     cancel: bool,
 ) -> Result<(), String> {
@@ -141,7 +142,7 @@ fn session_for(owner: &str, token: Option<&str>) -> Option<u64> {
         .map(|session| session.id)
 }
 
-pub fn cancel_window<R: Runtime>(window: &tauri::Window<R>) {
+pub fn cancel_window(window: &tauri::Window) {
     if let Some(id) = session_for(window.label(), None) {
         let _ = window.run_on_main_thread(move || unsafe { doop_dictation_stop(id, true) });
     }
