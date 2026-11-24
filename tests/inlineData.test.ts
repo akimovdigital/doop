@@ -162,7 +162,8 @@ describe('base64 that is not a data: URI', () => {
     const message = inlineDataRefusal(loader(packed(8000)) + loader(packed(400_000)))!
     expect(message).toContain('nothing was written')
     expect(message).toContain('2 blocks of base64 text (299 KB)')
-    expect(message).toContain('<script src>')
+    expect(message).toContain('static HTML + CSS by default')
+    expect(message).toContain('<script src> inside the marked data-doop-island element')
     /* it stands alone: the tools for a picture or a font are named here, not "as above" */
     expect(message).toContain('upload_asset')
     expect(message).toContain('upload_font')

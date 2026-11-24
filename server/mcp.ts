@@ -127,7 +127,7 @@ import { usageByComponent } from './componentUsage.ts'
    characters (older versions at 2,048) and ChatGPT reads the first 512 most, so this is the
    rules that break the work when skipped, in order of how much; everything else is in
    get_guide (tests/mcpInstructions.test.ts holds the budget). */
-export const INSTRUCTIONS = `Doop is a shared multiplayer design canvas: humans and AI agents design together in real time. Canvases hold frames, artboards that render complete HTML documents live for everyone viewing.
+export const INSTRUCTIONS = `Doop is a shared design canvas where humans and AI agents edit live HTML artboards called frames.
 
 You MUST call get_guide({ topic: "doop-instructions" }) before using other Doop tools, and again if a long conversation may have dropped it. It lists further topics (images, components, prototypes, redesigns…) to load when a task needs one.
 
@@ -136,6 +136,7 @@ You MUST call get_guide({ topic: "doop-instructions" }) before using other Doop 
 - Tokens: colours, fonts and sizes are var(--name) from the canvas's design tokens. No tokens yet: create_tokens before the first frame. Never a palette on a frame's :root.
 - Components: before the first screen, set up the canvas's component system with create_components (primitives like Button and Input, patterns like nav and card), then compose screens from it. Anything get_canvas lists goes in as <doop-use component="Name" …>, never redrawn.
 - Style guides: read the canvas's with get_guidelines before designing, and follow them.
+- Use static HTML + CSS by default. Put JavaScript only inside a marked data-doop-island element.
 - Create with create_frame, then stream append_frame_html one section per call. Small changes: edit_frame_html. Rename, move, resize: update_frame.
 - After every create or significant edit, call get_frame_screenshot and fix what looks wrong.
 - Keep every data-doop-* attribute when you rewrite markup: comments, links and prototype wiring hang on them.
@@ -1528,7 +1529,7 @@ export function buildMcpServer(owner?: string, ownerId?: string, clientName?: st
          has no card either). The review screenshot after the stream is the
          first card the person sees. */
       description:
-        'Create a new frame on a canvas with an HTML design. A frame is a rectangular artboard that renders a full HTML document (no external network access needed). Put the styles of an element in its style attribute; a <style> block is for what an attribute cannot say (keyframes, states, pseudo-elements, media queries, the reset), and <script> is allowed. If x/y are omitted the frame is auto-placed to the right of existing frames. Everyone viewing the canvas sees it appear live. Use <doop-use> for anything get_canvas lists under components. ' +
+        'Create a new frame on a canvas with an HTML design. A frame is a rectangular artboard that renders a full HTML document. Use static HTML + CSS by default. Put JavaScript only inside a marked data-doop-island element. See get_guide (doop-instructions) for motion and blur rules. Put the styles of an element in its style attribute and use a <style> block for keyframes, states, pseudo-elements, media queries and the reset. If x/y are omitted the frame is auto-placed to the right of existing frames. Everyone viewing the canvas sees it appear live. Use <doop-use> for anything get_canvas lists under components. ' +
         COMPOSE_CHECK,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: {
