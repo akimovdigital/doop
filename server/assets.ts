@@ -6,6 +6,7 @@ import * as t from './db/schema.ts'
 import * as storage from './storage.ts'
 import type { FrameImage } from '../shared/imageDescriptions.ts'
 import { emitCanvasEvent } from './events.ts'
+import { encodeImageForStorage } from './imageWebp.ts'
 import { FREE_UPLOAD_BYTES } from '../shared/billing.ts'
 
 /**
@@ -22,12 +23,15 @@ import { FREE_UPLOAD_BYTES } from '../shared/billing.ts'
 /** The default cap: imports, generated images and Free uploads. */
 export const MAX_ASSET_BYTES = FREE_UPLOAD_BYTES
 
-const MIME_EXT = {
+export const MIME_EXT = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
   'image/webp': 'webp',
   'image/gif': 'gif',
   'image/svg+xml': 'svg',
+  'image/x-icon': 'ico',
+  'image/tiff': 'tiff',
+  'image/bmp': 'bmp',
 } as const
 
 type AssetMime = keyof typeof MIME_EXT
@@ -46,6 +50,9 @@ export function sniffMime(buf: Buffer): AssetMime | undefined {
   if (buf.length >= 6 && buf.toString('latin1', 0, 4) === 'GIF8') return 'image/gif'
   if (buf.length >= 12 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP')
     return 'image/webp'
+  if (buf.length >= 6 && buf.readUInt32LE(0) === 0x00010000 && buf.readUInt16LE(4) > 0) return 'image/x-icon'
+  if (buf.length >= 8 && (buf.readUInt32BE(0) === 0x4d4d002a || buf.readUInt32BE(0) === 0x49492a00)) return 'image/tiff'
+  if (buf.length >= 26 && buf.readUInt16BE(0) === 0x424d && buf.readUInt32LE(2) === buf.length) return 'image/bmp'
   const head = buf.toString('utf8', 0, Math.min(buf.length, 1500)).trimStart()
   if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) return 'image/svg+xml'
   return undefined
@@ -129,9 +136,18 @@ export async function createAsset(
 ): Promise<AssetMeta> {
   if (buf.length === 0) throw new Error('empty file')
   if (buf.length > limit.bytes) throw new Error(limit.message(buf.length))
+  return storeAsset(buf, imageType(buf), meta)
+}
+
+function imageType(buf: Buffer) {
   const mime = sniffMime(buf)
-  if (!mime) throw new Error('unsupported file type — png, jpg, webp, gif and svg are accepted')
-  return storeAsset(buf, { mime, ext: MIME_EXT[mime] }, meta)
+  if (!mime) throw new Error('unsupported file type — png, jpg, webp, gif, svg, ico, tiff and bmp are accepted')
+  return { mime, ext: MIME_EXT[mime] }
+}
+
+/** Generation historically applies the default upload cap to the finished image. */
+export function createGeneratedAsset(buf: Buffer, meta: Parameters<typeof createAsset>[1]): Promise<AssetMeta> {
+  return storeAsset(buf, imageType(buf), meta, MAX_ASSET_BYTES)
 }
 
 /** Store bytes whose type the caller has already established (images via
@@ -140,12 +156,17 @@ export async function storeAsset(
   buf: Buffer,
   type: { mime: string; ext: string },
   meta: { canvasId?: string; ownerId?: string; uploadedBy: string },
+  storedLimit?: number,
 ): Promise<AssetMeta> {
-  const { mime, ext } = type
+  const encoded = await encodeImageForStorage(buf, type.mime)
+  const { buffer, mime, after: size } = encoded
+  const ext = encoded.converted ? 'webp' : type.ext
+  if (storedLimit !== undefined && size > storedLimit)
+    throw new Error(`file is ${(size / 1024 / 1024).toFixed(1)} MB — the limit is 5 MB`)
   const id = nanoid(10)
   /* object first, row second: an orphaned object is swept later, but a row
      without bytes would serve 404s forever */
-  await storage.putObject(`${id}.${ext}`, buf, mime)
+  await storage.putObject(`${id}.${ext}`, buffer, mime)
   await db.insert(t.assets).values({
     id,
     canvasId: meta.canvasId ?? null,
@@ -153,11 +174,11 @@ export async function storeAsset(
     ownerId: meta.ownerId ?? null,
     mime,
     ext,
-    size: buf.length,
+    size,
     uploadedBy: meta.uploadedBy,
     createdAt: Date.now(),
   })
-  const asset = { id, mime, ext, size: buf.length }
+  const asset = { id, mime, ext, size }
   if (meta.canvasId && isDescribableImage(mime))
     emitCanvasEvent(meta.canvasId, { type: 'asset.stored', asset: { ...asset, canvasId: meta.canvasId } })
   return asset

@@ -17,6 +17,7 @@ import {
 } from './publicUrl.ts'
 import { navigateWebsitePage, WebsiteCaptureUnavailableError } from './websiteAccess.ts'
 import { pruneUnusedCss } from './cssPrune.ts'
+import { optimizeImportedImages } from './inlineImageWebp.ts'
 import {
   MAX_DISCOVERY_BYTES,
   MAX_FRAME_HTML_BYTES,
@@ -650,6 +651,7 @@ export async function importPage(rawUrl: string, options: { includePreview?: boo
     /* the capture is done: give its render slot back before the preview asks
        for one, or a one-slot renderer waits on itself */
     await releaseCapture()
+    html = await optimizeImportedImages(html)
 
     let preview: ImportedPage['preview']
     let renderedHeight = snap.height

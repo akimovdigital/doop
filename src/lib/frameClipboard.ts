@@ -379,7 +379,15 @@ async function importIncoming(
       return {
         kind: p.kind,
         canvasId,
-        frame: { name: p.name, html: await p.html(), width: slot.width, height: slot.height, x: slot.x, y: slot.y },
+        frame: {
+          name: p.name,
+          html: await p.html(),
+          width: slot.width,
+          height: slot.height,
+          x: slot.x,
+          y: slot.y,
+          ...(p.kind !== 'image' ? { optimizeImages: true } : {}),
+        },
       }
     }),
   )

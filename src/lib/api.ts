@@ -682,7 +682,7 @@ export const api = {
       pages: import('../../shared/types').CanvasPageInfo[]
       frames: Frame[]
     }>(`/api/canvases/${canvasId}/pages/${pageId}/duplicate`, { method: 'POST' }),
-  createFrame: (canvasId: string, input: Partial<Frame> & { name: string }) =>
+  createFrame: (canvasId: string, input: Partial<Frame> & { name: string; optimizeImages?: boolean }) =>
     req<Frame>(`/api/canvases/${canvasId}/frames`, {
       method: 'POST',
       body: JSON.stringify({

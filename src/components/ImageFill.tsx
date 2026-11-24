@@ -32,7 +32,7 @@ function sizeMode(image: ImageInfo) {
 }
 
 /** Verify pasted URLs before replacing the current, working image. */
-async function checkImageUrl(value: string, t: Translate): Promise<string> {
+async function checkImageUrl(value: string, t: Translate, canvasId: string): Promise<string> {
   let url: URL
   try {
     url = new URL(value, location.origin)
@@ -56,6 +56,10 @@ async function checkImageUrl(value: string, t: Translate): Promise<string> {
     preview.onerror = () => finish(new Error(t('inspector.imageUrlLoadFailed')))
     preview.src = url.href
   })
+  if (/^data:image\/(?:jpeg|png|tiff)[;,]/i.test(url.href)) {
+    const image = await (await fetch(url.href)).blob()
+    return (await api.uploadAsset(canvasId, image)).url
+  }
   return url.href
 }
 
@@ -167,7 +171,9 @@ export function ImagePicker({
       let url = ''
       await onPick(async () => {
         url =
-          typeof source === 'string' ? await checkImageUrl(source, t) : (await api.uploadAsset(canvasId, source)).url
+          typeof source === 'string'
+            ? await checkImageUrl(source, t, canvasId)
+            : (await api.uploadAsset(canvasId, source)).url
         return url
       })
       if (url) setDraft(url)

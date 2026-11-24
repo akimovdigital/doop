@@ -57,7 +57,12 @@ export async function pasteWebCapture(canvasId: string, text: string) {
   const capture = parseWebCapture(text)
   const state = useStore.getState()
   const position = frameCenterPosition(state.viewport, stageViewportSize(), capture)
-  const frame = await api.createFrame(canvasId, { ...capture, ...position, pageId: state.activePageId ?? undefined })
+  const frame = await api.createFrame(canvasId, {
+    ...capture,
+    ...position,
+    optimizeImages: true,
+    pageId: state.activePageId ?? undefined,
+  })
   recordCreate(frame)
   useStore.getState().selectMany([frame.id])
 }

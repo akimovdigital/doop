@@ -435,6 +435,13 @@
       "when": 1795436215501,
       "tag": "0062_browser_frames",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1795466969819,
+      "tag": "0063_background_image_extensions",
+      "breakpoints": true
     }
   ]
 }

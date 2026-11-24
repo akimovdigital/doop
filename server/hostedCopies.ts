@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { Response } from 'express'
+import { encodeImageForStorage } from './imageWebp.ts'
 import * as storage from './storage.ts'
 
 /**
@@ -88,15 +89,24 @@ export function hostedCopies(options: CopyOptions) {
   async function load(url: string): Promise<Copy | null> {
     const type = typeOf(url)
     if (!type) return null
-    const key = `${options.provider}/${createHash('sha256').update(url).digest('hex')}.${type.ext}`
+    const stem = `${options.provider}/${createHash('sha256').update(url).digest('hex')}`
+    const key = `${stem}.${type.ext}`
     const stored = await storage.getObject(key).catch(() => null)
     if (stored) return { body: stored, mime: type.mime }
-    const body = await limited(() => fetchSource(url, type.mime))
-    if (!body) return null
-    await storage
-      .putObject(key, body, type.mime)
-      .catch((error: unknown) => console.warn(`[${options.provider}] store`, error))
-    return { body, mime: type.mime }
+    const webpKey = `${stem}.webp`
+    if (options.provider === 'pexels') {
+      const webp = await storage.getObject(webpKey).catch(() => null)
+      if (webp) return { body: webp, mime: 'image/webp' }
+    }
+    return limited(async () => {
+      const source = await fetchSource(url, type.mime)
+      if (!source) return null
+      const { buffer: body, mime, converted } = await encodeImageForStorage(source, type.mime)
+      await storage
+        .putObject(converted ? webpKey : key, body, mime)
+        .catch((error: unknown) => console.warn(`[${options.provider}] store`, error))
+      return { body, mime }
+    })
   }
 
   /** One image, from memory, the bucket or its source; null when the source has no such image. */

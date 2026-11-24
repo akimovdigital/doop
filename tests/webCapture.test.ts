@@ -53,7 +53,7 @@ describe('capture import', () => {
     await pasteWebCapture('canvas-1', payload('<h1>Captured page</h1>'))
     expect(api.createFrame).toHaveBeenCalledWith(
       'canvas-1',
-      expect.objectContaining({ pageId: 'page-2', x: 200, y: 150, width: 800, height: 600 }),
+      expect.objectContaining({ pageId: 'page-2', x: 200, y: 150, width: 800, height: 600, optimizeImages: true }),
     )
     expect(recordCreate).toHaveBeenCalledWith(frame)
     expect(selectMany).toHaveBeenCalledWith(['imported-frame'])

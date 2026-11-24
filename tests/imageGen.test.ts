@@ -88,7 +88,7 @@ describe('who pays', () => {
     const image = await generateImage('u1', { prompt: 'a red circle' })
 
     expect(image.billedTo).toBe('ChatGPT')
-    expect(image.mime).toBe('image/webp')
+    expect(image.buf.toString('base64')).toBe(await tinyPng())
     expect(image.width).toBe(8)
     expect(image.preview.mime).toBe('image/jpeg')
     const [url, init] = fetchSpy.mock.calls[0]!
@@ -108,7 +108,7 @@ describe('who pays', () => {
     const image = await generateImage('u1', { prompt: 'a red circle' })
 
     expect(image.billedTo).toBe('OpenAI')
-    expect(image.mime).toBe('image/webp')
+    expect(image.buf.toString('base64')).toBe(await tinyPng())
     const [url, init] = fetchSpy.mock.calls[0]!
     expect(String(url)).toContain('api.openai.com')
     expect((init!.headers as Record<string, string>).Authorization).toBe('Bearer sk-user')
@@ -191,7 +191,7 @@ describe('the image-model registry', () => {
     const image = await generateImage('u1', { prompt: 'a red circle', aspect: 'landscape' })
 
     expect(image.billedTo).toBe('Gemini')
-    expect(image.mime).toBe('image/webp')
+    expect(image.buf.toString('base64')).toBe(await tinyPng())
     const [url, init] = fetchSpy.mock.calls[0]!
     expect(String(url)).toContain('generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image')
     const headers = init!.headers as Record<string, string>
@@ -262,7 +262,7 @@ describe('the image-model registry', () => {
       const image = await generateImage('u1', { prompt: 'a red circle', aspect: 'portrait', quality: 'high' })
 
       expect(image.billedTo).toBe('OpenAI')
-      expect(image.mime).toBe('image/webp')
+      expect(image.buf.toString('base64')).toBe(await tinyPng())
       const [url, init] = fetchSpy.mock.calls[0]!
       expect(String(url)).toBe('https://api.openai.com/v1/images/generations')
       expect((init!.headers as Record<string, string>).Authorization).toBe('Bearer sk-user')

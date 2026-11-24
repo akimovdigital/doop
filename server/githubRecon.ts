@@ -2,6 +2,7 @@ import { env } from './env.ts'
 import { ModelAuthError, ModelUnavailableError, type AgentModel } from './agentModel.ts'
 import type { TurnBlock } from './openaiAgent.ts'
 import { createAsset } from './assets.ts'
+import { optimizeImportedImages } from './inlineImageWebp.ts'
 import * as actions from './actions.ts'
 import { store } from './store.ts'
 import {
@@ -365,7 +366,9 @@ export async function resolveRepoAssets(conn: GithubConnection, html: string, pa
       console.error(`[github-recon] asset ${p} failed`, err)
     }
   }
-  return html.replace(REPO_REF_RE, (_full, pre, p, post) => pre + (urls.get(p) ?? TRANSPARENT_PX) + post)
+  return optimizeImportedImages(
+    html.replace(REPO_REF_RE, (_full, pre, p, post) => pre + (urls.get(p) ?? TRANSPARENT_PX) + post),
+  )
 }
 
 /* ------------------------------------------------------------------ */
@@ -573,7 +576,7 @@ async function sketchScreen(
   actor: Actor,
 ): Promise<void> {
   if (screen.source === 'static') {
-    const html = wrapRepoHtml(await fetchRepoFile(conn, screen.sourcePath), conn, screen)
+    const html = await optimizeImportedImages(wrapRepoHtml(await fetchRepoFile(conn, screen.sourcePath), conn, screen))
     placeRepoFrame(canvasId, conn, screen, html, PAGE_W, STATIC_H, actor)
     return
   }
