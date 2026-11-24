@@ -382,26 +382,26 @@ export const FrameView = memo(function FrameView({
   stack,
   loadDocument = true,
   snapshots,
-  overview = false,
   compactSectionTitles = false,
   requestDocument,
   protectDocument,
   onFollowLink,
   onPresentFrame,
   presenting = false,
+  uiHidden = false,
 }: {
   frame: Frame
   /** its place in the page's paint order (the Stage's z-index), front highest */
   stack?: number
   loadDocument?: boolean
   snapshots?: FrameSnapshots
-  overview?: boolean
   compactSectionTitles?: boolean
   requestDocument?: (frameId: string) => void
   protectDocument?: (frameId: string, active: boolean) => void
   onFollowLink?: (source: Frame, href: string) => void
   onPresentFrame?: (frameId: string, interaction?: Interaction) => void
   presenting?: boolean
+  uiHidden?: boolean
 }) {
   const t = useT()
   const { standalone, synced, github, githubPlaceholder } = useMemo(() => {
@@ -494,7 +494,13 @@ export const FrameView = memo(function FrameView({
      lands in the store — otherwise a stale post would morph the edit away */
   const [suspendPost, setSuspendPost] = useState(false)
   const browserChromeAllowed =
-    !standalone && !frame.hidden && !frame.locked && !presenting && selection !== 'multi' && selection !== 'group'
+    !standalone &&
+    !frame.hidden &&
+    !frame.locked &&
+    !presenting &&
+    !uiHidden &&
+    selection !== 'multi' &&
+    selection !== 'group'
   const pageInputAllowed = browserChromeAllowed && selection === 'sole' && tool === 'select' && !panMode
   const interacting = pageMode === 'interact' && pageInputAllowed && !editing
   const picking = pageMode === 'pick' && pageInputAllowed && !editing
@@ -2031,7 +2037,7 @@ export const FrameView = memo(function FrameView({
         onDrag={(event) => startDrag(event, 'move')}
         onResize={(event, handle) => startDrag(event, 'resize', false, false, false, handle)}
         onRotate={startRotate}
-        chromeHidden={presenting || dragging || panMode}
+        chromeHidden={presenting || uiHidden || dragging || panMode}
       />
     )
   }
@@ -2441,7 +2447,7 @@ export const FrameView = memo(function FrameView({
                 changing={editing || !!stream || !!remoteEditor || !!pageMode || !!pathEdit}
                 blocked={
                   !!bleed ||
-                  (runtimeDocument ? runtimeDocument.html !== frame.html : !overview) ||
+                  (runtimeDocument !== null && runtimeDocument.html !== frame.html) ||
                   !canSnapshotFrame(frame, {
                     selected,
                     editing: editing || suspendPost || !!remoteEditor,

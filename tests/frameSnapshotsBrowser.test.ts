@@ -78,10 +78,13 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
     expect(await live!.evaluate((iframe) => getComputedStyle(iframe).visibility)).toBe('hidden')
   })
 
-  it('draws deferred frames as images on a large WebKit overview and preserves loaded documents', async () => {
+  it.each([
+    ['WebKit', 'Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 (KHTML, like Gecko)'],
+    ['Chromium', 'Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36'],
+  ])('draws deferred frames as images on a large %s overview and preserves loaded documents', async (_engine, ua) => {
     const page = await pages.open()
     await page.setViewport({ width: 1280, height: 800 })
-    await page.setUserAgent('Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 (KHTML, like Gecko)')
+    await page.setUserAgent(ua)
     const deferred = [
       canvasFrame({ id: 'long-a', name: 'Long A', x: 18000, y: 0, width: 4000, height: 12000 }),
       canvasFrame({ id: 'long-b', name: 'Long B', x: 23000, y: 0, width: 4000, height: 12000 }),
@@ -158,6 +161,26 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
 describe.skipIf(!findBrowserPath())('canvas frame budgets', { timeout: 30_000 }, () => {
   const pages = pagePerTest()
   const iframe = (id: string) => `[data-doop-frame-shell="${id}"] iframe[data-doop-frame]`
+
+  it('shows a snapshot for a visible frame beyond the live document budget', async () => {
+    const page = await pages.open()
+    await page.setViewport({ width: 1280, height: 800 })
+    const frames = Array.from({ length: 21 }, (_, index) => ({
+      ...sample,
+      id: `preview-${index}`,
+      x: (index % 7) * 500,
+      y: Math.floor(index / 7) * 400,
+      width: 480,
+      height: 360,
+    }))
+    await openCanvasPage(page, frames)
+    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 290, y: 220, zoom: 0.2 }))
+    await page.waitForFunction(() => document.querySelectorAll('iframe[data-doop-frame]').length === 20)
+    const deferred = '[data-frame-document-deferred] img[data-frame-snapshot-ready]'
+    const fallback = await page.waitForSelector(deferred, { visible: true })
+    expect(await fallback!.evaluate((image) => image.naturalWidth)).toBeGreaterThan(0)
+    expect(await page.$$eval('iframe[data-doop-frame]', (nodes) => nodes.length)).toBe(20)
+  })
 
   it('keeps a selected document, hibernates to a snapshot or placeholder, and reloads on return', async () => {
     const page = await pages.open()

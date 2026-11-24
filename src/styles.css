@@ -1542,9 +1542,11 @@ body[data-panel-resizing] * {
   visibility: hidden;
 }
 
-/* A WebKit overview can expose dozens of full-size layer trees at once.
+/* A heavy overview can expose dozens of full-size layer trees at once.
    Keep the iframe and its state, but take its live layer out of the render tree. */
 [data-frame-overview]:not([data-frame-snapshots-disabled])
-  [data-frame-snapshot]:not([data-frame-snapshot-blocked]) + div > iframe[data-doop-frame] {
+  [data-frame-snapshot]:not([data-frame-snapshot-blocked])
+  + div
+  > iframe[data-doop-frame] {
   display: none;
 }

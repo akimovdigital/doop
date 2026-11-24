@@ -1814,8 +1814,9 @@ function byCreation(a: Frame, b: Frame) {
 
 // At DPR 2 this much design area is already 1 GiB at one RGBA layer per frame.
 const FRAME_OVERVIEW_MIN_PIXELS = 64 * 1024 * 1024
-const WEBKIT_FRAME_OVERVIEW =
-  !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY && typeof navigator !== 'undefined' && /AppleWebKit\//.test(navigator.userAgent)
+const SUPPORTS_FRAME_OVERVIEW =
+  FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY ||
+  (typeof navigator !== 'undefined' && /AppleWebKit\//.test(navigator.userAgent))
 
 /** The page's frames, `frames` in paint order (back to front, as the store
  *  keeps them). They mount in creation order and stack by z-index: moving
@@ -1842,10 +1843,10 @@ function FrameStack({
   const layer = useRef<HTMLDivElement>(null)
   const [snapshots] = useState(() => new FrameSnapshots())
   const prototypeMode = useStore((s) => s.prototypeMode)
-  const snapshotsDisabled = presenting || uiHidden || prototypeMode
+  const snapshotsDisabled = presenting || prototypeMode || (uiHidden && !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY)
   const heavyPage = useMemo(
     () =>
-      WEBKIT_FRAME_OVERVIEW &&
+      SUPPORTS_FRAME_OVERVIEW &&
       frames.reduce(
         (pixels, frame) =>
           frame.hidden || frame.browser || !frame.html ? pixels : pixels + frame.width * frame.height,
@@ -1884,12 +1885,12 @@ function FrameStack({
             loadDocument={admitted.has(f.id)}
             protectDocument={protect}
             snapshots={snapshots}
-            overview={overview}
             compactSectionTitles={compactSectionTitles}
             requestDocument={request}
             onFollowLink={onFollowLink}
             onPresentFrame={onPresentFrame}
-            presenting={presenting || uiHidden}
+            presenting={presenting}
+            uiHidden={uiHidden}
           />
         ),
       )}
