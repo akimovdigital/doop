@@ -297,8 +297,8 @@ export class FrameSnapshots {
         documentBackground: true,
         preview: {
           onResourceFailure: () => (resourceFailure = true),
-          // The bridge normally wakes a deferred iframe to read its live DOM.
-          skipDeferredDocument: this.layer?.hasAttribute('data-frame-overview'),
+          // Previewing an unloaded frame must not compete for a live iframe slot.
+          skipDeferredDocument: true,
         },
       })
       abort.signal.throwIfAborted()
