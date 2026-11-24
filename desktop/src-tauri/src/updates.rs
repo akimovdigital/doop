@@ -53,11 +53,9 @@ enum Trigger {
 /// with one would silently change its server, and a debug build would be
 /// replaced by a release. On macOS the feed names the Chromium build, so the
 /// WebKit app updates into it and the Chromium app keeps updating from it.
-const OFFICIAL_BUNDLE_IDENTIFIER: &str = "design.doop.desktop";
-
 fn updates_allowed(identifier: &str, app_url: &str, debug: bool) -> bool {
     !debug
-        && identifier == OFFICIAL_BUNDLE_IDENTIFIER
+        && identifier == crate::OFFICIAL_BUNDLE_IDENTIFIER
         && matches!(
             app_url.trim_end_matches('/'),
             "https://doop.design" | "https://www.doop.design"
@@ -338,6 +336,7 @@ fn dialog(app: &AppHandle, title: &str, description: &str) -> AsyncMessageDialog
 #[cfg(target_os = "macos")]
 pub mod menu {
     use super::*;
+    use crate::OFFICIAL_BUNDLE_IDENTIFIER;
     use tauri::menu::MenuItem;
 
     pub const MENU_ID: &str = "check-for-updates";

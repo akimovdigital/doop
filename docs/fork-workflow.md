@@ -65,13 +65,13 @@
 
 Бренд живёт только на `local/doop-dev`. На `main` форка его нет, в PR автору его не берём.
 
-Базовый `desktop/src-tauri/tauri.conf.json` остаётся авторским и на сборке тоже: productName `doop`, identifier `design.doop.desktop`, version `0.14.0`, канал `https://doop.design/desktop/latest.json`. Сборка Dev подменяет часть полей файлом `doop-dev.tauri.json` (`build-doop-dev.sh`: `bun run build --bundles app --config ../doop-dev.tauri.json`).
+Doop Dev на macOS собирается скриптом `build-doop-dev.sh` из `desktop/src-tauri-chromium` через Tauri 3 и CEF. Базовый конфиг сохраняет авторские имя, identifier и канал обновлений. Скрипт передаёт `desktop/src-tauri-chromium/doop-dev.tauri.json`, а код оболочки и IPC-разрешения берутся из общего `desktop/src-tauri`. Для установки в `~/Applications/Doop Dev.app` используется `install-doop-dev.sh`.
 
-Оверлей задаёт productName `Doop Dev`, identifier `digital.akimov.doop-test`, `frontendDist` `http://127.0.0.1:4437`, пустые `plugins.updater.endpoints` и deep-link schemes, иконку `icons/doop-test-dev.icns`. Ключа `version` в оверлее нет, номер берётся из базового файла.
+Оверлей задаёт productName `Doop Dev`, identifier `digital.akimov.doop-test`, `frontendDist` `http://127.0.0.1:4437`, пустые `plugins.updater.endpoints` и deep-link schemes, иконку `desktop/src-tauri/icons/doop-test-dev.icns`. Ключа `version` в оверлее нет, номер берётся из базового файла.
 
 Отдельные файлы, которых нет у автора:
 
-- `doop-dev.tauri.json`
+- `desktop/src-tauri-chromium/doop-dev.tauri.json`
 - `build-doop-dev.sh`
 - `DESIGN.md` — заметки сборки; общий гайд автора остаётся `.context/DESIGN.md`
 - `desktop/doop-test-dev-icon.png`
@@ -221,8 +221,8 @@ git push origin --delete chore/fork-workflow
 
 Свои файлы бренда и локальной оболочки:
 
-- `doop-dev.tauri.json` — productName `Doop Dev`, identifier `digital.akimov.doop-test`, фронт `http://127.0.0.1:4437`, пустые `plugins.updater.endpoints`, иконка
-- `build-doop-dev.sh` — сборка с этим оверлеем
+- `desktop/src-tauri-chromium/doop-dev.tauri.json` — productName `Doop Dev`, identifier `digital.akimov.doop-test`, фронт `http://127.0.0.1:4437`, пустые `plugins.updater.endpoints`, иконка
+- `build-doop-dev.sh` и `install-doop-dev.sh` — сборка CEF с этим оверлеем и установка
 - `DESIGN.md` — заметки сборки, отдельно от `.context/DESIGN.md`
 - `desktop/doop-test-dev-icon.png`, `desktop/src-tauri/icons/doop-test-dev.icns`
 - `desktop/src-tauri/src/local_test_login.rs` — вход на `http://127.0.0.1:4437`

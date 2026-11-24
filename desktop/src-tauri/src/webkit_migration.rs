@@ -106,13 +106,14 @@ pub struct Migration {
 
 /// The marker sits in the profile it describes, so a debug build's
 /// migration into cef-dev leaves the release profile's own still to come.
-fn marker() -> Option<PathBuf> {
-    crate::chromium_profile_dir().map(|profile| profile.join(MARKER))
+fn marker(identifier: &str) -> Option<PathBuf> {
+    crate::chromium_profile_dir(identifier).map(|profile| profile.join(MARKER))
 }
 
 /// True until the move has run once into this build's profile.
-pub fn pending() -> bool {
-    marker().is_some_and(|marker| !marker.exists())
+pub fn pending(identifier: &str) -> bool {
+    identifier == crate::OFFICIAL_BUNDLE_IDENTIFIER
+        && marker(identifier).is_some_and(|marker| !marker.exists())
 }
 
 /// The URL the window opens on while migrating.
@@ -215,7 +216,7 @@ fn apply_when_ready(app: &AppHandle) {
         wait_for_cookies(&window, &origin, &data.cookies);
         // marked before the hand-over: a crash in between costs a sign-in,
         // never a second migration over what Chromium has since stored
-        if let Some(marker) = marker() {
+        if let Some(marker) = marker(&window.config().identifier) {
             if let Some(profile) = marker.parent() {
                 let _ = std::fs::create_dir_all(profile);
             }
@@ -286,7 +287,7 @@ fn cef_cookie(cookie: &MigratedCookie) -> cef::Cookie {
 }
 
 /// Unix seconds as Chromium's base::Time: microseconds since 1601.
-fn chromium_time(unix_secs: f64) -> i64 {
+pub(crate) fn chromium_time(unix_secs: f64) -> i64 {
     ((unix_secs + WINDOWS_TO_UNIX_EPOCH_SECS) * 1_000_000.0) as i64
 }
 
