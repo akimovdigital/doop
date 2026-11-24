@@ -198,7 +198,7 @@ function advice(kind: Kind, surface: Surface): string {
     case 'media':
       return 'video or audio: frames are designs, so show a poster image (search_images, generate_image) or link a hosted file by URL.'
     case 'embedded':
-      return 'a block of base64 text (a packed script bundle, a compressed data file, a file as a string): a library loads from a CDN with <script src> or <link>; data in a design is a few representative rows written out, not the dataset; a picture goes in by the URL upload_asset, search_images or generate_image returns, and a font with upload_font. A frame is one screen of a design: an application with its code and all its pages packed inside does not belong in one. Put each screen in a frame of its own and wire them as a prototype.'
+      return 'a block of base64 text (a packed script bundle, a compressed data file, a file as a string): use static HTML + CSS by default. If an island needs a library, load it with <script src> inside the marked data-doop-island element. Use a few representative data rows, image URLs from upload_asset, search_images or generate_image, and fonts from upload_font. Put each screen in a frame of its own and wire them as a prototype.'
     case 'other':
       return 'a file: reference it by a hosted URL, or leave it out of the design.'
   }

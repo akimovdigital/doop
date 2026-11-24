@@ -34,6 +34,15 @@ describe('server instructions', () => {
   it('say to load the guide within the first 512 characters', () => {
     expect(INSTRUCTIONS.slice(0, 512)).toContain('get_guide({ topic: "doop-instructions" })')
   })
+
+  it('sets the same static default in the handshake and create_frame help', async () => {
+    const client = await connect()
+    const { tools } = await client.listTools()
+    await client.close()
+    const rule = 'Use static HTML + CSS by default. Put JavaScript only inside a marked data-doop-island element.'
+    expect(INSTRUCTIONS).toContain(rule)
+    expect(tools.find((tool) => tool.name === 'create_frame')?.description).toContain(rule)
+  })
 })
 
 describe('get_guide', () => {

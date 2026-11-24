@@ -166,7 +166,27 @@ only run in the player):
 /** Where a frame's CSS goes. People edit a frame element by element, and the
  *  editor reads and writes the style attribute, so that is where an agent's
  *  styles are most editable. Guidance only: nothing rejects a stylesheet. */
-export const FRAME_STYLES = `- Style an element on the element itself: style="…". People edit a frame element by element in the
+export const FRAME_STYLES = `- Use static HTML + CSS by default. Put JavaScript only inside a marked \`data-doop-island\`
+  element. Use one island per need. Skip GSAP and other frame-wide libraries.
+- Keep infinite or decorative animations and blur above 8 px (in \`filter\` or \`backdrop-filter\`)
+  inside islands only. Never apply these effects to the page background.
+- Wrap CSS motion in \`@media (prefers-reduced-motion: no-preference)\`. For JS motion, check
+  the same preference with matchMedia. Use CSS for scroll reveals. If CSS cannot do it, use
+  one tiny shared IntersectionObserver inside an island.
+- Design for the canvas to pause islands when their frame is out of focus. Present, prototype
+  playback and export keep the authored motion, subject to reduced-motion preferences.
+
+  \`\`\`html
+  <style>
+    @keyframes status-pulse { 50% { opacity: .4; } }
+    @media (prefers-reduced-motion: no-preference) {
+      [data-doop-island="status"] .dot { animation: status-pulse 2s infinite; }
+    }
+  </style>
+  <span data-doop-island="status"><span class="dot" aria-hidden="true">●</span> Live</span>
+  \`\`\`
+
+- Style an element on the element itself: style="…". People edit a frame element by element in the
   editor, which reads and writes that attribute, so a style written there is one they can change,
   move and copy without surprises. A stylesheet rule can outrank their edit, or stop matching the
   moment they group or reorder layers.
@@ -178,7 +198,7 @@ export const FRAME_STYLES = `- Style an element on the element itself: style="�
 - A <style> block is for what an attribute cannot say: @keyframes, @font-face, custom properties
   that are not canvas values, states (:hover, :focus, :active, :disabled, :checked), pseudo-elements (::before,
   ::placeholder), @media and @container queries, a component's variant and state rules, and the
-  reset. Keep using it for those: never drop a hover state or an animation to avoid the block.
+  reset.
 - A property that changes with a state, a variant or a query goes in the stylesheet in both forms,
   the resting value included. An inline value outranks every rule, so style="background:#111" would
   keep .btn:hover { background:#333 } from ever showing. Only what never changes on the element
@@ -210,8 +230,8 @@ export const LEAN_FRAMES = `- Frames carry markup, never files. A frame is sent 
     path data): upload the .svg and use it as <img>. Keep inline <svg> for icons and shapes
     someone may want to edit.
   - Video and audio: frames are designs, so show a poster image instead of embedding a clip.
-  - Libraries and frameworks (charting, 3D, animation, a CSS framework): load them from a CDN with
-    <script src> or <link>, never pasted in. Better still, write only the CSS the design uses.
+  - Write only the CSS the design uses. If an island needs a library, load it with <script src>
+    inside that island. Keep bundled code out of the HTML.
   - Data: a chart or table needs a few representative rows, not the dataset. Keep inline JSON to a
     few KB.
   - Icon sets: hotlink each icon you use from search_icons, not a sprite sheet of the whole set.
@@ -425,8 +445,8 @@ Viewers watch designs assemble live. Stream with append_frame_html:
   implementation job — follow the human's request. When a human asks you to mark a frame
   ready for dev (or move it back to draft), set_frame_approval does it in their name; never
   approve your own work unasked.
-- A frame renders a complete HTML document in a sandboxed iframe. <style> and <script>
-  work. Hosted fonts: name a family get_canvas lists under \`webFonts\` in CSS and nothing
+- A frame renders a complete HTML document in a sandboxed iframe. Hosted fonts: name a
+  family get_canvas lists under \`webFonts\` in CSS and nothing
   more — Doop adds one <link data-doop-webfonts> for the families the frame uses (keep it,
   never add your own for those). Another Google Fonts family works with your own <link>.
 - Imported frames: a frame from a GitHub repo or synced from a team's live app has rules of
