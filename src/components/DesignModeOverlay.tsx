@@ -37,7 +37,12 @@ export function DesignModeToggle({ enabled, onToggle }: { enabled: boolean; onTo
       aria-pressed={enabled}
       on={enabled}
       data-design-toggle=""
-      onClick={onToggle}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onToggle()
+      }}
     >
       <HotspotIcon size="rail" />
     </IconButton>
@@ -291,7 +296,9 @@ export function DesignModeOverlay({
     return () => shield.removeEventListener('wheel', wheel)
   }, [picking, surface, getWindow])
 
-  const gesture = useRef<{ id: number; mouse: boolean }>()
+  const gesture = useRef<{ id: number; mouse: boolean; alt: boolean }>()
+  const releasedClick = useRef<{ shift: boolean; alt: boolean }>()
+  const modifiedClick = useRef(false)
   const handlers = useRef(mode)
   useLayoutEffect(() => {
     handlers.current = mode
@@ -306,9 +313,15 @@ export function DesignModeOverlay({
       handlers.current.cancelPointer()
     }
     function finish(event: MouseEvent, id: number) {
-      if (event.button !== 0 || gesture.current?.id !== id) return
+      const active = gesture.current
+      if (event.button !== 0 || active?.id !== id) return
       gesture.current = undefined
-      handlers.current.pointerUp(designPoint(event, shield!, scale), id, event.shiftKey, event.altKey, scale)
+      const at = designPoint(event, shield!, scale)
+      const mode = handlers.current
+      if (!mode.pointerUp(at, id, event.shiftKey, event.altKey, scale)) return
+      const alt = active.alt || event.altKey
+      if (active.mouse) releasedClick.current = { shift: event.shiftKey, alt }
+      else void mode.pick(at, event.shiftKey, alt)
     }
     function up(event: PointerEvent) {
       finish(event, event.pointerId)
@@ -316,6 +329,7 @@ export function DesignModeOverlay({
     function mouseUp(event: MouseEvent) {
       const active = gesture.current
       if (active?.mouse) finish(event, active.id)
+      else if (releasedClick.current && event.button === 0) releasedClick.current.alt ||= event.altKey
     }
     function move(event: PointerEvent) {
       const active = gesture.current
@@ -326,7 +340,11 @@ export function DesignModeOverlay({
       }
       handlers.current.pointerMove(designPoint(event, shield!, scale), event.shiftKey, event.altKey, scale)
     }
-    const blur = () => cancel()
+    const blur = () => {
+      releasedClick.current = undefined
+      modifiedClick.current = false
+      cancel()
+    }
     window.addEventListener('pointermove', move, true)
     window.addEventListener('pointerup', up, true)
     window.addEventListener('mouseup', mouseUp, true)
@@ -340,7 +358,7 @@ export function DesignModeOverlay({
       window.removeEventListener('pointercancel', cancel, true)
       shield.removeEventListener('lostpointercapture', cancel)
       window.removeEventListener('blur', blur)
-      cancel()
+      blur()
     }
   }, [picking, surface, revision])
 
@@ -395,13 +413,14 @@ export function DesignModeOverlay({
               style={{ left: surface.x, top: surface.y, width: surface.width, height: surface.height }}
               onPointerDown={(e) => {
                 if (e.button !== 0 || !e.isPrimary) return
+                releasedClick.current = undefined
                 if (gesture.current) mode.cancelPointer()
                 const mouse = e.pointerType === 'mouse'
                 // Keep compatibility mouseup enabled. Capture touch/pen; the shield
                 // and the window listeners already cover the mouse.
                 if (!mouse) e.currentTarget.setPointerCapture(e.pointerId)
                 if (!draft || draft.region) e.currentTarget.focus({ preventScroll: true })
-                gesture.current = { id: e.pointerId, mouse }
+                gesture.current = { id: e.pointerId, mouse, alt: e.altKey }
                 mode.pointerDown(designPoint(e, e.currentTarget, surface.scale), e.pointerId)
               }}
               onPointerMove={(e) => {
@@ -412,8 +431,22 @@ export function DesignModeOverlay({
               onMouseDown={(event) => {
                 if (draft) event.preventDefault()
               }}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                const released = releasedClick.current
+                releasedClick.current = undefined
+                // Use the click's modifiers before opening a note or shifting focus to chat.
+                const alt = event.altKey || !!released?.alt
+                const shift = event.shiftKey || !!released?.shift
+                modifiedClick.current = alt || shift || (event.detail > 1 && modifiedClick.current)
+                if (released && event.button === 0)
+                  void mode.pick(designPoint(event, event.currentTarget, surface.scale), shift, alt)
+              }}
               onDoubleClick={(event) => {
-                if (!draft?.region && !event.altKey && !event.shiftKey)
+                event.preventDefault()
+                event.stopPropagation()
+                if (!draft?.region && !event.altKey && !event.shiftKey && !modifiedClick.current)
                   void mode.startTextEdit(designPoint(event, event.currentTarget, surface.scale))
               }}
               onPointerLeave={mode.clearHover}

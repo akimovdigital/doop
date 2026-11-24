@@ -205,7 +205,12 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     expect(
       await page.$eval(`${bar} button[aria-label="Back"]`, (el) => el.getBoundingClientRect().left),
     ).toBeGreaterThanOrEqual(76)
-    await annotate(page)
+    const designToggle = `${bar} [data-design-toggle]`
+    await page.click(designToggle)
+    await page.waitForSelector(`${designToggle}[aria-pressed="true"]`)
+    await page.waitForSelector(`${present} [data-browser-viewport][aria-busy="false"] [data-design-shield]`, {
+      visible: true,
+    })
     expect(
       await page.$eval(`${bar} [data-design-hint]`, (el) => el.getBoundingClientRect().left),
     ).toBeGreaterThanOrEqual(76)
@@ -337,14 +342,19 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     const chipFrame = await (await iframe())!.contentFrame()
     await chipFrame!.waitForFunction(() => document.querySelector('#title')?.textContent === 'Second page')
     const chips = `${present} [data-preview-chat] [data-context-chip]`
+    const mouse = await page.createCDPSession()
     for (const [index, selector] of ['#title', 'a', '#summary'].entries()) {
       const box = await (await chipFrame!.$(selector))!.boundingBox()
-      await page.keyboard.down('Alt')
-      try {
-        await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2)
-      } finally {
-        await page.keyboard.up('Alt')
-      }
+      // Drive trusted input with Option in the mouse event flags and no key events.
+      const target = {
+        x: box!.x + box!.width / 2,
+        y: box!.y + box!.height / 2,
+        button: 'left',
+        clickCount: 1,
+        modifiers: 1, // CDP's Alt bit
+      } as const
+      await mouse.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...target })
+      await mouse.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...target })
       await page.waitForFunction(
         (chips, count) => document.querySelectorAll(chips).length === count,
         {},
@@ -354,6 +364,7 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
       expect(await page.$(`${bar} input[aria-label="URL"]`)).toBeNull()
       expect(await page.$(`${bar} [data-design-hint]`)).not.toBeNull()
     }
+    await mouse.detach()
     await page.waitForFunction(
       (chips) => {
         const images = [...document.querySelectorAll<HTMLImageElement>(`${chips} [data-context-thumbnail]`)]
