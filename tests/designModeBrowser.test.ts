@@ -1,5 +1,6 @@
 import { agentPromptText, readContextPrompt } from '../shared/uiElementContext'
-import { mkdir, readFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import sharp from 'sharp'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -86,13 +87,14 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await page.setViewport({ width: 1000, height: 760, deviceScaleFactor: 1 })
   })
 
-  async function mount(data = canvas, synced = false, mac = false) {
+  async function mount(data = canvas, synced = false, mac = false, actual = false) {
     await page.goto(fixtureUrl('prototype.html'))
     await page.waitForFunction(() => (window as unknown as Fixture).fixtureReady)
     await page.evaluate(
-      (data, synced, reset, mac) => {
+      (data, synced, reset, mac, actual) => {
         const fixture = window as unknown as Fixture
         if (reset) localStorage.clear()
+        if (actual) localStorage.setItem('doop:proto-scaling', 'actual')
         if (mac) Object.assign(window, { __DOOP_DESKTOP__: '0.14.0', __DOOP_DESKTOP_TRAFFIC_LIGHTS__: true })
         fixture.mockDesignSends()
         fixture.seed(data)
@@ -103,6 +105,7 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
       synced,
       firstMount,
       mac,
+      actual,
     )
     firstMount = false
     const id = data.frames[0]!.id
@@ -218,6 +221,141 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
 
   const sent = () => page.evaluate(() => (window as unknown as Fixture).designSends)
   const draft = () => page.evaluate((id) => (window as unknown as Fixture).readDesignDraft(id), canvas.id)
+
+  it.each([375, 768, 1440])(
+    'captures the live DOM at %i px with screenshot-equivalent pixels in under 500 ms',
+    async (viewportWidth) => {
+      await page.setViewport({ width: viewportWidth, height: 760, deviceScaleFactor: 1 })
+      const frame = await mount(
+        {
+          ...canvas,
+          frames: [
+            {
+              ...canvas.frames[0]!,
+              width: 340,
+              height: 300,
+              html: `<!doctype html><style>body{margin:0;background:white}
+          #hero{position:absolute;top:840px;left:20px;width:300px;height:160px;
+            background:#dce8fe;color:#24326b;font:16px Arial;padding:12px;box-sizing:border-box}
+          h1{margin:0} ul{margin:6px 0} li::before{content:'✓ '}
+          </style><div id="hero"></div><svg style="position:absolute;width:0;height:0">
+            <symbol id="badge" viewBox="0 0 12 12"><circle cx="6" cy="6" r="5"/></symbol>
+          </svg><script>
+          document.querySelector('#hero').innerHTML = '<h1>Live headline</h1><ul><li>Lead one</li><li>Lead two</li></ul>' +
+            '<svg width="14" height="14" style="fill:#009944"><use href="#badge"/></svg>'
+          const animation = document.querySelector('h1').animate(
+            [{ transform: 'translateX(0px)' }, { transform: 'translateX(72px)' }],
+            { duration: 1000, fill: 'both' }
+          )
+          animation.pause()
+          animation.currentTime = 400
+          </script>`,
+            },
+          ],
+        },
+        false,
+        false,
+        true,
+      )
+      await frame.waitForSelector('#hero li:last-child')
+      await frame.evaluate(() => window.scrollTo({ top: 800, behavior: 'instant' }))
+      const iframe = await page.waitForSelector('iframe[data-doop-proto-frame="home"]')
+      const bounds = (await iframe!.boundingBox())!
+      expect(bounds.width).toBe(340)
+      const { png, ms, clip } = await page.evaluate(() => {
+        const win = document.querySelector<HTMLIFrameElement>('iframe[data-doop-proto-frame="home"]')!.contentWindow!
+        return new Promise<{
+          png: number[]
+          ms: number
+          clip: { x: number; y: number; width: number; height: number }
+        }>((resolve, reject) => {
+          const started = performance.now()
+          const timer = setTimeout(() => {
+            window.removeEventListener('message', receive)
+            reject(new Error('The frame did not reply to the crop request'))
+          }, 3000)
+          function receive(event: MessageEvent) {
+            if (event.source !== win || event.data?.type !== 'doop:annotation-crop-result' || event.data.reqId !== -1)
+              return
+            window.removeEventListener('message', receive)
+            clearTimeout(timer)
+            const ms = performance.now() - started
+            const { plan, png } = event.data
+            if (!(png instanceof Blob) || !plan) return reject(new Error('The frame did not produce a live PNG'))
+            void png.arrayBuffer().then(
+              (bytes) =>
+                resolve({
+                  png: [...new Uint8Array(bytes)],
+                  ms,
+                  clip: plan.clip,
+                }),
+              reject,
+            )
+          }
+          window.addEventListener('message', receive)
+          win.postMessage({ type: 'doop:annotation-crop', reqId: -1, selectors: ['#hero'] }, '*')
+        })
+      })
+      const crop = Buffer.from(png)
+      const screenshot = await page.screenshot({
+        type: 'png',
+        clip: { ...clip, x: bounds.x + clip.x, y: bounds.y + clip.y },
+      })
+      const [actual, reference] = await Promise.all([
+        sharp(crop).removeAlpha().raw().toBuffer(),
+        sharp(screenshot).removeAlpha().raw().toBuffer(),
+      ])
+      expect(actual).toHaveLength(reference.length)
+      const colors = new Set<number>()
+      let changed = 0
+      for (let i = 0; i < actual.length; i += 3) {
+        colors.add(actual[i]! * 65536 + actual[i + 1]! * 256 + actual[i + 2]!)
+        if ([0, 1, 2].some((channel) => Math.abs(actual[i + channel]! - reference[i + channel]!) > 24)) changed++
+      }
+      if (process.env.DOOP_DESIGN_SHOTS === '1') {
+        const dir = join(homedir(), 'doop-element-comments')
+        await mkdir(dir, { recursive: true })
+        await writeFile(join(dir, 'dm-27-live-crop-' + viewportWidth + '.png'), crop)
+        await writeFile(join(dir, 'dm-27-live-reference-' + viewportWidth + '.png'), screenshot)
+      }
+      expect(colors.size).toBeGreaterThan(20)
+      expect(colors.has(0x009944)).toBe(true)
+      expect(changed / (actual.length / 3)).toBeLessThan(0.035)
+      expect(ms).toBeLessThan(500)
+    },
+  )
+
+  it('requests the visible server crop when a canvas in the live selection is tainted', async () => {
+    const frame = await mount()
+    await frame.evaluate(() => {
+      const canvas = document.createElement('canvas')
+      canvas.style.cssText = 'position:absolute;top:50px;left:40px;width:30px;height:20px;pointer-events:none'
+      canvas.toDataURL = () => {
+        throw new DOMException('Tainted test canvas', 'SecurityError')
+      }
+      document.body.append(canvas)
+    })
+    await page.setRequestInterception(true)
+    const urlPath = '/api/frames/home/screenshot.png'
+    const img = await sharp({ create: { width: 176, height: 76, channels: 3, background: '#eee' } })
+      .png()
+      .toBuffer()
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === urlPath) {
+        void request.respond({ status: 200, contentType: 'image/png', body: img })
+      } else void request.continue()
+    })
+    const fallback = page.waitForRequest((request) => new URL(request.url()).pathname === urlPath)
+    await enter()
+    await clickAt(frame, '#go', 'Alt')
+    const query = new URL((await fallback).url()).searchParams
+    expect(query.get('capture')).toBe('visible')
+    expect(query.get('crop')).toBe('32,42,176,76')
+    await page.waitForFunction(() => {
+      const thumb = document.querySelector<HTMLImageElement>('[data-context-thumbnail]')
+      return thumb?.naturalWidth === 176
+    })
+  })
 
   it('keeps full-window prototype controls outside the macOS traffic lights', async () => {
     await mount(canvas, false, true)

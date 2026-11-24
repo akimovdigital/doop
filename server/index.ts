@@ -1,4 +1,4 @@
-import { BrowseProxyError, browseSessionToken, loadBrowsePage } from './browseProxy.ts'
+import { BrowseProxyError, browseSessionToken, loadBrowseCropResource, loadBrowsePage } from './browseProxy.ts'
 import { browserFrameSchema } from '../shared/browserFrame.ts'
 import { env } from './env.ts'
 import {
@@ -1161,7 +1161,7 @@ app.use('/api/agents', customAgentsRouter)
 app.use('/api/skills', skillsRouter)
 
 app.get('/api/browse-proxy', async (req, res, next) => {
-  const { canvasId, url, session } = req.query
+  const { canvasId, url, session, resource } = req.query
   res.set('Cache-Control', 'private, no-store')
   if (typeof canvasId !== 'string' || typeof url !== 'string') {
     res.status(400).json({ error: 'canvasId and url are required' })
@@ -1173,6 +1173,19 @@ app.get('/api/browse-proxy', async (req, res, next) => {
     return
   }
   if (!requireCanvas(req, res, canvasId, 'edit')) return
+  if (typeof resource === 'string' && req.get('X-Doop-Crop-Resource') === '1') {
+    try {
+      const { mime, bytes } = await loadBrowseCropResource(url, resource, env.BROWSE_PROXY_ALLOW_ORIGINS)
+      res.set('X-Doop-Crop-Mime', mime)
+      res.set('X-Content-Type-Options', 'nosniff')
+      res.set('Content-Disposition', 'attachment')
+      res.type('application/octet-stream').send(bytes)
+    } catch (error) {
+      if (!(error instanceof BrowseProxyError)) return next(error)
+      res.status(error.status).json({ error: error.message })
+    }
+    return
+  }
   if (typeof session !== 'string' || !/^[a-f0-9-]{36}$/.test(session)) {
     res.status(400).json({ error: 'invalid browser session' })
     return

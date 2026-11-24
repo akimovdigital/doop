@@ -1,37 +1,14 @@
 import type { Frame } from '../../shared/types'
-import { askFrameWindow } from './frameBridge'
-import { clipToFrame, rasterizeHtml, type ClipRect } from './frameRaster'
-import type { DesignNote, NoteRect } from './designNotes'
-import { desktopPlatform } from './shell'
+import { requestFrameCrop } from './frameBridge'
+import type { CropViewport } from './frameCropRuntime'
+import type { ClipRect } from './frameRaster'
+import type { DesignNote } from './designNotes'
 import { renderMarkupSvg } from './designMarkup'
 
-interface Viewport {
-  width: number
-  height: number
-  scrollX: number
-  scrollY: number
-}
-
-const PADDING = 8
-const MAX_CROP_SIDE = 1200
+export { planDesignCrop } from './frameCropRuntime'
 export const MAX_PROMPT_ATTACHMENTS = 4
 
-/** The annotation overlay already unscales the displayed iframe. Its boxes are
- * viewport CSS pixels; only the output density uses the device pixel ratio. */
-export function planDesignCrop(rects: NoteRect[], viewport: Viewport, dpr: number) {
-  const visible = rects.filter((rect) => clipToFrame(rect, viewport))
-  if (!visible.length) return null
-  const left = Math.min(...visible.map((r) => r.x)) - PADDING
-  const top = Math.min(...visible.map((r) => r.y)) - PADDING
-  const right = Math.max(...visible.map((r) => r.x + r.width)) + PADDING
-  const bottom = Math.max(...visible.map((r) => r.y + r.height)) + PADDING
-  const clip = clipToFrame({ x: left, y: top, width: right - left, height: bottom - top }, viewport)
-  if (!clip) return null
-  const scale = Math.min(Math.max(1, dpr), 2, MAX_CROP_SIDE / Math.max(clip.width, clip.height))
-  return { clip, viewport, scale }
-}
-
-async function composeMarkup(crop: Blob, note: DesignNote, clip: ClipRect, viewport: Viewport): Promise<Blob> {
+async function composeMarkup(crop: Blob, note: DesignNote, clip: ClipRect, viewport: CropViewport): Promise<Blob> {
   if (!note.region || !note.markup?.length) return crop
   const svg = renderMarkupSvg(note.markup, {
     ...clip,
@@ -61,47 +38,25 @@ async function composeMarkup(crop: Blob, note: DesignNote, clip: ClipRect, viewp
   }
 }
 
-interface CropMetrics extends Viewport {
-  rects: NoteRect[]
-  dpr: number
-}
-
 async function renderCrop(win: Window, frame: Frame, note: DesignNote, sourceReady: () => void) {
-  const reply = await askFrameWindow(win, 'doop:annotation-crop', {
-    selectors: note.elements.map((element) =>
-      element.doopId ? `[data-doop-id="${CSS.escape(element.doopId)}"]` : element.selector,
-    ),
-  })
-  if (!reply?.metrics) return
-  const { rects, dpr, ...viewport } = reply.metrics as CropMetrics
-  const region =
-    note.regionInPage && note.region
-      ? { ...note.region, x: note.region.x - viewport.scrollX, y: note.region.y - viewport.scrollY }
-      : note.region
-  const plan = planDesignCrop(region ? [region] : rects, viewport, dpr)
-  if (!plan) return
-  const { clip, scale } = plan
-  // ForeignObject canvas export is unreliable in WKWebView. The screenshot
-  // endpoint also replays document scroll for output containing fixed elements.
-  if (!frame.browser && !viewport.scrollX && !viewport.scrollY && desktopPlatform() !== 'macos') {
-    try {
-      const first = note.elements[0]
-      const textEdit = note.textEdit &&
-        first && {
-          ...note.textEdit,
-          selector: first.doopId ? `[data-doop-id="${CSS.escape(first.doopId)}"]` : first.selector,
-        }
-      const snapshot = await askFrameWindow(win, 'doop:snapshot', { textEdit }, 15_000)
-      sourceReady()
-      if (typeof snapshot?.html === 'string') {
-        const crop = await rasterizeHtml(snapshot.html, viewport, { type: 'png', clip, scale })
-        return await composeMarkup(crop, note, clip, viewport)
-      }
-    } catch {
-      // Non-inlineable CSS, images or nested documents use the server renderer.
-    }
+  const selectors = note.elements.map((element) =>
+    element.doopId ? `[data-doop-id="${CSS.escape(element.doopId)}"]` : element.selector,
+  )
+  const request = {
+    selectors,
+    region: note.region,
+    regionInPage: note.regionInPage,
+    textEdit: note.textEdit && selectors[0] ? { ...note.textEdit, selector: selectors[0] } : undefined,
   }
+  const source = frame.browser ? { canvasId: frame.canvasId, url: note.pageUrl } : undefined
+  const reply =
+    (await requestFrameCrop(win, request, source)) ?? (await requestFrameCrop(win, { ...request, geometryOnly: true }))
   sourceReady()
+  if (!reply?.plan) return
+  const { clip, scale, viewport } = reply.plan
+  if (reply.png) return composeMarkup(reply.png, note, clip, viewport)
+
+  // Resource, decoding and taint errors keep the existing renderer available.
   const cropParams = (r: ClipRect) => [r.x, r.y, r.width, r.height].join(',')
   const query = new URLSearchParams({
     capture: 'visible',

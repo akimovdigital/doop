@@ -42,10 +42,12 @@ function originAllowList(raw: string) {
   return origins
 }
 
-async function boundedBody(response: Response, signal: AbortSignal) {
-  if (Number(response.headers.get('content-length')) > LIMIT) {
+async function boundedBody(response: Response, signal: AbortSignal, limit = LIMIT) {
+  const limitError = () =>
+    new BrowseProxyError(413, limit === LIMIT ? 'Remote page exceeds 10 MB' : 'Crop resource exceeds the byte limit')
+  if (Number(response.headers.get('content-length')) > limit) {
     await response.body?.cancel()
-    throw new BrowseProxyError(413, 'Remote page exceeds 10 MB')
+    throw limitError()
   }
   if (!response.body) return Buffer.alloc(0)
   const reader = response.body.getReader()
@@ -57,7 +59,7 @@ async function boundedBody(response: Response, signal: AbortSignal) {
       const { done, value } = await reader.read()
       if (done) break
       size += value.byteLength
-      if (size > LIMIT) throw new BrowseProxyError(413, 'Remote page exceeds 10 MB')
+      if (size > limit) throw limitError()
       chunks.push(value)
     }
   } finally {
@@ -210,5 +212,37 @@ export async function loadBrowsePage(
     throw new BrowseProxyError(502, 'Remote page could not be loaded')
   } finally {
     clearTimeout(timer)
+  }
+}
+
+/** Static bytes for a live crop when the opaque frame cannot use CORS.
+ * Keep them on the page's origin, pin the address, and never forward cookies
+ * or follow redirects. The editor reconstructs a typed Blob from inert bytes. */
+export async function loadBrowseCropResource(rawPage: string, rawAsset: string, allowList: string) {
+  const page = httpUrl(rawPage)
+  const asset = httpUrl(rawAsset)
+  if (asset.origin !== page.origin) throw new BrowseProxyError(400, 'Crop resource must be on the page origin')
+  const signal = AbortSignal.timeout(2000)
+  try {
+    const response = await fetchPinnedPublicUrl(asset, { redirect: 'manual', signal }, originAllowList(allowList))
+    let mime = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() ?? ''
+    const genericFont = /\.woff2?$/i.test(asset.pathname) && !mime.startsWith('font/')
+    const supported =
+      /^(?:image\/(?:png|jpeg|gif|webp|avif|svg\+xml|bmp|x-icon)|font\/[a-z0-9-]+|application\/(?:font-woff|x-font-ttf|vnd.ms-fontobject)|text\/css)$/
+    if (!response.ok || (!supported.test(mime) && !genericFont)) {
+      await response.body?.cancel()
+      throw new BrowseProxyError(502, 'Unsupported crop resource')
+    }
+    const bytes = await boundedBody(response, signal, 3_000_000)
+    if (genericFont) {
+      const signature = bytes.toString('ascii', 0, 4)
+      if (signature !== 'wOFF' && signature !== 'wOF2') throw new BrowseProxyError(502, 'Invalid crop font')
+      mime = signature === 'wOF2' ? 'font/woff2' : 'font/woff'
+    }
+    return { mime, bytes }
+  } catch (error) {
+    if (error instanceof BrowseProxyError) throw error
+    if (error instanceof PublicNetworkUrlError) throw new BrowseProxyError(400, error.message)
+    throw new BrowseProxyError(signal.aborted ? 504 : 502, 'Crop resource could not be loaded')
   }
 }

@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { createServer, type Server as SiteServer } from 'node:http'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import sharp from 'sharp'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Page } from 'puppeteer-core'
 import { findBrowserPath } from '../server/screenshot'
@@ -11,10 +12,6 @@ import { Client, freePort, startServer, type Server } from './harness'
 
 const present = '[data-browser-surface="present"]:modal'
 const field = '[data-design-note-field]'
-const sampleCrop = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-  'base64',
-)
 
 async function annotate(page: Page) {
   await page.keyboard.down('Meta')
@@ -38,9 +35,16 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
   beforeAll(async () => {
     site = createServer((request, response) => {
       if (['node', 'undici'].includes(request.headers['user-agent'] ?? '')) upstreamCookies.push(request.headers.cookie)
+      if (request.url === '/crop-bg.svg') {
+        response.writeHead(200, { 'Content-Type': 'image/svg+xml' })
+        response.end(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12"><rect width="12" height="12" fill="#deddf2"/></svg>',
+        )
+        return
+      }
       if (request.url === '/site.css') {
         response.writeHead(200, { 'Content-Type': 'text/css' })
-        response.end('h1 { color: rgb(31, 39, 106); margin: 40px 32px; }')
+        response.end('h1 { color: rgb(31, 39, 106); margin: 40px 32px; background-image:url(crop-bg.svg); }')
         return
       }
       response.writeHead(200, { 'Content-Type': 'text/html' })
@@ -82,6 +86,30 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     if (site) await new Promise<void>((resolve) => site.close(() => resolve()))
   })
 
+  it('returns a visible PNG crop from the server fallback endpoint', async () => {
+    const user = await new Client(backend).signUp('crop-fallback@test.dev', 'Crop fallback tester')
+    const canvasResponse = await user.post('/api/canvases', { name: 'Fallback capture' })
+    expect(canvasResponse.ok).toBe(true)
+    const { id: canvasId } = await canvasResponse.json()
+    const frameResponse = await user.post(`/api/canvases/${canvasId}/frames`, {
+      name: 'Fallback crop fixture',
+      width: 320,
+      height: 240,
+      html: '<!doctype html><style>body{margin:0;min-height:600px}main{margin-top:300px;width:120px;height:100px;background:#24326b}</style><main></main>',
+    })
+    expect(frameResponse.ok).toBe(true)
+    const { id: frameId } = await frameResponse.json()
+    const response = await user.get(`/api/frames/${frameId}/screenshot.png?capture=visible&y=200&crop=10,105,60,40&scale=1`)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toBe('image/png')
+    const { data, info } = await sharp(Buffer.from(await response.arrayBuffer()))
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true })
+    expect(info).toMatchObject({ width: 60, height: 40, channels: 3 })
+    expect([...data.subarray(0, 3)]).toEqual([36, 50, 107])
+  })
+
   it('keeps links in Design Mode, restores a URL pin after reload and sends it with the real URL', async () => {
     const page = await pages.open()
     await page.setViewport({ width: 1440, height: 960 })
@@ -118,32 +146,55 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     const outsider = await new Client(backend).signUp('browse-outsider@test.dev', 'Outsider')
     expect((await fetch(web.origin + route)).status).toBe(401)
     expect((await outsider.get(route)).status).toBe(403)
+    const cropRoute =
+      '/api/browse-proxy?' +
+      new URLSearchParams({
+        canvasId,
+        url: siteOrigin + '/',
+        resource: siteOrigin + '/crop-bg.svg',
+      })
+    const cropHeaders = { 'X-Doop-Crop-Resource': '1' }
+    expect((await fetch(web.origin + cropRoute, { headers: cropHeaders })).status).toBe(401)
+    const foreignResourceStatus = await page.evaluate(
+      async (path, headers) => {
+        const url = new URL(path, location.href)
+        url.searchParams.set('resource', 'https://example.com/crop-bg.svg')
+        return (await fetch(url, { headers })).status
+      },
+      cropRoute,
+      cropHeaders,
+    )
+    expect(foreignResourceStatus).toBe(400)
     expect(upstreamCookies).toHaveLength(0)
 
     await page.setRequestInterception(true)
     const posts: unknown[] = []
-    const chipCrops: string[] = []
-    let mockChipCrops = false
+    const cropRequests: string[] = []
+    const cropUploads: string[] = []
+    const cropResources: string[] = []
     page.on('request', (request) => {
       const url = new URL(request.url())
-      const crop = url.searchParams.get('crop')
       if (request.method() === 'POST' && url.pathname === `/api/canvases/${canvasId}/cards`) {
         posts.push(JSON.parse(request.postData()!))
         void request.respond({ status: 200, contentType: 'application/json', body: '{"id":"browser-annotation"}' })
-      } else if (mockChipCrops && crop && url.pathname === `/api/frames/${frameId}/screenshot.png`) {
-        // Server-side screenshots reject the fixture's private origin.
-        chipCrops.push(crop)
-        void request.respond({ status: 200, contentType: 'image/png', body: sampleCrop })
+      } else if (request.headers()['x-doop-crop-resource'] === '1') {
+        cropResources.push(url.searchParams.get('resource') ?? '')
+        void request.continue()
+      } else if (url.pathname === `/api/frames/${frameId}/screenshot.png`) {
+        cropRequests.push(request.url())
+        void request.respond({ status: 500 })
+      } else if (request.method() === 'POST' && url.pathname === `/api/canvases/${canvasId}/assets`) {
+        cropUploads.push(request.headers()['content-type'] ?? '')
+        void request.respond({ status: 200, contentType: 'application/json', body: '{"url":"/a/live-crop.png"}' })
       } else void request.continue()
     })
 
     const mount = async () => {
       await page.goto(`${web.origin}/c/${canvasId}`)
-      const frame = await page.waitForSelector('[data-browser-shield]', { visible: true })
       await page.evaluate(() =>
         Object.assign(window, { __DOOP_DESKTOP__: '0.14.0', __DOOP_DESKTOP_TRAFFIC_LIGHTS__: true }),
       )
-      await frame!.click({ count: 2 })
+      await page.locator('[data-browser-shield]').click({ count: 2 })
       await page.waitForSelector(present, { visible: true })
     }
     const iframe = () => page.waitForSelector(`${present} iframe[data-design-screen]`, { visible: true })
@@ -223,14 +274,31 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     if (shots) await page.screenshot({ path: join(shots, 'dm-21-browser-frame-note.png') })
 
     await page.click('[data-design-card] [role="switch"]')
-    const cropRequested = page.waitForRequest((request) => {
-      const url = new URL(request.url())
-      return url.pathname === `/api/frames/${frameId}/screenshot.png` && url.searchParams.has('crop')
-    })
     await page.focus(field)
     await page.keyboard.press('Enter')
     await page.waitForSelector('[data-design-pin="1"][data-status="pending"]')
-    expect(new URL((await cropRequested).url()).searchParams.get('capture')).toBe('visible')
+    // Reload only after the live PNG is in the same store the queue will read.
+    await page.waitForFunction(async () => {
+      const name = 'doop.designCrops'
+      if (!(await indexedDB.databases()).some((db) => db.name === name)) return false
+      return new Promise<boolean>((resolve) => {
+        const open = indexedDB.open(name)
+        open.onerror = () => resolve(false)
+        open.onsuccess = () => {
+          const db = open.result
+          const tx = db.transaction('png')
+          const count = tx.objectStore('png').count()
+          tx.oncomplete = () => {
+            db.close()
+            resolve(count.result === 1)
+          }
+          tx.onabort = () => {
+            db.close()
+            resolve(false)
+          }
+        }
+      })
+    })
     expect(posts).toHaveLength(0)
     await mount()
     await annotate(page)
@@ -247,11 +315,14 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     )
     expect(upstreamCookies.length).toBeGreaterThan(0)
     expect(upstreamCookies.every((cookie) => cookie === undefined)).toBe(true)
+    expect(cropRequests).toEqual([])
+    expect(cropResources).toEqual([siteOrigin + '/crop-bg.svg'])
+    expect(cropUploads).toEqual(['image/png'])
     expect(posts).toEqual([
       expect.objectContaining({
         title: expect.stringContaining(`On ${siteOrigin}/second:\n<h1> — “Second page”: Make the heading smaller`),
         scope: { frameId, selector: '#title' },
-        attachments: [],
+        attachments: [expect.any(String)],
       }),
     ])
 
@@ -266,7 +337,6 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
     const chipFrame = await (await iframe())!.contentFrame()
     await chipFrame!.waitForFunction(() => document.querySelector('#title')?.textContent === 'Second page')
     const chips = `${present} [data-preview-chat] [data-context-chip]`
-    mockChipCrops = true
     for (const [index, selector] of ['#title', 'a', '#summary'].entries()) {
       const box = await (await chipFrame!.$(selector))!.boundingBox()
       await page.keyboard.down('Alt')
@@ -292,8 +362,11 @@ describe.skipIf(!findBrowserPath())('Design Mode on a browser frame', { timeout:
       {},
       chips,
     )
-    expect(new Set(chipCrops).size).toBe(3)
-    mockChipCrops = false
+    const thumbnailSizes = await page.$$eval(`${chips} img[data-context-thumbnail]`, (images) =>
+      images.map((image) => `${image.naturalWidth}x${image.naturalHeight}`),
+    )
+    expect(new Set(thumbnailSizes).size).toBe(3)
+    expect(cropRequests).toEqual([])
     if (shots) await page.screenshot({ path: join(shots, 'dm-option-click-browser-three-chips.png') })
     await page.keyboard.press('Escape')
     await page.waitForSelector(`${bar} input[aria-label="URL"]`, { visible: true })

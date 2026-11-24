@@ -4,6 +4,7 @@ import { FRAME_DROP_RUNTIME } from './frameDropRuntime'
 import { FRAME_PROTO_RUNTIME } from './frameProtoRuntime'
 import { FRAME_ANNOTATION_CSS_RUNTIME } from './frameAnnotationCss'
 import { FRAME_TEXT_RUNTIME } from './frameTextRuntime'
+import { paintFrameCrop, planDesignCrop } from './frameCropRuntime'
 import { CANVAS_MOD_CHORDS, SHORTCUT_KEYS_BY_CODE } from './keys'
 
 /**
@@ -2126,6 +2127,67 @@ export function frameRuntime(browse?: { token: string; url: string }) {
     return true
   }
 
+  // tsx adds a name-preservation helper to functions in the server bundle.
+  function __name(fn) { return fn }
+  var planCrop = (${planDesignCrop.toString()})
+  var paintCrop = (${paintFrameCrop.toString()})
+
+  var cropResourceReplies = new Map()
+  var nextCropResource = 0
+
+  function cropResource(session, url, signal) {
+    return new Promise(function (resolve, reject) {
+      signal.throwIfAborted()
+      var id = ++nextCropResource
+      var abort = function () {
+        cropResourceReplies.delete(id)
+        reject(signal.reason)
+      }
+      cropResourceReplies.set(id, function (blob) {
+        cropResourceReplies.delete(id)
+        signal.removeEventListener('abort', abort)
+        if (blob instanceof Blob) resolve(blob)
+        else reject(new Error('The proxy could not read the crop resource'))
+      })
+      signal.addEventListener('abort', abort, { once: true })
+      postToEditor({ type: 'doop:annotation-crop-resource', session: session, id: id, url: url })
+    })
+  }
+
+  function captureAnnotation(d) {
+    var viewport = { width: frameWidth(), height: frameHeight(), scrollX: scrollX, scrollY: scrollY }
+    var rects = Array.isArray(d.selectors) ? d.selectors.flatMap(function (selector) {
+      if (typeof selector !== 'string') return []
+      try {
+        var node = document.querySelector(selector)
+        return node ? [designRect(node)] : []
+      } catch (e) { return [] }
+    }) : []
+    if (d.region) {
+      rects = [d.regionInPage
+        ? { ...d.region, x: d.region.x - viewport.scrollX, y: d.region.y - viewport.scrollY }
+        : d.region]
+    }
+    var plan = planCrop(rects, viewport, devicePixelRatio)
+    var answer = function (png) {
+      postToEditor({ type: 'doop:annotation-crop-result', reqId: d.reqId, plan: plan, png: png })
+    }
+    if (!plan || d.geometryOnly) return answer(null)
+
+    // Geometry is available immediately even when a decoder or a resource stalls.
+    var deadline = setTimeout(function () { deadline = null; answer(null) }, 2500)
+    var finish = function (png) {
+      if (deadline === null) return
+      clearTimeout(deadline)
+      deadline = null
+      answer(png)
+    }
+    var readFromProxy = browse && typeof d.resourceSession === 'string' && function (url, signal) {
+      return cropResource(d.resourceSession, url, signal)
+    }
+    paintCrop(plan, bleed, d.textEdit, readFromProxy).then(finish, function () { finish(null) })
+  }
+
   window.addEventListener('message', function (ev) {
     /* only the parent drives this document — a script inside the frame must
        not be able to pose as the panel and push edits into the save path */
@@ -2358,16 +2420,11 @@ export function frameRuntime(browse?: { token: string; url: string }) {
       }, '*')
     }
     if (d.type === 'doop:annotation-crop') {
-      var cropRects = Array.isArray(d.selectors) ? d.selectors.flatMap(function (selector) {
-        try {
-          var node = document.querySelector(selector)
-          return node ? [designRect(node)] : []
-        } catch (e) { return [] }
-      }) : []
-      postToEditor({ type: 'doop:annotation-crop-result', reqId: d.reqId, metrics: {
-        width: innerWidth - 2 * bleed, height: innerHeight - 2 * bleed,
-        scrollX: scrollX, scrollY: scrollY, dpr: devicePixelRatio, rects: cropRects
-      } })
+      captureAnnotation(d)
+    }
+    if (d.type === 'doop:annotation-crop-resource-result') {
+      var acceptCropResource = cropResourceReplies.get(d.id)
+      if (acceptCropResource) acceptCropResource(d.blob)
     }
     if (d.type === 'doop:snapshot') {
       /* the document as it stands, script-made elements included, for an

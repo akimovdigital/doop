@@ -8,6 +8,7 @@ import type { DropTarget, FlowPlacement } from './layers'
 import type { Interaction } from '../../shared/prototype'
 import type { TextFormatCommand } from './richText'
 import type { FrameAnimationPolicy } from './frameAnimationPolicy'
+import type { FrameCropReply, FrameCropRequest } from './frameCropRuntime'
 
 export interface LayoutDrop {
   target: DropTarget
@@ -486,6 +487,69 @@ export function askFrameWindow(
       reject(error)
     }
   })
+}
+
+interface BrowseCropSource {
+  canvasId: string
+  url: string
+}
+
+async function readBrowseCropResource(source: BrowseCropSource, url: string, signal: AbortSignal) {
+  const page = URL.parse(source.url)
+  const asset = URL.parse(url)
+  if (!page || !asset || asset.origin !== page.origin || !/^https?:$/.test(asset.protocol)) return null
+  const params = new URLSearchParams({ canvasId: source.canvasId, url: page.href, resource: asset.href })
+  const response = await fetch(`/api/browse-proxy?${params}`, {
+    headers: { 'X-Doop-Crop-Resource': '1' },
+    signal,
+  })
+  const mime = response.headers.get('X-Doop-Crop-Mime')
+  if (!response.ok || !mime) return null
+  return new Blob([await response.arrayBuffer()], { type: mime })
+}
+
+/** The opaque proxy uses the same source and session-token checks as hit tests.
+ * Public resource reads are scoped to the current capture and site origin. */
+export async function requestFrameCrop(
+  win: Window,
+  request: FrameCropRequest,
+  source?: BrowseCropSource,
+): Promise<FrameCropReply | null> {
+  const controller = new AbortController()
+  const token = browseMessageTokens.get(win)
+  const resourceSession = source && token && crypto.randomUUID()
+  const resourceIds = new Set<number>()
+  const unsubscribe =
+    source &&
+    resourceSession &&
+    onFrameMessage(win, (event) => {
+      const data = event.data
+      if (
+        data?.type !== 'doop:annotation-crop-resource' ||
+        data.session !== resourceSession ||
+        !Number.isSafeInteger(data.id) ||
+        typeof data.url !== 'string'
+      )
+        return
+      if (resourceIds.has(data.id)) return
+      const answer = (blob: Blob | null) => {
+        if (!controller.signal.aborted && browseMessageTokens.get(win) === token)
+          win.postMessage({ type: 'doop:annotation-crop-resource-result', id: data.id, blob }, '*')
+      }
+      if (resourceIds.size >= 24) return answer(null)
+      resourceIds.add(data.id)
+      void readBrowseCropResource(source, data.url, controller.signal).then(answer, () => answer(null))
+    })
+  try {
+    const reply = await askFrameWindow(win, 'doop:annotation-crop', { ...request, resourceSession }, 3000)
+    if (!reply) return null
+    const plan = reply.plan as FrameCropReply['plan']
+    const png = reply.png
+    return { plan, png: png instanceof Blob && png.type === 'image/png' && png.size > 0 ? png : null }
+  } finally {
+    controller.abort()
+    if (unsubscribe) unsubscribe()
+  }
 }
 
 /* a snapshot reads every canvas and blob image; a big one takes longer than
