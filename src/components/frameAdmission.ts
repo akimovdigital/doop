@@ -33,6 +33,7 @@ const LIVE_OVERVIEW_STARTS_PER_BATCH = 6
 const LIVE_OVERVIEW_PREPARING_HTML_LIMIT = 1_600_000
 const WIDE_OVERVIEW_STARTS_PER_BATCH = 12
 const WIDE_OVERVIEW_PREPARING_HTML_LIMIT = 3_200_000
+const WIDE_OVERVIEW_STARTS_PER_TICK = 2
 const BOOT_TIMEOUT_MS = 2_000
 const REQUEST_LEASE_MS = 5_000
 const RETAINED_OVERVIEW_LIMIT = 48
@@ -418,6 +419,7 @@ export function useFrameAdmission(
         const wideOverview = fillLiveOverview && ranked[WIDE_OVERVIEW_STARTS_PER_BATCH - 1]?.visible
         const overviewBootLimit = fillLiveOverview ? LIVE_OVERVIEW_STARTS_PER_BATCH : STARTS_PER_BATCH
         const overviewHtmlLimit = fillLiveOverview ? LIVE_OVERVIEW_PREPARING_HTML_LIMIT : PREPARING_HTML_LIMIT
+        let startsThisTick = 0
         let preparing = 0
         for (const id of boots.keys()) preparing += htmlSizes.get(id) ?? 0
         for (const id of desired) {
@@ -428,7 +430,13 @@ export function useFrameAdmission(
           if (ids.size >= budget || (!warming && boots.size >= bootLimit)) break
           const htmlSize = htmlSizes.get(id) ?? 0
           if (!warming && preparing > 0 && preparing + htmlSize > htmlLimit) break
+          if (visibleInWideOverview && !warming && startsThisTick >= WIDE_OVERVIEW_STARTS_PER_TICK) {
+            // Fill spare boot slots across ticks so mounting iframes leaves room for paint and input.
+            schedule()
+            break
+          }
           changed = start(id, !warming) || changed
+          if (visibleInWideOverview) startsThisTick += 1
           preparing += htmlSize
         }
       }
