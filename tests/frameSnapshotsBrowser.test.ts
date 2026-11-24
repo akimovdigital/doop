@@ -77,6 +77,47 @@ function gestureLayers(page: Page, ctrlKey: boolean) {
 describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 }, () => {
   const pages = pagePerTest()
 
+  it('skips the initial CEF transition flush and retains live form state on updates', async () => {
+    const page = await pages.open()
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperties(window, {
+        __DOOP_DESKTOP__: { value: '0.14.0' },
+        __DOOP_DESKTOP_PLATFORM__: { value: 'macos' },
+      })
+    })
+    const html = `<body><input value="initial"><h1>Before</h1><script>
+      var flushes = 0
+      document.documentElement.dataset.flushes = '0'
+      var width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth').get
+      Object.defineProperty(document.documentElement, 'offsetWidth', { get: function () {
+        this.dataset.flushes = String(++flushes)
+        return width.call(this)
+      } })
+    </script></body>`
+    await openCanvasPage(page, [{ ...sample, html }])
+    const iframe = await page.waitForSelector(`${cachedShell} iframe[data-doop-frame]`)
+    const child = await iframe!.contentFrame()
+    await child.waitForSelector('input')
+    await child.evaluate(() => {
+      document.querySelector('input')!.value = 'typed'
+    })
+    expect(await child.evaluate(() => document.documentElement.dataset.flushes)).toBe('0')
+
+    await iframe!.evaluate(
+      (element, next) => {
+        element.contentWindow!.postMessage({ type: 'doop:html', html: next }, '*')
+      },
+      html.replace('Before', 'After'),
+    )
+    await child.waitForFunction(() => document.querySelector('h1')?.textContent === 'After')
+    expect(
+      await child.evaluate(() => ({
+        flushes: document.documentElement.dataset.flushes,
+        value: document.querySelector('input')!.value,
+      })),
+    ).toEqual({ flushes: '1', value: 'typed' })
+  })
+
   it('keeps overview documents live on macOS CEF and retains their state through a close-up', async () => {
     const page = await pages.open()
     await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 })

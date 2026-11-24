@@ -264,7 +264,17 @@ export function frameRuntime(browse?: { token: string; url: string }) {
     }
   }
 
+  var hasRenderedHtml = false
+  var skipInitialTransitionHold = false
   function render(html) {
+    var firstCanvasRender = skipInitialTransitionHold && !hasRenderedHtml
+    hasRenderedHtml = true
+    if (firstCanvasRender) {
+      // The bootstrap has no previous design to transition from. Let CEF
+      // lay out the new document at paint instead of forcing it in releaseStill.
+      morph(html)
+      return
+    }
     holdStill()
     try {
       morph(html)
@@ -2319,6 +2329,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
       if (!runtimePort) {
         runtimePort = (browse ? apply(readMessagePorts, ev, []) : ev.ports)?.[0] || null
         desktopShell = d.desktopShell === true
+        skipInitialTransitionHold = !browse && !!runtimePort && d.skipInitialTransitionHold === true
       }
       return
     }

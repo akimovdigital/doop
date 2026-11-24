@@ -1204,7 +1204,15 @@ export const FrameView = memo(function FrameView({
           const channel = new MessageChannel()
           channel.port1.onmessage = onRuntimeMessage
           runtimePort.current = channel.port1
-          win.postMessage({ type: 'doop:runtime-port', desktopShell: isDesktopShell() }, '*', [channel.port2])
+          win.postMessage(
+            {
+              type: 'doop:runtime-port',
+              desktopShell: isDesktopShell(),
+              skipInitialTransitionHold: MAC_CHROMIUM_DESKTOP,
+            },
+            '*',
+            [channel.port2],
+          )
         }
         setRuntimeReady(true)
       }
