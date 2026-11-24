@@ -1606,6 +1606,7 @@ export function Stage({
             style), a centred strip at the bottom on phones. --chrome-top is
             set by the page so the bar clears the agents / title chrome. */}
         <div
+          data-canvas-controls
           className={cn(
             'absolute bottom-[calc(8px+env(safe-area-inset-bottom))] left-1/2 z-[35] -translate-x-1/2 sm:bottom-4',
             'md:top-[calc(var(--chrome-top,0px)+10px)] md:bottom-auto',
@@ -1682,6 +1683,7 @@ export function Stage({
 
         {/* Zoom sits alone at the corner. The page chip is not part of this chrome. */}
         <div
+          data-canvas-controls
           className={cn(
             'pointer-events-none absolute z-[35] flex justify-end [&>*]:pointer-events-auto',
             isMobile

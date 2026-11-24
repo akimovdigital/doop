@@ -34,6 +34,7 @@ import {
 } from '../components/TopBar'
 import { LivePresence } from '../components/LivePresence'
 import { ensureTab, openExternal } from '../lib/desktop'
+import { MAC_CHROMIUM_DESKTOP } from '../lib/layoutZoom'
 import { Stage } from '../components/Stage'
 import {
   COMPONENT_DRAG_TYPE,
@@ -931,7 +932,10 @@ export function CanvasPage({
   return (
     /* --app-inset is 0 normally; the impersonation shell raises it so this
        fixed layer starts below the banner instead of under it */
-    <div className="fixed inset-x-0 bottom-0 top-[var(--app-inset,0px)] bg-canvas">
+    <div
+      className="fixed inset-x-0 bottom-0 top-[var(--app-inset,0px)] bg-canvas"
+      data-cef-canvas={MAC_CHROMIUM_DESKTOP ? '' : undefined}
+    >
       {/* Floating pills over the canvas, which shows through the transparent
           bar: the title pill on the left, live presence centred, sharing on
           the right. Tablet (xs..md) folds the text actions into the •••

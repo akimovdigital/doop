@@ -1504,6 +1504,13 @@ body[data-panel-resizing] * {
   margin-bottom: calc(31px / var(--zoom, 1));
 }
 
+/* Keep the bounded, screen-space controls composited separately on macOS
+   CEF. A large camera jump can leave canvas tiles pending while the panels
+   and their DOM are already ready to paint. */
+[data-cef-canvas] :is([data-slot='panel'], [data-slot='top-bar'], [data-canvas-controls]) {
+  will-change: transform;
+}
+
 [data-html-browser-chrome] {
   --browser-bar-min: 244px;
 }

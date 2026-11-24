@@ -6,6 +6,8 @@
    snapped to a float32 that has an exact float32 inverse (at most one ulp
    away, ~1e-7 of the zoom), and the iframe gets that inverse. */
 
+import { desktopPlatform } from './shell'
+
 const MAX_ULP_STEPS = 4
 
 /** Chromium passes an iframe's CSS zoom into its document as pixel density,
@@ -15,6 +17,8 @@ const MAX_ULP_STEPS = 4
  *  left them stretched from 1×. Other engines keep the counter-zoom. */
 export const FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY =
   typeof navigator !== 'undefined' && /(Chrome|Chromium|Edg)\//.test(navigator.userAgent)
+
+export const MAC_CHROMIUM_DESKTOP = FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY && desktopPlatform() === 'macos'
 
 /** Step a float32 by whole ulps. */
 function float32Neighbour(value: number, steps: number): number {

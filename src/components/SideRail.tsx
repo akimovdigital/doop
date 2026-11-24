@@ -65,6 +65,7 @@ export function SideRail({
       {(showInspector || (!agentsOpen && !guest)) && (
         <Toolbar
           aria-label={t('canvas.canvasPanels')}
+          data-canvas-controls={docked ? undefined : true}
           orientation="vertical"
           className={docked ? dockedIsland : cn(island, 'top-2.5')}
           style={islandStyle}
@@ -86,6 +87,7 @@ export function SideRail({
       )}
       <Toolbar
         aria-label={t('shell.account')}
+        data-canvas-controls={docked ? undefined : true}
         orientation="vertical"
         className={cn(docked ? cn(dockedIsland, 'mt-auto') : cn(island, 'bottom-3.5'), 'gap-1.5')}
         style={islandStyle}
@@ -142,6 +144,7 @@ export function SideRail({
   if (!docked) return islands
   return (
     <div
+      data-canvas-controls
       className="pointer-events-auto absolute inset-y-0 z-[38] flex w-10 flex-col items-center border-l border-line-soft bg-surface pb-3"
       style={style}
     >

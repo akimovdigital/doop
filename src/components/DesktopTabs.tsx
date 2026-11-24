@@ -45,6 +45,7 @@ import {
 } from '../lib/desktop'
 import { chordHint } from '../lib/actions/chords'
 import { hasInsetTrafficLights, isDesktopShell, supportsCanvasTabs } from '../lib/shell'
+import { MAC_CHROMIUM_DESKTOP } from '../lib/layoutZoom'
 import { useWindowFrame } from '../lib/windowFrame'
 import { WindowControls } from './WindowControls'
 import { canvasTabAgentBusy } from '../lib/canvasTabAgentBusy'
@@ -310,7 +311,10 @@ export function DesktopTabs({ path }: { path: string }) {
   return (
     <div
       {...(desktop ? { 'data-tauri-drag-region': true } : {})}
-      className="fixed inset-x-0 top-0 z-[800] flex h-[38px] border-b border-line bg-paper-deep"
+      className={cn(
+        'fixed inset-x-0 top-0 z-[800] flex h-[38px] border-b border-line bg-paper-deep',
+        activeId && MAC_CHROMIUM_DESKTOP && 'will-change-transform',
+      )}
     >
       {desktop && hasInsetTrafficLights() && <div data-tauri-drag-region className="w-[76px] flex-none" />}
       <Tooltip label={withShortcut(t('canvas.tabHome'), 0)} side="bottom" className="z-[825]">
