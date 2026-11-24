@@ -258,14 +258,16 @@ export function useFrameAdmission(
     }
 
     function applyAnimations(protectedIds: ReadonlySet<string>) {
-      const allowAll = presenting || useStore.getState().prototypeMode
+      // CEF canvas documents stay static even when protected or in Prototype mode.
+      const allowAll = !liveOverview && (presenting || useStore.getState().prototypeMode)
       const focused =
-        moving || allowAll
+        liveOverview || moving || allowAll
           ? []
           : ranked
               .filter((frame) => frame.visible && frame.large && ids.has(frame.id) && !protectedIds.has(frame.id))
               .slice(0, Math.max(0, ANIMATING_FRAME_BUDGET - protectedIds.size))
       const allowed = new Set(focused.map(({ id }) => id))
+      const canAnimate = (id: string) => !liveOverview && (allowAll || allowed.has(id) || protectedIds.has(id))
       const publishPolicy = (id: string, documentAllowed: boolean) =>
         setFrameAnimationPolicy(
           id,
@@ -279,11 +281,11 @@ export function useFrameAdmission(
         )
       // Pause losers before waking any winners.
       for (const id of ids) {
-        if (allowAll || allowed.has(id) || protectedIds.has(id)) continue
+        if (canAnimate(id)) continue
         publishPolicy(id, false)
       }
       for (const id of ids) {
-        if (allowAll || allowed.has(id) || protectedIds.has(id)) {
+        if (canAnimate(id)) {
           publishPolicy(id, true)
         }
       }

@@ -90,11 +90,15 @@ admitted in batches and already loaded documents stay mounted as the camera move
 preserve the frame's theme and render at a density suited to the canvas zoom. While a document
 loads, its surface uses `--sub` (#f7f7f7 light, #242424 dark). Once ready, transparent HTML sits on white
 artboard paper. The floating HTML frame toolbar is temporarily opt-in with `doop:html-frame-toolbar`.
+On macOS Chromium, live HTML on the editing canvas shows finite CSS and Web Animations effects at
+their completed state. Repeating effects rest at a fixed phase and CSS state changes apply immediately.
+Hover, selection and editing keep this static presentation. Present and the separate HTML Preview
+document play the authored motion.
 On macOS Chromium, a previously visible HTML frame returning to view uses
 `--paper-deep` (#f0f0f0 light, #2a2a2a dark) behind the live document until its runtime reports
-two animation callbacks. A camera jump from 100% or more to the overview (6% or less) keeps the
-neutral paper under those live frames for 1.5 seconds, while the browser catches up with the new
-viewport. The iframe draws as soon as the browser paints it. Transparent artboards return to
+two animation callbacks. Zooming out to half the gesture's peak scale keeps neutral paper under
+live frames for 1.5 seconds after the last zoom-out update, while the browser paints newly visible
+parts of the document. The iframe draws as soon as the browser paints it. Transparent artboards return to
 white paper after the guard. On a wide macOS Chromium overview, at most two new visible documents
 start per animation tick until a boot slot is freed. Subsequent ticks can start up to three while
 the same in-flight document and HTML limits apply.

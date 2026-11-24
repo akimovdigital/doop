@@ -146,4 +146,71 @@ describe.skipIf(!findBrowserPath())('canvas motion islands', { timeout: 30_000 }
     await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }])
     await child.waitForFunction(() => document.querySelector('#pulse')?.getAnimations()[0]?.playState === 'running')
   })
+
+  it('shows finished reveals and holds live effects through CEF canvas selection and interaction', async () => {
+    const page = await pages.open()
+    await page.setViewport({ width: 1440, height: 800 })
+    await page.evaluateOnNewDocument(() => {
+      if (window !== window.top) return
+      Object.defineProperties(window, {
+        __DOOP_DESKTOP__: { value: '0.14.0' },
+        __DOOP_DESKTOP_PLATFORM__: { value: 'macos' },
+      })
+      localStorage.setItem('doop:html-frame-toolbar', '1')
+    })
+    const html = `<style>
+        @keyframes reveal { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes pulse { to { transform: translateX(40px) } }
+        #intro, #on-hover { opacity: 0 }
+        #intro, button:hover + #on-hover { animation: reveal 20s 5s both }
+        #pulse { animation: pulse 20s infinite linear }
+      </style><h1 id="intro">Visible title</h1><p id="pulse">Loop</p>
+      <button>Increment</button><p id="on-hover">Visible on hover</p><output>0</output>
+      <script>
+        let clicks = 0;
+        document.querySelector('button').onclick = () => {
+          document.querySelector('output').value = ++clicks;
+          const effect = document.querySelector('output').animate([{ opacity: 0 }, { opacity: 1 }], 20000);
+          effect.id = 'click-reveal';
+        };
+      </script>`
+    await openCanvasPage(page, [{ ...sample, html }, { ...sample, id: 'other', x: 560 }])
+    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 280, y: 180, zoom: 1 }))
+    await page.waitForFunction(() => !document.querySelector('[data-frame-camera-moving]'))
+    const shell = '[data-doop-frame-shell="motion"]'
+    const iframe = (await page.waitForSelector(`${shell} iframe`))!
+    const child = await iframe.contentFrame()
+    await child.waitForSelector('#intro')
+    const motion = () =>
+      child.evaluate(() => ({
+        opacity: getComputedStyle(document.querySelector('#intro')!).opacity,
+        loop: document.querySelector('#pulse')!.getAnimations()[0]?.playState,
+        time: Number(document.querySelector('#pulse')!.getAnimations()[0]?.currentTime),
+      }))
+    await child.waitForFunction(() => getComputedStyle(document.querySelector('#intro')!).opacity === '1')
+    const initial = await motion()
+    expect(initial).toEqual({ opacity: '1', loop: 'paused', time: 0 })
+
+    await page.hover(`${shell} [data-frame-surface]`)
+    await page.click(`${shell} [data-frame-surface]`)
+    await page.evaluate(() => window.canvasPageHarness.select('other'))
+    await page.evaluate(() => window.canvasPageHarness.select('motion'))
+    const interact = '[data-html-browser-chrome] button[aria-label="Interact with page"]'
+    await page.locator(interact).click()
+    const button = (await child.waitForSelector('button'))!
+    await button.hover()
+    await child.waitForFunction(() => getComputedStyle(document.querySelector('#on-hover')!).opacity === '1')
+    await button.click()
+    await child.waitForFunction(() => document.querySelector('output')?.value === '1')
+    expect(await motion()).toEqual(initial)
+    expect(await child.$eval('output', (output) => getComputedStyle(output).opacity)).toBe('1')
+    expect(await child.$eval('output', (output) => output.getAnimations()[0]?.playState)).toBe('paused')
+
+    await page.keyboard.press('Escape')
+    await page.locator('[data-html-browser-chrome] button[aria-label="Present browser"]').click()
+    const presented = (await page.waitForSelector('iframe[data-doop-proto-frame="motion"]', { visible: true }))!
+    const playback = await presented.contentFrame()
+    await playback.waitForFunction(() => document.querySelector('#pulse')?.getAnimations()[0]?.playState === 'running')
+    expect(await playback.$eval('#intro', (intro) => getComputedStyle(intro).opacity)).toBe('0')
+  })
 })

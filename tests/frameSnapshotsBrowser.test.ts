@@ -221,6 +221,82 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
     expect(await page.$$('[data-frame-snapshot]')).toHaveLength(0)
   })
 
+  it('holds the wheel zoom pivot and design viewport through CEF density changes', async () => {
+    const page = await pages.open()
+    await page.setViewport({ width: 1440, height: 800 })
+    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }])
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperties(window, {
+        __DOOP_DESKTOP__: { value: '0.14.0' },
+        __DOOP_DESKTOP_PLATFORM__: { value: 'macos' },
+      })
+    })
+    await openCanvasPage(page, [sample])
+    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 310, y: 180, zoom: 0.8 }))
+    const iframe = (await page.waitForSelector(`${cachedShell} iframe[data-doop-frame]`))!
+    const child = await iframe.contentFrame()
+    await child.waitForSelector('input')
+    await child.$eval('input', (input) => (input.value = 'kept through zoom'))
+    const designViewport = () => child.evaluate(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio }))
+    const before = await designViewport()
+    expect(before).toMatchObject({ width: 680, height: 300 })
+    const pivot = await iframe.evaluate((node) => {
+      const rect = node.getBoundingClientRect()
+      const x = Math.round(rect.left + 137 * 0.8)
+      const y = Math.round(rect.top + 93 * 0.8)
+      return { x, y, u: (x - rect.left) / rect.width, v: (y - rect.top) / rect.height }
+    })
+    const pinch = (deltaY: number) =>
+      iframe.evaluate(
+        async (node, { x, y, u, v }, deltaY) => {
+          const stage = node.closest('.stage')!
+          const states = []
+          for (let tick = 0; tick < 8; tick++) {
+            stage.dispatchEvent(
+              new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, clientX: x, clientY: y, deltaY }),
+            )
+            await new Promise(requestAnimationFrame)
+            const box = node.getBoundingClientRect()
+            states.push({
+              zoom: window.canvasPageHarness.camera().zoom,
+              pivotX: box.left + box.width * u,
+              pivotY: box.top + box.height * v,
+              ratio: box.width / box.height,
+              density: getComputedStyle(node).zoom,
+            })
+          }
+          return states
+        },
+        pivot,
+        deltaY,
+      )
+    const checks = (states: Awaited<ReturnType<typeof pinch>>, density: string) => {
+      for (const state of states) {
+        expect(Math.abs(state.pivotX - pivot.x)).toBeLessThan(0.1)
+        expect(Math.abs(state.pivotY - pivot.y)).toBeLessThan(0.1)
+        expect(state.ratio).toBeCloseTo(680 / 300, 4)
+        expect(state.density).toBe(density)
+      }
+    }
+    const inward = await pinch(-14)
+    checks(inward, '1')
+    expect(inward.at(-1)?.zoom).toBeGreaterThan(2)
+    await page.waitForFunction((node) => getComputedStyle(node).zoom === '3', {}, iframe)
+    await expect.poll(designViewport).toEqual({ width: 680, height: 300, dpr: before.dpr * 3 })
+    const outward = await pinch(14)
+    checks(outward, '3')
+    expect(outward.at(-1)?.zoom).toBeCloseTo(0.8)
+    expect(
+      await iframe.evaluate((node) =>
+        getComputedStyle(node.closest('[data-frame-surface]')!, '::before').backgroundColor,
+      ),
+    ).toBe('rgb(240, 240, 240)')
+    await page.waitForFunction((node) => getComputedStyle(node).zoom === '1', {}, iframe)
+    await expect.poll(designViewport).toEqual(before)
+    expect(await child.$eval('input', (input) => input.value)).toBe('kept through zoom')
+    expect(await iframe.evaluate((node) => node.isConnected)).toBe(true)
+  })
+
   it('keeps snapshots in motion between paced pinch events', async () => {
     const page = await pages.open()
     await openCanvasPage(page, [sample])

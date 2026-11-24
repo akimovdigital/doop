@@ -3,7 +3,7 @@ import type { Frame as BrowserDocument, Page } from 'puppeteer-core'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { findBrowserPath } from '../server/screenshot'
 import type { Frame } from '../shared/types'
-import { pagePerTest } from './browser'
+import { fixtureUrl, pagePerTest } from './browser'
 import { canvasFrame, showCanvasPage } from './canvasPageFixture'
 
 const BAR = '[data-html-browser-chrome] .browser-canvas-bar'
@@ -45,6 +45,7 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', { timeout: 30_0
   let page: Page
   let frames: Frame[]
   let uploads = 0
+  let loadPrototypeRoute = false
 
   beforeEach(async () => {
     page = await pages.open()
@@ -52,6 +53,7 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', { timeout: 30_0
     page.setDefaultTimeout(6000)
     frames = []
     uploads = 0
+    loadPrototypeRoute = false
     await page.evaluateOnNewDocument(() => {
       if (window === window.top) localStorage.setItem('doop:html-frame-toolbar', '1')
       Object.defineProperty(window, 'WebSocket', {
@@ -86,6 +88,14 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', { timeout: 30_0
         return void request.respond({ status: 200, contentType: 'text/html', body: '<h1>Browser reference</h1>' })
       }
       if (pathname === '/c/c/proto') {
+        if (loadPrototypeRoute) {
+          // The fixture server serves files, while the real server serves
+          // the app entry on this route. Exercise that entry inside Preview.
+          void fetch(new URL('/index.html', fixtureUrl('canvasPage.html')))
+            .then((response) => response.text())
+            .then((body) => request.respond({ status: 200, contentType: 'text/html', body }))
+          return
+        }
         return void request.respond({ status: 200, contentType: 'text/html', body: '<h1>Prototype route</h1>' })
       }
       if (pathname === '/a/snapshot.png') {
@@ -314,6 +324,76 @@ describe.skipIf(!findBrowserPath())('HTML frame browser chrome', { timeout: 30_0
     await clickButton(BAR, 'Present browser')
     await page.waitForSelector('[data-proto-screen="landing"]')
   }, 25_000)
+
+  it.each(['Present', 'side Preview'])('scrolls a long HTML frame on the first wheel in %s', async (surface) => {
+    loadPrototypeRoute = surface === 'side Preview'
+    const long = {
+      ...landing,
+      height: 2400,
+      html: `<style>body{margin:0}main{height:2400px;background:#235a8d;color:#fff}
+        @keyframes pulse{to{opacity:.6}}h1{margin:0;animation:pulse 10s infinite}</style>
+        <main><h1>Long page</h1></main>`,
+    }
+    await page.evaluateOnNewDocument((frame) => {
+      if (window === window.top) {
+        localStorage.setItem('doop:proto-scaling', 'fit-width')
+        Object.defineProperty(window, '__DOOP_DESKTOP__', { value: '0.14.0' })
+      } else if (location.pathname === '/c/c/proto') {
+        Object.defineProperty(window, 'WebSocket', {
+          value: class {
+            static OPEN = 1
+            readyState = 1
+            onmessage?: (message: { data: string }) => void
+            constructor() {
+              setTimeout(() => {
+                this.onmessage?.({
+                  data: JSON.stringify({
+                    type: 'init', serverBuild: 'dev',
+                    canvas: { id: 'c', name: 'Canvas', frames: [frame], role: 'edit', createdAt: 0, updatedAt: 0 },
+                    presences: [], activity: [], tasks: [], feedback: [], comments: [], decisions: [], proposals: [],
+                  }),
+                })
+              }, 0)
+            }
+            close() {}
+          },
+        })
+      }
+    }, long)
+    await seed([long])
+    await page.evaluate(() => {
+      window.canvasPageHarness.setCamera({ x: 290, y: 100, zoom: 0.5 })
+      window.canvasPageHarness.select('landing')
+    })
+    await page.waitForSelector(BAR, { visible: true })
+    await clickButton(BAR, loadPrototypeRoute ? 'Open browser in side panel' : 'Present browser')
+
+    let player = page.mainFrame()
+    if (loadPrototypeRoute) {
+      const side = (await page.waitForSelector(`${SIDE} > iframe`, { visible: true }))!
+      player = await side.contentFrame()
+      const edge = await side.evaluate((iframe) => ({
+        preview: iframe.closest('[data-browser-surface]')!.getBoundingClientRect().left,
+        editor: document.querySelector('.stage')!.getBoundingClientRect().right,
+        right: iframe.getBoundingClientRect().right,
+        windowWidth: innerWidth,
+      }))
+      expect(edge.preview).toBeGreaterThan(0)
+      expect(edge.editor).toBeCloseTo(edge.preview, 0)
+      expect(edge.right).toBeCloseTo(edge.windowWidth, 0)
+    }
+    const live = (await player.waitForSelector('[data-doop-proto-frame="landing"]', { visible: true }))!
+    const previewDocument = await live.contentFrame()
+    await previewDocument?.waitForFunction(() => document.querySelector('h1')?.getAnimations()[0]?.playState === 'running')
+    expect(previewDocument).not.toBeNull()
+    const scroller = '[data-proto-screen="landing"]'
+    expect(await player.$eval(scroller, (element) => element.scrollTop)).toBe(0)
+    const viewport = (await player.$('[data-proto-viewport]'))!
+    const box = (await viewport.boundingBox())!
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.wheel({ deltaY: 320 })
+    await player.waitForFunction((selector) => document.querySelector(selector)!.scrollTop > 0, {}, scroller)
+  })
 
   it('drags from the pill grip and commits a normal canvas move', async () => {
     await seed()

@@ -21,6 +21,7 @@ export const FRAME_ANIMATION_RUNTIME = `
   var cheapFrameFilter = (${cheapFrameFilter.toString()})
   var hasFrameBackdropFilter = (${hasFrameBackdropFilter.toString()})
   var animationSheet = null
+  var staticMotionSheet = null
   var filterSheet = null
   try {
     animationSheet = new CSSStyleSheet()
@@ -29,7 +30,7 @@ export const FRAME_ANIMATION_RUNTIME = `
   } catch (e) {}
 
   function isFrameAnimationSheet(sheet) {
-    return sheet === animationSheet || sheet === filterSheet
+    return sheet === animationSheet || sheet === staticMotionSheet || sheet === filterSheet
   }
 
   function adoptAnimationSheet(sheet, enabled) {
@@ -40,13 +41,70 @@ export const FRAME_ANIMATION_RUNTIME = `
   }
 
   var frameAnimationPolicy = null
+  var staticFrameMotion = false
   var animationsPaused = false
   var islandsResting = false
   var heldAnimations = new Set()
   var nativeAnimate = Element.prototype.animate
   var nativePlay = Animation.prototype.play
   var nativePause = Animation.prototype.pause
+  var nativeReverse = Animation.prototype.reverse
   var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+
+  function settleStaticAnimation(animation) {
+    var effect = animation.effect
+    if (!effect || animation.playState === 'idle') return
+    var timing = effect.getComputedTiming()
+    if (typeof timing.activeDuration !== 'number') return
+    // A reveal can start from opacity:0 even in the underlying style. Keep
+    // its last keyframe visible, including when the author omitted fill-mode.
+    var endpoint = timing.activeDuration === Infinity || animation.playbackRate < 0
+      ? Math.max(0, timing.delay)
+      : Math.max(0, timing.delay + timing.activeDuration)
+    if (!Number.isFinite(endpoint)) return
+    try {
+      if (animation.playState !== 'paused') nativePause.call(animation)
+      if (timing.fill !== 'both') effect.updateTiming({ fill: 'both' })
+      if (animation.currentTime !== endpoint) animation.currentTime = endpoint
+    } catch (e) {}
+  }
+
+  var staticMotionPaint = 0
+  function queueStaticMotionPaint() {
+    if (!staticFrameMotion || staticMotionPaint) return
+    staticMotionPaint = requestAnimationFrame(function () {
+      staticMotionPaint = 0
+      document.getAnimations().forEach(settleStaticAnimation)
+    })
+  }
+  function startStaticFrameMotion() {
+    if (staticFrameMotion) return
+    try {
+      staticMotionSheet = new CSSStyleSheet()
+      staticMotionSheet.replaceSync('@layer doop-canvas-motion{*,*::before,*::after{animation-play-state:paused!important;animation-timeline:auto!important;transition:none!important}}')
+      adoptAnimationSheet(staticMotionSheet, true)
+    } catch (e) {}
+    staticFrameMotion = true
+    Element.prototype.animate = holdNewAnimation
+    Animation.prototype.play = holdPlayedAnimation
+    Animation.prototype.reverse = function () {
+      nativeReverse.apply(this, arguments)
+      settleStaticAnimation(this)
+    }
+    // A delayed CSS animation waits even when paused. Check changes before
+    // paint so they land in their static state without an animation event.
+    new MutationObserver(queueStaticMotionPaint).observe(document.documentElement, {
+      subtree: true, childList: true, attributes: true, characterData: true
+    })
+    window.addEventListener('resize', queueStaticMotionPaint)
+    reducedMotion.addEventListener('change', queueStaticMotionPaint)
+    document.addEventListener('load', function (event) {
+      if (event.target?.tagName === 'LINK') queueStaticMotionPaint()
+    }, true)
+    for (var event of ['pointerover', 'pointerout', 'pointerdown', 'pointerup', 'focusin', 'focusout', 'change']) {
+      document.addEventListener(event, queueStaticMotionPaint, true)
+    }
+  }
 
   function shouldHoldAnimation(animation) {
     return animationsPaused || (islandsResting && isInfiniteAnimation(animation.effect))
@@ -55,6 +113,7 @@ export const FRAME_ANIMATION_RUNTIME = `
     heldAnimations.delete(this)
   }
   function holdAnimation(animation) {
+    if (staticFrameMotion) return settleStaticAnimation(animation)
     if (animation.playState !== 'running' || !shouldHoldAnimation(animation)) return
     try {
       // WAAPI pauses at the current time, including when the budget changes.
@@ -78,7 +137,7 @@ export const FRAME_ANIMATION_RUNTIME = `
     this.removeEventListener('cancel', forgetHeldAnimation)
   }
   function holdNewCssAnimations(event) {
-    if (!animationsPaused && !islandsResting) return
+    if (!staticFrameMotion && !animationsPaused && !islandsResting) return
     var target = event.target
     if (target && typeof target.getAnimations === 'function') {
       target.getAnimations({ subtree: !!event.pseudoElement }).forEach(holdAnimation)
@@ -88,6 +147,7 @@ export const FRAME_ANIMATION_RUNTIME = `
   window.addEventListener('transitionrun', holdNewCssAnimations, true)
 
   function refreshAnimationHolds() {
+    if (staticFrameMotion) return
     var paused = frameAnimationPolicy?.paused === true
     var rest = !!frameAnimationPolicy && (frameAnimationPolicy.restIslands || reducedMotion.matches)
     if (paused === animationsPaused && rest === islandsResting) return

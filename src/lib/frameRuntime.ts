@@ -2342,6 +2342,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
         runtimePort = (browse ? apply(readMessagePorts, ev, []) : ev.ports)?.[0] || null
         desktopShell = d.desktopShell === true
         skipInitialTransitionHold = !browse && !!runtimePort && d.skipInitialTransitionHold === true
+        if (!browse && runtimePort && d.staticFrameMotion === true) startStaticFrameMotion()
       }
       return
     }

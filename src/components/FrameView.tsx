@@ -1209,6 +1209,7 @@ export const FrameView = memo(function FrameView({
               type: 'doop:runtime-port',
               desktopShell: isDesktopShell(),
               skipInitialTransitionHold: MAC_CHROMIUM_DESKTOP,
+              staticFrameMotion: MAC_CHROMIUM_DESKTOP,
             },
             '*',
             [channel.port2],
