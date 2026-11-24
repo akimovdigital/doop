@@ -1,4 +1,3 @@
-import sharp from 'sharp'
 import { debuglog } from 'node:util'
 
 export interface ImageEncoding {
@@ -36,6 +35,8 @@ export async function toWebpIfSmaller(buffer: Buffer, mime: string): Promise<Ima
   const format = SOURCE_FORMATS.get(mime)
   if (!format || (format === 'png' && isAnimatedPng(buffer))) return original
   try {
+    // Callers can load asset and screenshot helpers without loading the native codec.
+    const { default: sharp } = await import('sharp')
     const image = sharp(buffer)
     const meta = await image.metadata()
     if (meta.format !== format || (meta.pages ?? 1) > 1) return original

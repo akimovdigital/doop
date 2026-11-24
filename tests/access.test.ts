@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Client, startServer, type Server } from './harness.ts'
 
@@ -126,10 +127,7 @@ describe('canvas access model', () => {
     const frame = await (await owner.post(`/api/canvases/${canvasId}/frames`, { name: 'F1' })).json()
     frameId = frame.id
 
-    const png = Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-      'base64',
-    )
+    const png = await readFile(new URL('./fixtures/images/transparent-ui.png', import.meta.url))
     const upload = await owner.req(`/api/canvases/${canvasId}/assets`, {
       method: 'POST',
       headers: { 'Content-Type': 'image/png' },
@@ -220,15 +218,15 @@ describe('canvas access model', () => {
     expect(copy.frames.map((frame: { id: string }) => frame.id)).not.toContain(frameId)
     expect(copy.guidelines).toMatchObject([{ name: 'brand', markdown: 'Use the brand blue.', title: 'Brand' }])
     expect(copy.references).toHaveLength(1)
-    expect(copy.references[0].id).not.toBe(
-      (await (await owner.get(`/api/canvases/${canvasId}`)).json()).references[0].id,
-    )
+    const source = await (await owner.get(`/api/canvases/${canvasId}`)).json()
+    expect(copy.references[0].id).not.toBe(source.references[0].id)
     expect(copy.references[0].frameId).toBe(copy.frames.find((frame: { name: string }) => frame.name === 'F1').id)
     const copiedImage = copy.frames.find((frame: { name: string }) => frame.name === 'F1')
-    expect(copiedImage.html).toMatch(/<img src="http:\/\/localhost:\d+\/a\/[A-Za-z0-9_-]+\.png"/)
+    expect(copiedImage.html).toBe(source.frames.find((frame: { id: string }) => frame.id === frameId).html)
+    expect(copiedImage.html).toMatch(/<img src="http:\/\/localhost:\d+\/a\/[A-Za-z0-9_-]+\.webp"/)
     const copiedAsset = await fetch(copiedImage.html.match(/src="([^"]+)"/)![1])
     expect(copiedAsset.status).toBe(200)
-    expect(copiedAsset.headers.get('content-type')).toBe('image/png')
+    expect(copiedAsset.headers.get('content-type')).toBe('image/webp')
     expect((await stranger.get(`/api/canvases/${copy.id}`)).status).toBe(403)
     expect((await invited.delete(`/api/canvases/${copy.id}`)).status).toBe(200)
   })

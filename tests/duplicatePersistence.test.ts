@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { expect, it } from 'vitest'
 import { Client, startServer, type Server } from './harness.ts'
 
@@ -9,10 +10,7 @@ it('persists a complete canvas duplicate across a server restart', async () => {
 
     const source = await (await owner.post('/api/canvases', { name: 'Persistent design' })).json()
     const sourceFrame = await (await owner.post(`/api/canvases/${source.id}/frames`, { name: 'Image frame' })).json()
-    const png = Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-      'base64',
-    )
+    const png = await readFile(new URL('./fixtures/images/transparent-ui.png', import.meta.url))
     const upload = await owner.req(`/api/canvases/${source.id}/assets`, {
       method: 'POST',
       headers: { 'Content-Type': 'image/png' },
@@ -70,9 +68,11 @@ it('persists a complete canvas duplicate across a server restart', async () => {
     expect(restored.references[0].frameId).toBe(restored.frames[0].id)
 
     const assetPath = new URL(restored.frames[0].html.match(/src="([^"]+)"/)![1]).pathname
+    expect(assetPath).toBe(new URL(asset.url).pathname)
+    expect(assetPath).toMatch(/^\/a\/[A-Za-z0-9_-]+\.webp$/)
     const copiedAsset = await fetch(`${server.base}${assetPath}`)
     expect(copiedAsset.status).toBe(200)
-    expect(copiedAsset.headers.get('content-type')).toBe('image/png')
+    expect(copiedAsset.headers.get('content-type')).toBe('image/webp')
   } finally {
     server.stop()
   }
