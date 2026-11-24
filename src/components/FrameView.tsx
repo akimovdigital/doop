@@ -306,6 +306,19 @@ interface ProbeHit {
 /* what a surface click's probe is for; see `probeIntent` */
 type ProbeIntent = 'pick' | 'comment' | 'toggle'
 
+/* a wheel the frame runtime relays from its document while it is being
+   edited (the canvas's zoom or pan), at a point in design px */
+interface WheelRelay {
+  event: 'wheel'
+  x: number
+  y: number
+  deltaX: number
+  deltaY: number
+  ctrlKey: boolean
+  metaKey: boolean
+  shiftKey: boolean
+}
+
 /* a key the frame runtime relays from its own document, over its port */
 interface KeyRelay {
   event: 'keydown' | 'keyup'
@@ -1064,6 +1077,10 @@ export const FrameView = memo(function FrameView({
   const runtimePort = useRef<MessagePort | null>(null)
   /* saves a document the runtime serialized after an edit (set below) */
   const saveEditedRef = useRef<(html: string, discrete: boolean) => void>(() => {})
+  /* the frame's box, which a relayed wheel's point is mapped through */
+  const wheelFrame = { width: frame.width, height: frame.height, rotation: frame.rotation ?? 0 }
+  const wheelFrameRef = useRef(wheelFrame)
+  wheelFrameRef.current = wheelFrame
   useLayoutEffect(() => {
     if (!mountRuntime) {
       localHtml.current = null
@@ -1084,6 +1101,7 @@ export const FrameView = memo(function FrameView({
         | Partial<KeyRelay>
         | { event: 'edited'; html?: unknown; discrete?: boolean }
         | { event: 'settled'; reqId?: unknown }
+        | Partial<WheelRelay>
         | undefined
       /* Inspector edits arrive while the panel holds focus. Only keys need
          the iframe to be focused. */
@@ -1093,6 +1111,37 @@ export const FrameView = memo(function FrameView({
       }
       if (relay?.event === 'settled') {
         if (typeof relay.reqId === 'number') finishFrameSettle(iframe.contentWindow, relay.reqId)
+        return
+      }
+      /* replayed on the iframe, the wheel bubbles to the stage, which zooms or pans
+         as it does over the shield */
+      if (relay?.event === 'wheel') {
+        const { x, y, deltaY } = relay
+        if (typeof x !== 'number' || typeof y !== 'number' || typeof deltaY !== 'number') return
+        /* the iframe's box shares the frame's centre whatever its bleed or
+           turn: the point is taken from the centre, turned with the frame */
+        const box = iframe.getBoundingClientRect()
+        const { width, height, rotation } = wheelFrameRef.current
+        /* Stage settles layout zoom directly on the world. Chromium measures
+           wheel deltas in document pixels at that density. */
+        const density = FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY
+          ? Number(getComputedStyle(iframe).getPropertyValue('--world-layout-zoom')) || 1
+          : 1
+        const zoom = useStore.getState().viewport.zoom
+        const offset = rotateVector({ x: (x - width / 2) * zoom, y: (y - height / 2) * zoom }, rotation)
+        iframe.dispatchEvent(
+          new WheelEvent('wheel', {
+            deltaX: (typeof relay.deltaX === 'number' ? relay.deltaX : 0) * density,
+            deltaY: deltaY * density,
+            ctrlKey: relay.ctrlKey === true,
+            metaKey: relay.metaKey === true,
+            shiftKey: relay.shiftKey === true,
+            clientX: box.left + box.width / 2 + offset.x,
+            clientY: box.top + box.height / 2 + offset.y,
+            bubbles: true,
+            cancelable: true,
+          }),
+        )
         return
       }
       if (document.activeElement !== iframe || !document.hasFocus()) return

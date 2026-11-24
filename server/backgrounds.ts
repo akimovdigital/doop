@@ -102,7 +102,7 @@ export const MAX_UPLOAD_BYTES = 40 * 1024 * 1024
 const MIN_SOURCE_WIDTH = 1200
 const THUMB_WIDTH = 320
 const TAGGING_WIDTH = 768
-const TAGGING_MODEL = 'claude-opus-5'
+const TAGGING_MODEL = 'claude-opus-5-5'
 
 const SEED_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'backgrounds.json')
 
