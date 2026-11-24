@@ -629,6 +629,8 @@ export function Stage({
           stage.removeAttribute('data-frame-camera-moving')
         }, FRAME_CAMERA_SETTLE_MS)
       }
+      if (MAC_CHROMIUM_DESKTOP && s.viewport.zoom <= FRAME_OVERVIEW_MAX_ZOOM && denseDocuments.size && mountedWorld)
+        settleChromiumDocuments(mountedWorld, s.viewport, stageSize.current)
       apply(s.viewport)
       if (ref.current) sendViewport(s.viewport, stageSize.current)
       // Every zoom at or below 100% uses the same layout. Keep the timeout

@@ -202,11 +202,16 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
       iframe.evaluate((node) => getComputedStyle(node.closest('[data-frame-surface]')!, '::before').backgroundColor)
     expect(await paper()).toBe('rgb(240, 240, 240)')
     expect(
-      await iframe.evaluate((node) => {
+      await page.evaluate((node) => {
+        const hadDensity = !!document.querySelector('[data-cef-document-density]')
         window.canvasPageHarness.setCamera({ x: 100, y: 100, zoom: 0.04 })
-        return getComputedStyle(node.closest('[data-frame-surface]')!, '::before').backgroundColor
-      }),
-    ).toBe('rgb(240, 240, 240)')
+        return {
+          hadDensity,
+          hasDensity: !!document.querySelector('[data-cef-document-density]'),
+          paper: getComputedStyle(node.closest('[data-frame-surface]')!, '::before').backgroundColor,
+        }
+      }, iframe),
+    ).toEqual({ hadDensity: true, hasDensity: false, paper: 'rgb(240, 240, 240)' })
     expect(await iframe.evaluate((node) => getComputedStyle(node).contentVisibility)).toBe('visible')
     expect(await sharp.evaluate((node) => document.activeElement === node)).toBe(true)
     // A child animation callback can arrive before the desktop compositor
