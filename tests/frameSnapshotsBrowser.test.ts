@@ -135,6 +135,29 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
     expect(await child!.evaluate(() => document.querySelector('input')!.value)).toBe('kept')
   })
 
+  it('holds the heavy overview layer through threshold crossings until the zoom settles', async () => {
+    const page = await pages.open()
+    await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 })
+    const large = canvasFrame({ id: 'large', name: 'Large', x: 3000, y: 0, width: 5000, height: 16000 })
+    await openCanvasPage(page, [sample, large])
+    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 230, y: 140, zoom: 0.04 }))
+    await page.waitForSelector('[data-frame-overview] img[data-frame-snapshot-ready]', { visible: true })
+    const layers = await page.evaluate(async () => {
+      const stage = document.querySelector('.stage')!
+      const layer = stage.querySelector('[data-frame-overview]')!
+      const world = stage.querySelector('.world')!
+      const states = []
+      for (const zoom of [0.11, 0.04, 0.11]) {
+        window.canvasPageHarness.setCamera({ x: 230, y: 140, zoom })
+        await new Promise(requestAnimationFrame)
+        states.push(layer.hasAttribute('data-frame-overview'))
+      }
+      return { states, willChange: getComputedStyle(world).willChange }
+    })
+    expect(layers).toEqual({ states: [true, true, true], willChange: 'auto' })
+    await page.waitForFunction(() => !document.querySelector('.stage [data-frame-overview]'))
+  })
+
   it('preserves dark root rules and increases cached density as the camera zooms in', async () => {
     const page = await pages.open()
     await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 })

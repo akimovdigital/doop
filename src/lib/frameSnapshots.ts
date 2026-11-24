@@ -82,6 +82,7 @@ export const FRAME_CAMERA_SETTLE_MS = 220
 const MIN_BITMAP_DENSITY = 0.125
 const THUMBNAIL_CACHE_BYTES = 32 * 1024 * 1024
 const OVERVIEW_CAPTURE_LIMIT = 3
+const FIRST_OVERVIEW_RESOURCE_MS = 60
 const MAX_BITMAP_EDGE = 8192
 const MAX_BITMAP_PIXELS = 2_400_000
 const CAPTURE_TIMEOUT_MS = 4000
@@ -178,7 +179,10 @@ export class FrameSnapshots {
     this.zoom = viewport().zoom
     const motion = new MutationObserver(() => {
       if (!stage.hasAttribute('data-frame-camera-moving')) {
-        for (const slot of this.ready) this.updateTiny(slot)
+        for (const slot of this.ready) {
+          this.display(slot)
+          this.updateTiny(slot)
+        }
       }
       this.wake()
     })
@@ -254,7 +258,16 @@ export class FrameSnapshots {
   setZoom(zoom: number) {
     if (this.zoom === zoom) return
     this.zoom = zoom
-    for (const slot of this.ready) this.display(slot)
+    // Stage marks the gesture in the same store dispatch. Wait for that
+    // write before deciding whether to replace a displayed bitmap.
+    queueMicrotask(() => {
+      if (!this.stage || this.zoom !== zoom) return
+      const moving = this.stage.hasAttribute('data-frame-camera-moving')
+      for (const slot of this.ready) {
+        if (moving) this.updateSharp(slot)
+        else this.display(slot)
+      }
+    })
   }
 
   private display(slot: Slot) {
@@ -277,7 +290,11 @@ export class FrameSnapshots {
         image.removeAttribute('data-frame-snapshot-ready')
       }
     }
-    const sharp = !!bitmap && bitmap.density >= requiredDensity
+    this.updateSharp(slot, requiredDensity)
+  }
+
+  private updateSharp({ image, displayed }: Slot, requiredDensity = this.zoom * (window.devicePixelRatio || 1)) {
+    const sharp = !!displayed && displayed.density >= requiredDensity
     if (image.hasAttribute('data-frame-snapshot-sharp') !== sharp) {
       image.toggleAttribute('data-frame-snapshot-sharp', sharp)
     }
@@ -394,6 +411,8 @@ export class FrameSnapshots {
       const { rasterizeFrame } = await import('./frameRaster')
       abort.signal.throwIfAborted()
       const scale = slot.requestedDensity
+      const firstOverview =
+        this.useOverview && this.zoom <= FRAME_OVERVIEW_MAX_ZOOM && !slot.displayed && slot.attempts === 0
       const blob = await rasterizeFrame(frame, {
         type: 'png',
         scale,
@@ -403,6 +422,7 @@ export class FrameSnapshots {
           onResourceFailure: () => (resourceFailure = true),
           // Previewing an unloaded frame must not compete for a live iframe slot.
           skipDeferredDocument: true,
+          resourceBudgetMs: firstOverview ? FIRST_OVERVIEW_RESOURCE_MS : undefined,
         },
       })
       abort.signal.throwIfAborted()

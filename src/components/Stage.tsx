@@ -560,15 +560,20 @@ export function Stage({
         s.viewport.x !== prev.viewport.x || s.viewport.y !== prev.viewport.y || s.viewport.zoom !== prev.viewport.zoom
       if (cameraChanged && saveForDesktopReload && !restoringDesktopCamera.current && s.canvas && s.activePageId)
         saveForDesktopReload(s.canvas.id, s.activePageId)
-      apply(s.viewport)
       if (stage && cameraChanged) {
-        if (!cameraIdleTimer) stage.setAttribute('data-frame-camera-moving', '')
+        if (s.viewport.zoom !== prev.viewport.zoom) {
+          if (stage.getAttribute('data-frame-camera-moving') !== 'zoom')
+            stage.setAttribute('data-frame-camera-moving', 'zoom')
+        } else if (!cameraIdleTimer) {
+          stage.setAttribute('data-frame-camera-moving', '')
+        }
         window.clearTimeout(cameraIdleTimer)
         cameraIdleTimer = window.setTimeout(() => {
           cameraIdleTimer = 0
           stage.removeAttribute('data-frame-camera-moving')
         }, FRAME_CAMERA_SETTLE_MS)
       }
+      apply(s.viewport)
       if (ref.current) sendViewport(s.viewport, stageSize.current)
       // Every zoom at or below 100% uses the same layout. Keep the timeout
       // through a pan only when a previous zoom still needs to settle.
@@ -1872,14 +1877,22 @@ function FrameStack({
   }, [snapshots, stage, heavyPage])
   useLayoutEffect(() => {
     const root = layer.current
-    if (!root) return
-    const inOverview = (zoom: number) => limitOverview && zoom <= FRAME_OVERVIEW_MAX_ZOOM
-    root.toggleAttribute('data-frame-overview', inOverview(useStore.getState().viewport.zoom))
-    return useStore.subscribe((state, previous) => {
-      const overview = inOverview(state.viewport.zoom)
-      if (overview !== inOverview(previous.viewport.zoom)) root.toggleAttribute('data-frame-overview', overview)
+    const target = stage.current ?? root?.closest<HTMLElement>('.stage')
+    if (!root || !target) return
+    const settleOverview = () => {
+      const overview = limitOverview && useStore.getState().viewport.zoom <= FRAME_OVERVIEW_MAX_ZOOM
+      root.toggleAttribute('data-frame-overview', overview)
+    }
+    settleOverview()
+    if (!limitOverview) return
+    // Removing live iframe layers while the camera crosses the overview
+    // threshold repeatedly makes Chromium rebuild the layer tree mid-gesture.
+    const motion = new MutationObserver(() => {
+      if (!target.hasAttribute('data-frame-camera-moving')) settleOverview()
     })
-  }, [limitOverview])
+    motion.observe(target, { attributes: true, attributeFilter: ['data-frame-camera-moving'] })
+    return () => motion.disconnect()
+  }, [limitOverview, stage])
   useLayoutEffect(() => snapshots.wake(), [snapshots, snapshotsDisabled, presenting])
   const compactSectionTitles = useStore((s) => s.selectedSectionId !== null && s.viewport.zoom <= 0.05)
   return (
@@ -1888,6 +1901,7 @@ function FrameStack({
       className="absolute top-0 left-0 isolate"
       data-live-frame-budget={LIVE_FRAME_BUDGET}
       data-animating-frame-budget={ANIMATING_FRAME_BUDGET}
+      data-frame-overview-capable={heavyPage && FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY ? '' : undefined}
       data-frame-snapshots-disabled={snapshotsDisabled ? '' : undefined}
     >
       {mounted.map((f) =>

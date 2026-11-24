@@ -28,6 +28,50 @@ const opts = () => ({ width: 300, height: 200, signal: new AbortController().sig
 
 afterEach(() => vi.unstubAllGlobals())
 
+it('keeps linked styles in a first overview even when the image budget expires, then fetches the image again', async () => {
+  const deadline = new AbortController()
+  const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal)
+  const img = 'https://preview-budget.test/asset.png'
+  const css = 'https://preview-budget.test/frame.css'
+  const onResourceFailure = vi.fn()
+  const fetch = vi.fn((url: string, { signal }: RequestInit) => {
+    if (url === css) {
+      return new Promise<Response>((resolve, reject) => {
+        deadline.signal.addEventListener(
+          'abort',
+          () =>
+            queueMicrotask(() => {
+              if (signal?.aborted) reject(signal.reason)
+              else resolve(new Response('html{background:#142132}'))
+            }),
+          { once: true },
+        )
+      })
+    }
+    if (deadline.signal.aborted) return Promise.resolve(new Response(PNG, { headers: { 'Content-Type': 'image/png' } }))
+    return new Promise<Response>((_resolve, reject) => {
+      signal!.addEventListener('abort', () => reject(signal!.reason), { once: true })
+      deadline.abort()
+    })
+  })
+  vi.stubGlobal('fetch', fetch)
+  try {
+    const html = `<link rel="stylesheet" href="${css}"><img src="${img}" width="100" height="80">`
+    const first = await inlineDocument(html, { ...opts(), preview: { resourceBudgetMs: 60, onResourceFailure } })
+    expect(first).toContain('html{background:#142132}')
+    expect(first).toContain('width="100" height="80"')
+    expect(first).not.toContain(PNG_DATA)
+    expect(onResourceFailure).toHaveBeenCalledOnce()
+
+    const full = await inlineDocument(html, { ...opts(), preview: { onResourceFailure } })
+    expect(full).toContain(PNG_DATA)
+    expect(fetch.mock.calls.filter(([url]) => url === img)).toHaveLength(2)
+    expect(onResourceFailure).toHaveBeenCalledOnce()
+  } finally {
+    timeout.mockRestore()
+  }
+})
+
 it('wraps the document in a frame-sized SVG with scripts removed', async () => {
   serve({})
   const svg = await inlineDocument(

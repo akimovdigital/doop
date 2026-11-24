@@ -36,7 +36,12 @@ export interface RasterOptions {
   /** Preserve the live document's opaque canvas color beneath the SVG content. */
   documentBackground?: boolean
   /** Canvas snapshots can draw with missing resources. Exports use strict mode. */
-  preview?: { onResourceFailure?: () => void; skipDeferredDocument?: boolean }
+  preview?: {
+    onResourceFailure?: () => void
+    skipDeferredDocument?: boolean
+    /** Shared image and font deadline for the first overview pass. */
+    resourceBudgetMs?: number
+  }
   /** the part of the frame to keep; the whole frame when unset. The
    *  document is still laid out and painted whole, so an element keeps
    *  every style its ancestors give it and whatever paints behind it. */
@@ -585,6 +590,7 @@ async function previewBlob(
   url: string,
   signal: AbortSignal,
   source?: Parameters<typeof readBrowseCropResource>[0],
+  budget?: AbortSignal,
 ): Promise<Blob | null> {
   signal.throwIfAborted()
   const hit = previewResources.get(url)
@@ -596,17 +602,21 @@ async function previewBlob(
     }
     forgetPreviewResource(url)
   }
+  if (budget?.aborted) return null
   const resource = new AbortController()
-  const cancel = () => resource.abort(signal.reason)
+  const request = budget ? AbortSignal.any([signal, budget]) : signal
+  const cancel = () => resource.abort(request.reason)
   const timer = window.setTimeout(() => resource.abort(), PREVIEW_FETCH_MS)
-  signal.addEventListener('abort', cancel, { once: true })
+  request.addEventListener('abort', cancel, { once: true })
   const direct = await fetchBlob(url, resource.signal)
     .catch(() => null)
     .finally(() => {
       window.clearTimeout(timer)
-      signal.removeEventListener('abort', cancel)
+      request.removeEventListener('abort', cancel)
     })
   signal.throwIfAborted()
+  // A provisional miss must not suppress the full fetch on the next pass.
+  if (budget && !direct) return null
   const blob =
     direct ??
     (source
@@ -635,19 +645,26 @@ async function previewBlob(
  *  export, and the server's renderer can still load it. */
 class ResourceCache {
   private readonly pending = new Map<string, Promise<Blob | null>>()
+  private readonly budget: AbortSignal | undefined
   constructor(
     readonly signal: AbortSignal,
     /** settles each imported stylesheet as `inlineDocument` does the page's */
     private readonly viewport: FrameViewport | null = null,
     readonly preview?: RasterOptions['preview'],
     private readonly source?: Parameters<typeof readBrowseCropResource>[0],
-  ) {}
+  ) {
+    if (preview?.resourceBudgetMs !== undefined) this.budget = AbortSignal.timeout(preview.resourceBudgetMs)
+  }
 
-  private async blob(url: string): Promise<Blob | null> {
-    let pending = this.pending.get(url)
+  private async blob(url: string, stylesheet: boolean): Promise<Blob | null> {
+    // The first pass still needs the stylesheet to lay out the frame and
+    // paint its theme. Only fonts and images use the shared short deadline.
+    const budget = stylesheet ? undefined : this.budget
+    const key = budget ? `provisional:${url}` : url
+    let pending = this.pending.get(key)
     if (!pending) {
-      pending = this.preview ? previewBlob(url, this.signal, this.source) : fetchBlob(url, this.signal)
-      this.pending.set(url, pending)
+      pending = this.preview ? previewBlob(url, this.signal, this.source, budget) : fetchBlob(url, this.signal)
+      this.pending.set(key, pending)
     }
     const blob = await pending
     if (!blob) this.preview?.onResourceFailure?.()
@@ -655,11 +672,11 @@ class ResourceCache {
   }
 
   async text(url: string): Promise<string> {
-    return (await this.blob(url))?.text() ?? ''
+    return (await this.blob(url, true))?.text() ?? ''
   }
 
   async dataUrl(url: string, chain: ReadonlySet<string> = new Set(), stylesheet = false): Promise<string> {
-    const blob = await this.blob(url)
+    const blob = await this.blob(url, stylesheet)
     if (!blob) return stylesheet ? EMPTY_CSS : TRANSPARENT_IMAGE
     if (stylesheet || blob.type.startsWith('text/css')) {
       /* a stylesheet imported by another: its own url()s resolve against

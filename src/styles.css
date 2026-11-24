@@ -1519,6 +1519,11 @@ body:has([data-prototype-player]:not([data-minimized])) .stage[data-stage-presen
   content-visibility: hidden;
 }
 
+.world:has(> [data-frame-overview-capable]) {
+  /* Chromium can otherwise stretch fixed raster tiles as the world zooms. */
+  will-change: auto;
+}
+
 /* A decoded bitmap and the mounted iframe exchange visibility in one paint. */
 [data-frame-snapshot] {
   position: absolute;
@@ -1532,7 +1537,7 @@ body:has([data-prototype-player]:not([data-minimized])) .stage[data-stage-presen
 :is(
   [data-frame-snapshot-ready][data-frame-snapshot-waiting],
   .stage[data-frame-camera-moving] [data-frame-snapshot-ready][data-frame-snapshot-sharp],
-  .stage [data-frame-overview] [data-frame-snapshot-ready],
+  [data-frame-overview] [data-frame-snapshot-ready][data-frame-snapshot-sharp],
   .stage [data-frame-snapshot-ready][data-frame-snapshot-sharp][data-frame-snapshot-tiny]
 ):not([data-frame-snapshot-blocked], [data-frame-snapshots-disabled] *) {
   visibility: visible;
@@ -1548,10 +1553,11 @@ body:has([data-prototype-player]:not([data-minimized])) .stage[data-stage-presen
   visibility: hidden;
 }
 
-/* A heavy overview can expose dozens of full-size layer trees at once.
-   Keep the iframe and its state, but take its live layer out of the render tree. */
-[data-frame-overview]:not([data-frame-snapshots-disabled])
-  [data-frame-snapshot-ready]:not([data-frame-snapshot-blocked])
+/* Park the live iframe layers at rest and during pans. A zoom can cross
+   several bitmap densities, so use visibility until the gesture settles. */
+.stage:not([data-frame-camera-moving='zoom'])
+  [data-frame-overview]:not([data-frame-snapshots-disabled])
+  [data-frame-snapshot-ready][data-frame-snapshot-sharp]:not([data-frame-snapshot-blocked])
   + div
   > iframe[data-doop-frame] {
   display: none;

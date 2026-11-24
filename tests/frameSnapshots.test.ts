@@ -102,6 +102,57 @@ describe('snapshot capture queue', () => {
     }
   })
 
+  it('fills a cold overview before retrying slow resources at the overview density', async () => {
+    const decode = vi.spyOn(Image.prototype, 'decode').mockResolvedValue(undefined)
+    const bitmap = new Blob(['bitmap'], { type: 'image/png' })
+    const raster = vi.mocked(rasterizeFrame).mockImplementation(
+      (_frame, { preview }) =>
+        new Promise((resolve) => {
+          const resourceDelay = 650
+          const budget = preview?.resourceBudgetMs ?? Infinity
+          window.setTimeout(
+            () => {
+              if (budget < resourceDelay) preview?.onResourceFailure?.()
+              resolve(bitmap)
+            },
+            Math.min(resourceDelay, budget),
+          )
+        }),
+    )
+    const { snapshots, stop } = queue(0.02, true)
+    const images = Array.from({ length: 40 }, () => new Image())
+    try {
+      for (const [i, image] of images.entries()) {
+        snapshots.update(
+          {
+            ...frame,
+            id: i === 0 ? 'a' : String(i),
+            width: 1920,
+            height: 4400,
+            x: (i % 8) * 2200,
+            y: Math.floor(i / 8) * 4600,
+          } as Frame,
+          image,
+          false,
+        )
+      }
+      await vi.advanceTimersByTimeAsync(4000)
+      const ready = images.filter((image) => image.hasAttribute('data-frame-snapshot-ready')).length
+      console.info('Synthetic 650 ms resource delay: ready at 4 s =', ready)
+      expect(ready).toBe(40)
+      const firstPass = images.map((image) => image.src)
+      await vi.advanceTimersByTimeAsync(14_000)
+      expect(images.every((image, i) => image.src !== firstPass[i])).toBe(true)
+      expect(raster.mock.calls.filter(([, options]) => options.preview?.resourceBudgetMs === undefined)).toHaveLength(
+        40,
+      )
+      expect(new Set(raster.mock.calls.map(([, options]) => options.scale))).toEqual(new Set([0.125]))
+    } finally {
+      stop()
+      decode.mockRestore()
+    }
+  })
+
   it('starts with a reusable thumbnail when a heavy page opens zoomed in', async () => {
     const raster = vi.mocked(rasterizeFrame).mockRejectedValue(new Error('capture failed'))
     const { stop } = queue(0.13, true)
@@ -215,13 +266,26 @@ describe('snapshot capture queue', () => {
       snapshots.wake()
       await vi.advanceTimersByTimeAsync(40)
       expect(overview.getAttribute('src')).not.toBe(thumbnail)
+      const detail = overview.getAttribute('src')
+
+      stage.setAttribute('data-frame-camera-moving', 'zoom')
+      viewport.zoom = 0.04
+      snapshots.setZoom(0.04)
+      await vi.advanceTimersByTimeAsync(20)
+      expect(overview.getAttribute('src')).toBe(detail)
+      stage.removeAttribute('data-frame-camera-moving')
+      await vi.advanceTimersByTimeAsync(20)
+      expect(overview.getAttribute('src')).toBe(thumbnail)
 
       viewport.x = -4000
+      viewport.zoom = 1
+      snapshots.setZoom(1)
       snapshots.update({ ...frame, id: 'b', x: 4000, y: 0 } as Frame, new Image(), false)
       await vi.advanceTimersByTimeAsync(40)
       viewport.x = 0
       viewport.zoom = 0.04
       snapshots.setZoom(0.04)
+      await Promise.resolve()
       expect(overview.getAttribute('src')).toBe(thumbnail)
       expect(overview.hasAttribute('data-frame-snapshot-ready')).toBe(true)
     } finally {
