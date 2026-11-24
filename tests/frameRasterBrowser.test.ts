@@ -6,6 +6,7 @@ import { fixtureUrl, pagePerTest } from './browser'
 interface Rendered {
   type: string
   topLeft: number[]
+  bottomLeft: number[]
   width: number
   height: number
   block: number[]
@@ -73,6 +74,18 @@ describe.skipIf(!findBrowserPath())('rasterizing a frame in the browser', () => 
     const preview = await render({ html, height: 7200, scale: 0.08, preview: {} })
     expect(strict.block).toEqual([255, 0, 0, 255])
     expect(preview).toEqual(strict)
+  })
+
+  it('paints the document background below short content in a tall saved preview', async () => {
+    const html = `<!doctype html><html data-theme="dark"><head><style>
+      :root[data-theme="dark"] { --paper: rgb(13, 13, 14) }
+      html { background: var(--paper) }
+      body { margin: 0 }
+      main { height: 100px; background: red }
+    </style></head><body><main></main></body></html>`
+    const out = await render({ html, height: 7200, scale: 0.125, preview: {} })
+    expect(out.topLeft).toEqual([255, 0, 0, 255])
+    expect(out.bottomLeft).toEqual([13, 13, 14, 255])
   })
 
   it('renders at 2x for a retina export', async () => {

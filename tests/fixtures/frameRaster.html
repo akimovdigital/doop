@@ -101,6 +101,7 @@
         return {
           type: blob.type,
           topLeft: at(0, 0),
+          bottomLeft: at(0, bitmap.height - 1),
           width: bitmap.width,
           height: bitmap.height,
           block: at(50 * scale, 50 * scale),

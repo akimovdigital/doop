@@ -41,6 +41,29 @@ function gestureLayers(page: Page, ctrlKey: boolean) {
 describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 }, () => {
   const pages = pagePerTest()
 
+  it('keeps snapshots in motion between paced pinch events', async () => {
+    const page = await pages.open()
+    await openCanvasPage(page, [sample])
+    await page.waitForSelector('[data-frame-snapshot-ready]')
+    const transitions = await page.evaluate(async () => {
+      const stage = document.querySelector('.stage')!
+      const motionAttribute = 'data-frame-camera-moving'
+      const states: boolean[] = []
+      const observer = new MutationObserver(() => states.push(stage.hasAttribute(motionAttribute)))
+      observer.observe(stage, { attributes: true, attributeFilter: [motionAttribute] })
+      try {
+        for (let event = 0; event < 3; event++) {
+          stage.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -10 }))
+          await new Promise((resolve) => setTimeout(resolve, 165))
+        }
+        return states
+      } finally {
+        observer.disconnect()
+      }
+    })
+    expect(transitions).toEqual([true])
+  })
+
   it('swaps cached documents during zoom, keeps a missing snapshot live, and restores the same document', async () => {
     const page = await pages.open()
     await page.setViewport({ width: 1280, height: 800 })

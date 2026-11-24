@@ -149,4 +149,49 @@ describe('snapshot capture queue', () => {
       stop()
     }
   })
+
+  it('keeps an overview image when a higher-density image is evicted', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    vi.stubGlobal('requestIdleCallback', undefined)
+    const decode = vi.spyOn(Image.prototype, 'decode').mockResolvedValue(undefined)
+    const width = vi.spyOn(Image.prototype, 'naturalWidth', 'get').mockReturnValue(5000)
+    const height = vi.spyOn(Image.prototype, 'naturalHeight', 'get').mockReturnValue(3000)
+    vi.mocked(rasterizeFrame).mockResolvedValue(new Blob(['bitmap'], { type: 'image/png' }))
+    const stage = document.createElement('div')
+    const layer = document.createElement('div')
+    Object.defineProperties(stage, { clientWidth: { value: 1000 }, clientHeight: { value: 800 } })
+    const snapshots = new FrameSnapshots()
+    const viewport = { x: 0, y: 0, zoom: 0.04 }
+    const stop = snapshots.connect(layer, stage, () => viewport)
+    const overview = new Image()
+    try {
+      // Only the detailed captures consume almost the whole detailed budget.
+      width.mockReturnValueOnce(85)
+      height.mockReturnValueOnce(38)
+      snapshots.update({ ...frame, x: 0, y: 0 } as Frame, overview, false)
+      await vi.advanceTimersByTimeAsync(40)
+      const thumbnail = overview.getAttribute('src')
+      expect(thumbnail).toBeTruthy()
+
+      viewport.zoom = 1
+      snapshots.setZoom(1)
+      snapshots.wake()
+      await vi.advanceTimersByTimeAsync(40)
+      expect(overview.getAttribute('src')).not.toBe(thumbnail)
+
+      viewport.x = -4000
+      snapshots.update({ ...frame, id: 'b', x: 4000, y: 0 } as Frame, new Image(), false)
+      await vi.advanceTimersByTimeAsync(40)
+      viewport.x = 0
+      viewport.zoom = 0.04
+      snapshots.setZoom(0.04)
+      expect(overview.getAttribute('src')).toBe(thumbnail)
+      expect(overview.hasAttribute('data-frame-snapshot-ready')).toBe(true)
+    } finally {
+      stop()
+      decode.mockRestore()
+      width.mockRestore()
+      height.mockRestore()
+    }
+  })
 })

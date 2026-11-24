@@ -442,6 +442,15 @@ async function inlineInto(
     }
   }
 
+  if (opts.preview) {
+    // The HTML canvas background extends to the viewport in a live document.
+    // In a foreignObject it paints only the root box, which can end above the
+    // bottom of a tall frame even when its live viewport is fully opaque.
+    const ground = doc.createElement('style')
+    ground.textContent = `:where(svg:root > foreignObject > html) { min-block-size: ${opts.height}px }`
+    doc.head.prepend(ground)
+  }
+
   /* the XML serializer gives an HTML document's root its xhtml namespace */
   const body = new XMLSerializer().serializeToString(doc.documentElement)
   const { width, height, clip } = opts

@@ -13,7 +13,7 @@ import { throttle } from '../lib/throttle'
 import { FrameView, HiddenFrameView } from './FrameView'
 import { useFrameAdmission } from './frameAdmission'
 import { ANIMATING_FRAME_BUDGET, LIVE_FRAME_BUDGET } from './frameBudget'
-import { FRAME_OVERVIEW_MAX_ZOOM, FrameSnapshots } from '../lib/frameSnapshots'
+import { FRAME_CAMERA_SETTLE_MS, FRAME_OVERVIEW_MAX_ZOOM, FrameSnapshots } from '../lib/frameSnapshots'
 import { CanvasComments, type CanvasComposeAt } from './CanvasComments'
 import { placeComposer } from '../lib/composerPlacement'
 import { isCanvasComment, type CanvasComment } from '../../shared/comments'
@@ -567,7 +567,7 @@ export function Stage({
         cameraIdleTimer = window.setTimeout(() => {
           cameraIdleTimer = 0
           stage.removeAttribute('data-frame-camera-moving')
-        }, 150)
+        }, FRAME_CAMERA_SETTLE_MS)
       }
       if (ref.current) sendViewport(s.viewport, stageSize.current)
       // Every zoom at or below 100% uses the same layout. Keep the timeout
