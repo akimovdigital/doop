@@ -77,6 +77,66 @@ function gestureLayers(page: Page, ctrlKey: boolean) {
 describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 }, () => {
   const pages = pagePerTest()
 
+  it('keeps overview documents live on macOS CEF and retains their state through a close-up', async () => {
+    const page = await pages.open()
+    await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 })
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperties(window, {
+        __DOOP_DESKTOP__: { value: '0.14.0' },
+        __DOOP_DESKTOP_PLATFORM__: { value: 'macos' },
+      })
+    })
+    const html =
+      '<body style="margin:0"><input value="initial"><div style="height:60px;overflow:auto"><div style="height:400px"></div></div></body>'
+    const frames = Array.from({ length: 40 }, (_, index) => ({
+      ...canvasFrame({
+        id: `live-${index}`,
+        name: `Live ${index}`,
+        x: (index % 10) * 1400,
+        y: Math.floor(index / 10) * 2500,
+        width: 1200,
+        height: 2400,
+      }),
+      html,
+    }))
+    const distant = { ...frames[0]!, id: 'distant', x: 120000 }
+    await openCanvasPage(page, [...frames, distant])
+    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 100, y: 100, zoom: 0.04 }))
+    await page.waitForFunction(() => document.querySelectorAll('iframe[data-doop-frame]').length === 40)
+    expect(await page.$$('[data-frame-snapshot]')).toHaveLength(0)
+    expect(await page.$('[data-doop-frame-shell="distant"] iframe')).toBeNull()
+
+    const iframe = (await page.$('[data-doop-frame-shell="live-0"] iframe'))!
+    const child = (await iframe.contentFrame())!
+    await child.waitForSelector('input')
+    const originalWidth = await child.evaluate(() => {
+      document.querySelector('input')!.value = 'kept'
+      document.querySelector('div')!.scrollTop = 120
+      return innerWidth
+    })
+    expect(originalWidth).toBe(1200)
+    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: -26_400, y: -150, zoom: 2.5 }))
+    await page.waitForFunction(() => document.querySelector<HTMLElement>('.world')?.style.zoom === '3')
+    // The prior admission timer evicted offscreen iframes after two seconds.
+    await new Promise((resolve) => setTimeout(resolve, 2_100))
+    expect(await iframe.evaluate((node) => node.isConnected && node.getBoundingClientRect().right < 0)).toBe(true)
+    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 100, y: 100, zoom: 0.04 }))
+    await page.waitForFunction(
+      () =>
+        !document.querySelector('[data-frame-camera-moving]') &&
+        document.querySelectorAll('iframe[data-doop-frame]').length === 40,
+    )
+    expect(await iframe.evaluate((node) => node.isConnected)).toBe(true)
+    expect(
+      await child.evaluate(() => ({
+        value: document.querySelector('input')!.value,
+        scroll: document.querySelector('div')!.scrollTop,
+        width: innerWidth,
+      })),
+    ).toEqual({ value: 'kept', scroll: 120, width: originalWidth })
+    expect(await page.$$('[data-frame-snapshot]')).toHaveLength(0)
+  })
+
   it('keeps snapshots in motion between paced pinch events', async () => {
     const page = await pages.open()
     await openCanvasPage(page, [sample])

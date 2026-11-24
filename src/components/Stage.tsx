@@ -78,7 +78,12 @@ import { CanvasSections } from './CanvasSections'
 import { activeSections } from '../lib/canvasSections'
 import { CommentThreadLayer, FrameLabelLayer } from './FrameLabelLayer'
 import { pixelGridLines } from './PixelGrid'
-import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY, counterZoom, settledLayoutZoom } from '../lib/layoutZoom'
+import {
+  FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY,
+  MAC_CHROMIUM_DESKTOP,
+  counterZoom,
+  settledLayoutZoom,
+} from '../lib/layoutZoom'
 import { createFrameLayoutQueue } from '../lib/frameLayoutQueue'
 import { useT, type PlainMessageKey } from '../lib/i18n'
 import { NO_INSETS, fitBox, fitColumnStart, type StageInsets } from '../lib/viewFit'
@@ -483,7 +488,7 @@ export function Stage({
       if (layoutZoom === previous) return
       const size = stageSize.current
       if (
-        !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY &&
+        (!FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY || MAC_CHROMIUM_DESKTOP) &&
         size.width &&
         size.height &&
         CSS.supports('content-visibility', 'hidden')
@@ -1849,7 +1854,7 @@ function FrameStack({
   const mounted = useMemo(() => [...frames].sort(byCreation), [frames])
   const rank = useMemo(() => new Map(frames.map((f, i) => [f.id, i + 1])), [frames])
   const layer = useRef<HTMLDivElement>(null)
-  const [snapshots] = useState(() => new FrameSnapshots())
+  const [snapshots] = useState(() => (MAC_CHROMIUM_DESKTOP ? undefined : new FrameSnapshots()))
   const prototypeMode = useStore((s) => s.prototypeMode)
   const snapshotsDisabled = prototypeMode || (uiHidden && !FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY)
   const heavyPage = useMemo(
@@ -1862,12 +1867,19 @@ function FrameStack({
       ) >= FRAME_OVERVIEW_MIN_PIXELS,
     [frames],
   )
-  const limitOverview = heavyPage && !snapshotsDisabled
-  const { admitted, request, protect } = useFrameAdmission(frames, stage, layer, presenting, limitOverview)
+  const limitOverview = !!snapshots && heavyPage && !snapshotsDisabled
+  const { admitted, request, protect } = useFrameAdmission(
+    frames,
+    stage,
+    layer,
+    presenting,
+    limitOverview,
+    MAC_CHROMIUM_DESKTOP,
+  )
   useLayoutEffect(() => {
     const root = layer.current
     const target = stage.current ?? root?.closest<HTMLElement>('.stage')
-    if (!root || !target) return
+    if (!root || !target || !snapshots) return
     const disconnect = snapshots.connect(root, target, () => useStore.getState().viewport, heavyPage)
     const unsubscribe = useStore.subscribe((state, previous) => {
       if (state.viewport.zoom !== previous.viewport.zoom) snapshots.setZoom(state.viewport.zoom)
@@ -1895,7 +1907,7 @@ function FrameStack({
     motion.observe(target, { attributes: true, attributeFilter: ['data-frame-camera-moving'] })
     return () => motion.disconnect()
   }, [limitOverview, stage])
-  useLayoutEffect(() => snapshots.wake(), [snapshots, snapshotsDisabled, presenting])
+  useLayoutEffect(() => snapshots?.wake(), [snapshots, snapshotsDisabled, presenting])
   const compactSectionTitles = useStore((s) => s.selectedSectionId !== null && s.viewport.zoom <= 0.05)
   return (
     <div

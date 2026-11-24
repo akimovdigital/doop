@@ -53,10 +53,15 @@ export function rankFrameCandidates(frames: FrameCandidate[]) {
 }
 
 /** Preserve mounted active work, then reserve space for new active frames in priority order. */
-export function reserveFrameSlots(protectedIds: ReadonlySet<string>, live: ReadonlySet<string>, freeze: boolean) {
+export function reserveFrameSlots(
+  protectedIds: ReadonlySet<string>,
+  live: ReadonlySet<string>,
+  freeze: boolean,
+  budget = LIVE_FRAME_BUDGET,
+) {
   const reserved = new Set([...live].filter((id) => freeze || protectedIds.has(id)))
   for (const id of protectedIds) {
-    if (reserved.size >= LIVE_FRAME_BUDGET) break
+    if (reserved.size >= budget) break
     reserved.add(id)
   }
   return reserved
@@ -68,10 +73,11 @@ export function planFrameAdmission(
   protectedIds: ReadonlySet<string>,
   warmSmallPage: boolean,
   now: number,
+  budget = LIVE_FRAME_BUDGET,
 ) {
   const desired = new Set(protectedIds)
   for (const frame of ranked) {
-    if (desired.size >= LIVE_FRAME_BUDGET) break
+    if (desired.size >= budget) break
     const recentlySeen = now - frame.lastSeen < UNSEEN_MS
     if (
       frame.visible ||

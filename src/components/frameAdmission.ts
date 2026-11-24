@@ -29,8 +29,11 @@ const SMALL_PAGE_FRAME_LIMIT = 8
 const SMALL_PAGE_HTML_LIMIT = 4_000_000
 const STARTS_PER_BATCH = 3
 const PREPARING_HTML_LIMIT = 800_000
+const LIVE_OVERVIEW_STARTS_PER_BATCH = 6
+const LIVE_OVERVIEW_PREPARING_HTML_LIMIT = 1_600_000
 const BOOT_TIMEOUT_MS = 2_000
 const REQUEST_LEASE_MS = 5_000
+const RETAINED_OVERVIEW_LIMIT = 48
 
 export function useFrameAdmission(
   frames: Frame[],
@@ -38,6 +41,7 @@ export function useFrameAdmission(
   layer: RefObject<HTMLDivElement | null>,
   presenting: boolean,
   limitOverview = false,
+  liveOverview = false,
 ) {
   const signature = useMemo(
     () =>
@@ -53,6 +57,7 @@ export function useFrameAdmission(
   const [admitted, setAdmitted] = useState<ReadonlySet<string>>(new Set())
   const started = useRef(new Set<string>())
   const startedBrowsers = useRef(new Set<string>())
+  const overviewResidents = useRef(new Set<string>())
   const booting = useRef(new Map<string, number>())
   const lastSeen = useRef(new Map<string, number>())
   const outsideBudget = useRef(new Map<string, number>())
@@ -90,6 +95,7 @@ export function useFrameAdmission(
     if (!el) return
     const ids = started.current
     const browsers = startedBrowsers.current
+    const residents = overviewResidents.current
     const boots = booting.current
     const seen = lastSeen.current
     const outside = outsideBudget.current
@@ -112,6 +118,7 @@ export function useFrameAdmission(
     const watches = new Map<string, () => void>()
     const nearBrowsers = new Set<string>()
     for (const id of seen.keys()) if (!htmlSizes.has(id)) seen.delete(id)
+    for (const id of residents) if (!htmlSizes.has(id)) residents.delete(id)
     let ranked: ReturnType<typeof rankFrameCandidates> = []
     let visiblePixels = new Map<string, number>()
     let dirty = true
@@ -232,12 +239,18 @@ export function useFrameAdmission(
       ]) {
         if (id && htmlSizes.has(id)) protectedIds.add(id)
       }
-      const forced = reserveFrameSlots(protectedIds, ids, presenting)
+      const retained = liveOverview ? [...ids].filter((id) => residents.has(id)) : []
+      const required = new Set([...protectedIds, ...retained])
+      if (liveOverview) {
+        for (const frame of ranked) if (frame.visible) required.add(frame.id)
+      }
+      const budget = liveOverview ? Math.max(LIVE_FRAME_BUDGET, required.size) : LIVE_FRAME_BUDGET
+      const forced = reserveFrameSlots(new Set([...protectedIds, ...retained]), ids, presenting, budget)
       for (const [id, until] of leases) {
         if (until <= now || !htmlSizes.has(id)) leases.delete(id)
-        else if (forced.size < LIVE_FRAME_BUDGET) forced.add(id)
+        else if (forced.size < budget) forced.add(id)
       }
-      return { protectedIds, forced }
+      return { protectedIds, forced, budget }
     }
 
     function applyAnimations(protectedIds: ReadonlySet<string>) {
@@ -321,6 +334,19 @@ export function useFrameAdmission(
       if (dirty && !moving) {
         ranked = measure(warming)
         visiblePixels = new Map(ranked.map(({ id, visiblePixelRatio }) => [id, visiblePixelRatio]))
+        if (liveOverview && useStore.getState().viewport.zoom <= FRAME_OVERVIEW_MAX_ZOOM) {
+          // Preserve documents seen in a wide overview through a close-up.
+          // Admit visible documents in batches, keeping offscreen retention bounded.
+          for (const { id, visible } of ranked) {
+            if (!visible) break
+            residents.delete(id)
+            residents.add(id)
+          }
+          for (const id of residents) {
+            if (residents.size <= RETAINED_OVERVIEW_LIMIT) break
+            residents.delete(id)
+          }
+        }
         dirty = false
       }
       let changed = false
@@ -330,14 +356,14 @@ export function useFrameAdmission(
         seen.delete(id)
         changed = true
       }
-      const { protectedIds, forced } = protectedFrames(now)
+      const { protectedIds, forced, budget } = protectedFrames(now)
       let expiry = Math.min(Infinity, ...leases.values())
       const browserChanged = admitBrowsers()
       const overview = limitOverview && useStore.getState().viewport.zoom <= FRAME_OVERVIEW_MAX_ZOOM
       // Keep mounted documents in overview to preserve their state, but
       // reserve new live slots for active work and explicit requests only.
       const admitIdleFrames = !moving && !overview
-      const desired = admitIdleFrames ? planFrameAdmission(ranked, ids, forced, warming, now) : forced
+      const desired = admitIdleFrames ? planFrameAdmission(ranked, ids, forced, warming, now, budget) : forced
       if (admitIdleFrames) {
         for (const frame of ranked) {
           const { id, visible } = frame
@@ -360,7 +386,7 @@ export function useFrameAdmission(
         }
       }
       const required = [...forced].filter((id) => !ids.has(id)).length
-      if (ids.size + required > LIVE_FRAME_BUDGET) {
+      if (ids.size + required > budget) {
         const priority = new Map(ranked.map(({ id }, rank) => [id, rank]))
         const evictable = [...ids]
           .filter((id) => !forced.has(id))
@@ -369,7 +395,7 @@ export function useFrameAdmission(
               (priority.get(b) ?? Infinity) - (priority.get(a) ?? Infinity) ||
               (seen.get(a) ?? -Infinity) - (seen.get(b) ?? -Infinity),
           )
-        for (const id of evictable.slice(0, ids.size + required - LIVE_FRAME_BUDGET)) {
+        for (const id of evictable.slice(0, ids.size + required - budget)) {
           stop(id)
           changed = true
         }
@@ -384,13 +410,16 @@ export function useFrameAdmission(
       }
       for (const id of forced) changed = start(id, !warming) || changed
       if (admitIdleFrames) {
+        const fillLiveOverview = liveOverview && useStore.getState().viewport.zoom <= FRAME_OVERVIEW_MAX_ZOOM
+        const bootLimit = fillLiveOverview ? LIVE_OVERVIEW_STARTS_PER_BATCH : STARTS_PER_BATCH
+        const htmlLimit = fillLiveOverview ? LIVE_OVERVIEW_PREPARING_HTML_LIMIT : PREPARING_HTML_LIMIT
         let preparing = 0
         for (const id of boots.keys()) preparing += htmlSizes.get(id) ?? 0
         for (const id of desired) {
           if (ids.has(id)) continue
-          if (ids.size >= LIVE_FRAME_BUDGET || (!warming && boots.size >= STARTS_PER_BATCH)) break
+          if (ids.size >= budget || (!warming && boots.size >= bootLimit)) break
           const htmlSize = htmlSizes.get(id) ?? 0
-          if (!warming && preparing > 0 && preparing + htmlSize > PREPARING_HTML_LIMIT) break
+          if (!warming && preparing > 0 && preparing + htmlSize > htmlLimit) break
           changed = start(id, !warming) || changed
           preparing += htmlSize
         }
@@ -482,7 +511,7 @@ export function useFrameAdmission(
       window.clearTimeout(expiryTimer)
       for (const off of watches.values()) off()
     }
-  }, [htmlSizes, browserIds, presenting, limitOverview, stage, layer])
+  }, [htmlSizes, browserIds, presenting, limitOverview, liveOverview, stage, layer])
 
   return { admitted, request, protect }
 }
