@@ -90,6 +90,10 @@ admitted in batches and already loaded documents stay mounted as the camera move
 preserve the frame's theme and render at a density suited to the canvas zoom. While a document
 loads, its surface uses `--sub` (#f7f7f7 light, #242424 dark). Once ready, transparent HTML sits on white
 artboard paper. The floating HTML frame toolbar is temporarily opt-in with `doop:html-frame-toolbar`.
+On macOS Chromium, a previously visible HTML frame returning to view uses
+`--paper-deep` (#f0f0f0 light, #2a2a2a dark) behind the live document until its runtime reports
+two animation callbacks. The existing iframe draws immediately when the browser repaints it. On a wide macOS Chromium
+overview, at most two new visible documents start per animation tick.
 Present opens the interactive prototype player. See `src/components/frameAdmission.ts`,
 `src/components/Stage.tsx` and `src/components/FrameView.tsx`.
 

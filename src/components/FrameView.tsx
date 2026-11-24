@@ -46,6 +46,7 @@ import { sendWs } from '../lib/ws'
 import { throttle } from '../lib/throttle'
 import { getIdentity } from '../lib/identity'
 import { FRAME_BOOTSTRAP } from '../lib/frameRuntime'
+import { observeFrameViewportPaint } from '../lib/frameViewportPaint'
 import { canSnapshotFrame, type FrameSnapshots } from '../lib/frameSnapshots'
 import { MOD_KEY } from '../lib/keys'
 import { isDesktopShell } from '../lib/shell'
@@ -1088,8 +1089,27 @@ export const FrameView = memo(function FrameView({
       localHtml.current = null
       return
     }
-    const sandbox = iframeRef.current?.contentWindow
-    if (!sandbox) return
+    const liveFrame = iframeRef.current
+    const sandbox = liveFrame?.contentWindow
+    if (!liveFrame || !sandbox) return
+    const surface = surfaceRef.current
+    let hasBeenVisible = false
+    let paintRequest = 0
+    const stopObservingPaint =
+      MAC_CHROMIUM_DESKTOP && !standalone && surface
+        ? observeFrameViewportPaint(liveFrame, (visible) => {
+            if (visible) {
+              hasBeenVisible = true
+              if (surface.hasAttribute('data-frame-repainting'))
+                sandbox.postMessage({ type: 'doop:viewport-paint', reqId: ++paintRequest }, '*')
+            } else if (hasBeenVisible) {
+              // Blink can discard offscreen iframe paint while retaining the
+              // document. Change the paper before it can flash on the return.
+              paintRequest++
+              surface.setAttribute('data-frame-repainting', '')
+            }
+          })
+        : undefined
     /* a key pressed while the focus sits in this frame's document: replay
        it on the iframe, where it bubbles to the canvas shortcuts as if the
        page had the focus. Keys arrive over a private port handed to the
@@ -1103,6 +1123,7 @@ export const FrameView = memo(function FrameView({
         | Partial<KeyRelay>
         | { event: 'edited'; html?: unknown; discrete?: boolean }
         | { event: 'settled'; reqId?: unknown }
+        | { event: 'viewport-painted'; reqId?: unknown }
         | Partial<WheelRelay>
         | undefined
       /* Inspector edits arrive while the panel holds focus. Only keys need
@@ -1113,6 +1134,10 @@ export const FrameView = memo(function FrameView({
       }
       if (relay?.event === 'settled') {
         if (typeof relay.reqId === 'number') finishFrameSettle(iframe.contentWindow, relay.reqId)
+        return
+      }
+      if (relay?.event === 'viewport-painted') {
+        if (relay.reqId === paintRequest) surface?.removeAttribute('data-frame-repainting')
         return
       }
       /* replayed on the iframe, the wheel bubbles to the stage, which zooms or pans
@@ -1190,11 +1215,13 @@ export const FrameView = memo(function FrameView({
     }
     const off = onFrameMessage(sandbox, onMsg)
     return () => {
+      stopObservingPaint?.()
+      surface?.removeAttribute('data-frame-repainting')
       off()
       runtimePort.current?.close()
       runtimePort.current = null
     }
-  }, [mountRuntime])
+  }, [mountRuntime, standalone])
   /* the runtime insets its body by the margin once the iframe has grown by it */
   useLayoutEffect(() => {
     if (runtimeReady) iframeRef.current?.contentWindow?.postMessage({ type: 'doop:bleed', px: bleed }, '*')

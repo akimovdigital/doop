@@ -80,6 +80,7 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
   it('keeps overview documents live on macOS CEF and retains their state through a close-up', async () => {
     const page = await pages.open()
     await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 })
+    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }])
     await page.evaluateOnNewDocument(() => {
       Object.defineProperties(window, {
         __DOOP_DESKTOP__: { value: '0.14.0' },
@@ -112,6 +113,7 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
       ],
     })
     await page.waitForFunction(() => document.querySelectorAll('iframe[data-doop-frame]').length === 40)
+    await page.waitForSelector('[data-doop-frame-shell="distant"]')
     expect(await page.$$('[data-frame-snapshot]')).toHaveLength(0)
     expect(await page.$('[data-doop-frame-shell="distant"] iframe')).toBeNull()
 
@@ -143,7 +145,21 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
     // The prior admission timer evicted offscreen iframes after two seconds.
     await new Promise((resolve) => setTimeout(resolve, 2_100))
     expect(await iframe.evaluate((node) => node.isConnected && node.getBoundingClientRect().right < 0)).toBe(true)
-    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 100, y: 100, zoom: 0.04 }))
+    const paper = () =>
+      iframe.evaluate((node) => getComputedStyle(node.closest('[data-frame-surface]')!, '::before').backgroundColor)
+    expect(await paper()).toBe('rgb(240, 240, 240)')
+    expect(
+      await iframe.evaluate((node) => {
+        window.canvasPageHarness.setCamera({ x: 100, y: 100, zoom: 0.04 })
+        return getComputedStyle(node.closest('[data-frame-surface]')!, '::before').backgroundColor
+      }),
+    ).toBe('rgb(240, 240, 240)')
+    await page.waitForFunction(
+      (frame) =>
+        getComputedStyle(frame.closest('[data-frame-surface]')!, '::before').backgroundColor === 'rgb(255, 255, 255)',
+      {},
+      iframe,
+    )
     await page.waitForFunction(
       () =>
         !document.querySelector('[data-frame-camera-moving]') &&
