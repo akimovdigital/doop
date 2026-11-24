@@ -1,12 +1,15 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { arch, homedir, loadavg, release, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { parseArgs } from 'node:util'
 import {
+  completedSample,
   defaultDuration,
   realReadyTimeout,
   scenarios,
   windowSize,
+  type RunSample,
   type Sample,
   type Scenario,
   type SceneIdentity,
@@ -20,6 +23,7 @@ import {
   rejectionReasons,
   verdict,
 } from '../../tests/perf/judgment'
+import { analyzeCapture } from './flicker'
 import { startEngine, type Driver, type Engine } from './engines'
 import { loadScene, serve, siteFrom, vmStat } from './site'
 
@@ -33,11 +37,15 @@ function options() {
       scenario: { type: 'string', default: 'all' },
       frames: { type: 'string', default: '68' },
       pairs: { type: 'string', default: '5' },
-      duration: { type: 'string', default: String(defaultDuration) },
+      duration: { type: 'string' },
       scene: { type: 'string' },
+      'capture-frames': { type: 'string' },
+      'webcontent-trace': { type: 'boolean' },
+      'render-mode': { type: 'string', default: 'baseline' },
       'diagnose-snapshots': { type: 'boolean' },
       'max-swapouts': { type: 'string', default: '0' },
       'max-swapins': { type: 'string', default: '256' },
+      'max-load': { type: 'string' },
       site: { type: 'string' },
       base: { type: 'string' },
       candidate: { type: 'string' },
@@ -51,11 +59,12 @@ function options() {
   })
   if (values.help) {
     console.log(
-      'bun run bench:canvas [--engine webkit|chromium|both] [--scenario pan|zoom|zoom-wide|drag1|drag10|open|fly-over|all]\n' +
+      `bun run bench:canvas [--engine webkit|chromium|both] [--scenario ${scenarios.join('|')}|all]\n` +
         '  [--frames 20|68|200 | --scene canvas.json] [--pairs N] [--duration ms] [--out dir]\n' +
-        '  [--max-swapins pages] [--max-swapouts pages]\n' +
+        '  [--max-swapins pages] [--max-swapouts pages] [--max-load load1]\n' +
         '  [--site dir | --base worktree-or-site --candidate worktree-or-site] [--noise result.json]\n' +
         '  [--headed] [--hud] [--screenshot path.png] [--diagnose-snapshots]\n' +
+        '  [--capture-frames label] [--webcontent-trace] [--render-mode baseline|no-snapshots|no-settle|paused-animations|no-animations|no-filters|no-effects]\n' +
         '  fly-over requires a generated scene',
     )
     return null
@@ -70,9 +79,45 @@ function options() {
   if (engine !== 'webkit' && engine !== 'chromium' && engine !== 'both')
     throw new Error('Expected --engine webkit, chromium or both')
   const requestedScenarios = values.scenario.split(',')
-  const selectedScenarios = scenarios.filter((item) => requestedScenarios.includes(item))
-  if (selectedScenarios.length !== requestedScenarios.length && values.scenario !== 'all')
+  const selectedScenarios = scenarios.filter((item) =>
+    values.scenario === 'all'
+      ? item !== 'scroll' && item !== 'zoom-out-wide' && (!values.scene || item !== 'fly-over')
+      : requestedScenarios.includes(item),
+  )
+  if (values.scenario !== 'all' && selectedScenarios.length !== requestedScenarios.length)
     throw new Error('Unknown --scenario')
+  const wideOut = selectedScenarios.includes('zoom-out-wide')
+  if (wideOut && (!values.scene || engine !== 'webkit'))
+    throw new Error('--scenario zoom-out-wide requires --scene and --engine webkit')
+  const label = values['capture-frames']
+  if (
+    label &&
+    (!/^[a-zA-Z0-9_-]+$/.test(label) ||
+      !['pan', 'scroll', 'zoom'].includes(values.scenario) ||
+      values.base ||
+      values.candidate ||
+      values.hud)
+  ) {
+    throw new Error('--capture-frames requires a simple label and one pan, scroll or zoom scenario on a single build')
+  }
+  const renderMode = values['render-mode']
+  if (
+    ![
+      'baseline',
+      'no-snapshots',
+      'no-settle',
+      'paused-animations',
+      'no-animations',
+      'no-filters',
+      'no-effects',
+    ].includes(renderMode)
+  )
+    throw new Error('Unknown --render-mode')
+  const webContentTrace = !!values['webcontent-trace']
+  if (engine !== 'webkit' && (label || webContentTrace || renderMode !== 'baseline'))
+    throw new Error('Capture and render diagnostics require --engine webkit')
+  const duration = values.duration === undefined ? undefined : integer('duration', values.duration, 400, 30_000)
+  const captureDuration = values.scenario === 'pan' ? 8_000 : 6_000
   const frames = framePresets.find((count) => count === Number(values.frames))
   if (!frames) throw new Error('Expected --frames 20, 68 or 200')
   if (!!values.base !== !!values.candidate || (values.base && values.site))
@@ -85,21 +130,29 @@ function options() {
     throw new Error('--diagnose-snapshots requires a single build with --scene and --scenario pan')
   return {
     engines: (engine === 'both' ? ['webkit', 'chromium'] : [engine]) as Engine[],
-    scenarios:
-      values.scenario === 'all'
-        ? scenarios.filter((scenario) => !values.scene || scenario !== 'fly-over')
-        : selectedScenarios,
+    scenarios: selectedScenarios,
     frames,
     pairs: integer('pairs', values.pairs, 1, 50),
-    duration: integer('duration', values.duration, 400, 30_000),
+    duration: label ? Math.max(duration ?? defaultDuration, captureDuration) : duration,
+    captureFrames: !!label,
+    webContentTrace,
+    renderMode,
     scene: values.scene ? resolve(values.scene) : undefined,
     diagnoseSnapshots: !!values['diagnose-snapshots'],
     maxSwapouts: integer('max-swapouts', values['max-swapouts'], 0, Number.MAX_SAFE_INTEGER),
     maxSwapins: integer('max-swapins', values['max-swapins'], 0, Number.MAX_SAFE_INTEGER),
+    maxLoad: values['max-load']
+      ? integer('max-load', values['max-load'], 1, 1000)
+      : wideOut
+        ? 12
+        : undefined,
     sourceA: values.base ?? values.site ?? '.',
     sourceB: values.candidate,
     out: resolve(
-      values.out ?? join(outputRoot, `${stamp()}-${engine}-${values.scenario}${values.scene ? '-real' : ''}`),
+      values.out ??
+        (label
+          ? join(outputRoot, 'flicker', `${stamp()}-${label}`)
+          : join(outputRoot, `${stamp()}-${engine}-${values.scenario}${values.scene ? '-real' : ''}`)),
     ),
     headed: !!values.headed,
     hud: !!values.hud,
@@ -109,11 +162,13 @@ function options() {
 }
 
 type Options = NonNullable<ReturnType<typeof options>>
+const scenarioDuration = (scenario: Scenario, duration?: number) =>
+  duration ?? (scenario === 'zoom-out-wide' ? 2000 : defaultDuration)
 type Side = 'A' | 'B'
 type Run = {
   side: Side
-  sample: Sample | null
   load: { before: number[]; after: number[] }
+  sample: RunSample | null
   swapDelta: ReturnType<typeof memoryDelta> | null
   rejected: boolean
   reasons: string[]
@@ -147,9 +202,13 @@ type Result = {
 }
 
 const number = (value: number | null) => (value === null ? '—' : value.toFixed(2))
-const primary = (sample: Sample | null | undefined) => sample?.openMs ?? sample?.frames.p95 ?? null
+const primary = (sample: RunSample | null | undefined) =>
+  sample && completedSample(sample) ? (sample.openMs ?? sample.frames.p95) : null
 const accepted = (series: Series) => series.pairs.filter((pair) => !pair.rejected)
-const bySide = (pair: Pair, side: Side) => pair.runs.find((run) => run.side === side)?.sample
+const bySide = (pair: Pair, side: Side) => {
+  const sample = pair.runs.find((run) => run.side === side)?.sample
+  return sample && completedSample(sample) ? sample : undefined
+}
 function pairDeltas(series: Series) {
   return accepted(series).flatMap((pair) => {
     const a = primary(bySide(pair, 'A'))
@@ -188,7 +247,8 @@ function summary(result: Result) {
             ...result.series.flatMap((series) =>
               series.pairs.flatMap((pair) =>
                 pair.runs.map(({ side, sample, swapDelta, load }) => {
-                  const documents = sample?.live
+                  const completed = sample && completedSample(sample) ? sample : null
+                  const documents = completed?.live
                   const counts = documents
                     ? `${documents.before.ready}/${documents.before.mounted} → ${documents.after.ready}/${documents.after.mounted}`
                     : '—'
@@ -196,8 +256,8 @@ function summary(result: Result) {
                   return (
                     `- ${series.engine} / ${series.scenario} / ${series.kind} / ${side} / ${pair.pair}.${pair.attempt} · ` +
                     `${counts} · ${swap}` +
-                    (sample?.snapshots ? ` · снимки ${sample.snapshots.ready}` : '') +
-                    (sample?.settle ? ` · settle ${number(sample.settle.maxMs)} мс` : '') +
+                    (completed?.snapshots ? ` · снимки ${completed.snapshots.ready}` : '') +
+                    (completed?.settle ? ` · settle ${number(completed.settle.maxMs)} мс` : '') +
                     (load ? ` · load ${load.before.map(number).join('/')} → ${load.after.map(number).join('/')}` : '')
                   )
                 }),
@@ -211,6 +271,23 @@ function summary(result: Result) {
         .map(
           (series) =>
             `- ${series.engine} / ${series.scenario} / ${series.kind} · Δ по парам, мс · ${series.deltas.map(number).join(', ') || '—'}`,
+        ),
+      ...result.series
+        .filter(({ engine }) => engine === 'webkit')
+        .flatMap((series) =>
+          series.pairs.flatMap((pair) =>
+            pair.runs.map(({ side, sample, reasons }) => {
+              const peak = sample?.webContent?.maxFootprintBytes
+              const capture = sample?.capture?.analysis
+              return (
+                `- WebContent / ${series.scenario} / ${series.kind} / ${side} / ${pair.pair}.${pair.attempt} · пик ${peak == null ? '—' : number(peak / 1024 ** 2) + ' МиБ'}` +
+                (capture
+                  ? ` · PNG ${capture.framesDuringGesture}, отмечено ${capture.flagged}, панели ${capture.panelsFlagged}, всё окно ${capture.wholeUiFlagged} · ${capture.sheet}`
+                  : '') +
+                (reasons.length ? ` · ${reasons.join(', ').replaceAll('\n', ' ')}` : '')
+              )
+            }),
+          ),
         ),
       ...result.errors.map((error) => `- Ошибка · ${error.replaceAll('\n', ' ')}`),
     ].join('\n') + '\n'
@@ -256,7 +333,8 @@ async function collect(
   }
   register(series)
   const urls = { A: a, B: b ?? a }
-  const attempts = scene && settings.pairs === 1 ? 1 : 3
+  const duration = scenarioDuration(scenario, settings.duration)
+  const attempts = settings.captureFrames || (scene && settings.pairs === 1) ? 1 : 3
   for (let index = 0; index < settings.pairs; index++) {
     const sides: Side[] = kind === 'single' ? ['A'] : index % 2 ? ['B', 'A'] : ['A', 'B']
     for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -266,30 +344,69 @@ async function collect(
         url.search = new URLSearchParams({
           scenario,
           frames: String(settings.frames),
-          duration: String(settings.duration),
+          duration: String(duration),
           ...(scene ? { scene: 'real' } : {}),
           ...(settings.diagnoseSnapshots ? { diagnoseSnapshots: '1' } : {}),
           ...(settings.hud ? { perfHud: '1' } : {}),
+          ...(settings.captureFrames ? { capture: '1' } : {}),
+          ...(settings.webContentTrace ? { webContentTrace: '1' } : {}),
+          ...(settings.renderMode !== 'baseline' ? { renderMode: settings.renderMode } : {}),
         }).toString()
-        const loadBefore = loadavg()
+        let loadBefore = loadavg()
+        if (settings.maxLoad !== undefined) {
+          while (loadBefore[0]! >= settings.maxLoad) {
+            console.log(`Waiting for 1-min load below ${settings.maxLoad}: ${loadBefore[0]!.toFixed(2)}`)
+            await sleep(15_000)
+            loadBefore = loadavg()
+          }
+          console.log(`${engine} ${scenario} ${kind} ${side} · 1-min load ${loadBefore[0]!.toFixed(2)}`)
+        }
         const load = () => ({ before: loadBefore, after: loadavg() })
         try {
           const readyTimeout = scene ? realReadyTimeout * (scenario === 'open' ? 1 : 2) : 0
-          const timeout = scenario === 'fly-over' ? 150_000 : settings.duration + readyTimeout + 36_000
-          const sample = await driver.run(url, timeout, capture())
+          const timeout = scenario === 'fly-over' ? 150_000 : duration + readyTimeout + 36_000
+          const sample = await driver.run(url, timeout, capture(), {
+            captureDirectory: settings.captureFrames
+              ? join(settings.out, `${scenario}-${index + 1}-${side}`)
+              : undefined,
+            trace: settings.webContentTrace,
+            renderMode: settings.renderMode,
+          })
           const reasons = rejectionReasons(sample, settings.maxSwapins, settings.maxSwapouts)
+          if (settings.captureFrames) {
+            const recording = sample.capture
+            if (recording) {
+              try {
+                recording.analysis = await analyzeCapture(recording)
+              } catch (error) {
+                reasons.push(`Frame capture analysis failed: ${errorText(error)}`)
+              }
+            }
+            if ((recording?.analysis?.framesDuringGesture ?? 0) < 40) reasons.push('Fewer than 40 gesture PNGs')
+          }
           if (settings.diagnoseSnapshots) reasons.push('Snapshot diagnostics enabled')
-          if (scene && (!('sha256' in sample.scene) || sample.scene.sha256 !== scene.sha256)) {
+          const completed = completedSample(sample)
+          if (scene && completed && (!('sha256' in sample.scene) || sample.scene.sha256 !== scene.sha256)) {
             reasons.push('Fixture did not load the requested export; both builds must support --scene')
           }
-          runs.push({ side, load: load(), sample, swapDelta: memoryDelta(sample), rejected: !!reasons.length, reasons })
+          runs.push({
+            side,
+            load: load(),
+            sample,
+            swapDelta: completed ? memoryDelta(sample) : null,
+            rejected: !!reasons.length,
+            reasons,
+          })
         } catch (error) {
           runs.push({ side, load: load(), sample: null, swapDelta: null, rejected: true, reasons: [errorText(error)] })
         }
       }
       const sampleA = runs.find((run) => run.side === 'A')?.sample
       const sampleB = runs.find((run) => run.side === 'B')?.sample
-      const cross = sampleA && sampleB ? pairRejectionReasons(sampleA, sampleB) : []
+      const cross =
+        sampleA && sampleB && completedSample(sampleA) && completedSample(sampleB)
+          ? pairRejectionReasons(sampleA, sampleB)
+          : []
       const reasons = [...runs.flatMap((run) => run.reasons.map((reason) => `${run.side}: ${reason}`)), ...cross]
       const pair = { pair: index + 1, attempt, runs, rejected: !!reasons.length, reasons }
       series.pairs.push(pair)
@@ -360,9 +477,9 @@ async function main() {
         const driver = await startEngine(engine, config.headed, join(temporary, 'chrome'), !!scene)
         try {
           const run = driver.run.bind(driver)
-          driver.run = async (url, timeout, screenshot) => {
-            const sample = await run(url, timeout, screenshot)
-            if (screenshot) result.screenshot = screenshot
+          driver.run = async (url, timeout, screenshot, diagnostics) => {
+            const sample = await run(url, timeout, screenshot, diagnostics)
+            if (screenshot && completedSample(sample)) result.screenshot = screenshot
             return sample
           }
           for (const scenario of config.scenarios) {
@@ -385,7 +502,7 @@ async function main() {
                   (scene
                     ? suppliedNoise.scene?.sha256 !== scene.sha256
                     : !!suppliedNoise.scene || c.frames !== config.frames) ||
-                  c.duration !== config.duration ||
+                  scenarioDuration(scenario, c.duration) !== scenarioDuration(scenario, config.duration) ||
                   c.hud !== config.hud ||
                   c.maxSwapins !== config.maxSwapins ||
                   (c.maxSwapouts ?? 0) !== config.maxSwapouts ||

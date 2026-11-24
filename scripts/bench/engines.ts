@@ -6,16 +6,18 @@ import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import puppeteer, { type Browser } from 'puppeteer-core'
 import { findBrowserPath } from '../../server/screenshot'
-import { windowSize, type Sample } from '../../tests/perf/protocol'
+import { windowSize, type RunSample } from '../../tests/perf/protocol'
 import { exec } from './site'
 
 export type Engine = 'webkit' | 'chromium'
 export interface Driver {
   version: string
   mode: string
-  run(url: URL, timeout: number, screenshot?: string): Promise<Sample>
+  run(url: URL, timeout: number, screenshot?: string, diagnostics?: ProbeOptions): Promise<RunSample>
   close(): Promise<void>
 }
+
+type ProbeOptions = { captureDirectory?: string; trace: boolean; renderMode: string }
 
 async function webkit(): Promise<Driver> {
   if (process.platform !== 'darwin') throw new Error('WKWebView requires macOS')
@@ -51,14 +53,23 @@ async function webkit(): Promise<Driver> {
   return {
     version: `WebKit ${webkitVersion} / macOS ${version}`,
     mode: 'non-activating WKWebView',
-    async run(url, timeout, screenshot) {
+    async run(url, timeout, screenshot, diagnostics) {
       if (screenshot) await mkdir(dirname(screenshot), { recursive: true })
-      const { stdout } = await exec(probe, [url.href, String(timeout / 1000), screenshot ?? ''], {
-        timeout: timeout + 2000,
-      })
-      const result = JSON.parse(stdout) as Sample | { benchError: string }
-      if ('benchError' in result) throw new Error(result.benchError)
-      return result
+      const capture = diagnostics?.captureDirectory
+      if (capture) await mkdir(capture, { recursive: true })
+      const { stdout } = await exec(
+        probe,
+        [
+          url.href,
+          String(timeout / 1000),
+          screenshot ?? '',
+          capture ?? '',
+          diagnostics?.trace ? '1' : '0',
+          diagnostics?.renderMode ?? 'baseline',
+        ],
+        { timeout: timeout + 2000, maxBuffer: 2 * 1024 * 1024 },
+      )
+      return JSON.parse(stdout) as RunSample
     },
     async close() {},
   }

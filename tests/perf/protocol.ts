@@ -3,7 +3,17 @@ import type { intervalStats } from '../../src/perf/metrics'
 import type { liveDocuments } from '../../src/perf/documents'
 import type { FramePreset } from './scene'
 
-export const scenarios = ['pan', 'zoom', 'zoom-wide', 'drag1', 'drag10', 'open', 'fly-over'] as const
+export const scenarios = [
+  'pan',
+  'scroll',
+  'zoom',
+  'zoom-wide',
+  'zoom-out-wide',
+  'drag1',
+  'drag10',
+  'open',
+  'fly-over',
+] as const
 export type Scenario = (typeof scenarios)[number]
 export const windowSize = { width: 1280, height: 800, dpr: 2 }
 export const defaultDuration = 3000
@@ -16,6 +26,12 @@ export const initialCamera = (scenario: Scenario): Viewport => ({
 
 export type Memory = { Swapins: number; Swapouts: number }
 export type Axes = Record<keyof Viewport, [number, number]>
+export type CaptureActivity = {
+  pending: number
+  started: number
+  maxPending: number
+  maxRasterEdge: number
+}
 
 export function cameraRange(points: readonly Viewport[]): Axes {
   const range = (axis: keyof Viewport): [number, number] => {
@@ -59,4 +75,53 @@ export interface Sample {
   snapshotDiagnostics?: { at: number; event: string; data: object }[]
   heapBytes: number | null
   memory: { before: Memory; after: Memory }
+}
+
+export type WebContentFootprint = {
+  points: { atMs: number; pid: number; bytes: number; lifetimePeakBytes: number }[]
+  maxFootprintBytes: number | null
+  samplingError?: string
+  rendererPoints?: {
+    atMs: number
+    receivedAtMs: number
+    phase: string | null
+    camera: Viewport
+    live: Sample['live']['before']
+    layoutZoom: number
+    iframeCssPixels: number
+    readySnapshots: number
+    overview?: boolean
+    captures?: CaptureActivity | null
+    internalsLayerTreeAvailable: boolean
+    hostLayers: { count: number; maxWidth: number; maxHeight: number }
+  }[]
+}
+
+export type CaptureRegion = { x: number; y: number; width: number; height: number }
+export type Capture = {
+  directory: string
+  points: { file: string; atMs: number; receivedAtMs: number }[]
+  regions?: Record<'left' | 'right' | 'stage', CaptureRegion>
+  error?: string
+  analysis?: {
+    flagged: number
+    panelsFlagged: number
+    wholeUiFlagged: number
+    framesDuringGesture: number
+    sheet: string
+    report: string
+  }
+}
+
+type ProbeDiagnostics = { webContent?: WebContentFootprint; capture?: Capture }
+
+export type ProbeFailure = {
+  webContentTermination?: string
+  benchError?: string
+}
+
+export type RunSample = (Sample | ProbeFailure) & ProbeDiagnostics
+
+export function completedSample(sample: RunSample): sample is Sample & ProbeDiagnostics {
+  return 'frames' in sample
 }

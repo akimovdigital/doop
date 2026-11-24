@@ -1,5 +1,5 @@
 import { nearestRank } from '../../src/perf/metrics'
-import { windowSize, type Sample } from './protocol'
+import { completedSample, windowSize, type RunSample, type Sample } from './protocol'
 
 export function median(values: readonly number[]): number | null {
   const lower = nearestRank(values, 50)
@@ -19,8 +19,20 @@ function expectedDocuments(sample: Sample, boundary: string) {
   return Math.min(sample.liveBudget ?? Infinity, count)
 }
 
-export function rejectionReasons(sample: Sample, maxSwapins: number, maxSwapouts = 0): string[] {
+export function rejectionReasons(sample: RunSample, maxSwapins: number, maxSwapouts = 0): string[] {
+  if (!completedSample(sample)) {
+    if (sample.webContentTermination) return [`WebContent killed: ${sample.webContentTermination}`]
+    return [sample.benchError ?? 'Probe returned no benchmark sample']
+  }
   const reasons: string[] = []
+  const memoryScenario = sample.scenario === 'zoom-out-wide'
+  const footprint = sample.webContent?.maxFootprintBytes ?? null
+  if ((memoryScenario || sample.webContent) && footprint === null) {
+    const detail = sample.webContent?.samplingError
+    reasons.push(detail ? `WebContent footprint unavailable: ${detail}` : 'WebContent footprint unavailable')
+  }
+  if (memoryScenario && footprint !== null && footprint >= 3_000_000_000)
+    reasons.push(`WebContent footprint ${footprint} bytes reached the 3 GB limit`)
   const swap = memoryDelta(sample)
   if (swap.Swapouts > maxSwapouts) reasons.push(`Swapouts grew by ${swap.Swapouts} pages`)
   if (swap.Swapins > maxSwapins) reasons.push(`Swapins grew by ${swap.Swapins} pages (limit ${maxSwapins})`)
@@ -62,7 +74,7 @@ export function rejectionReasons(sample: Sample, maxSwapins: number, maxSwapouts
     reasons.push('Dragged frames did not reach the planned endpoint')
   if (sample.inputEvents !== sample.plannedInputs) reasons.push('Input count differs from script')
   if (sample.openMs === null && sample.frames.intervals < 10) reasons.push('Too few rAF intervals')
-  if (sample.cameraSteps < 2 && ['pan', 'zoom', 'zoom-wide'].includes(sample.scenario))
+  if (sample.cameraSteps < 2 && ['pan', 'scroll', 'zoom', 'zoom-wide', 'zoom-out-wide'].includes(sample.scenario))
     reasons.push('Too few camera updates')
   return reasons
 }

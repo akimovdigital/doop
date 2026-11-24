@@ -6,6 +6,7 @@ import {
   onFrameDocument,
   setFrameAnimationsPaused,
 } from '../lib/frameBridge'
+import { FRAME_OVERVIEW_MAX_ZOOM } from '../lib/frameSnapshots'
 import { currentPageSpatialIndex } from '../lib/pages'
 import { presentStartFrame } from '../lib/present'
 import { useStore } from '../lib/store'
@@ -36,6 +37,7 @@ export function useFrameAdmission(
   stage: RefObject<HTMLDivElement | null>,
   layer: RefObject<HTMLDivElement | null>,
   presenting: boolean,
+  limitOverview = false,
 ) {
   const signature = useMemo(
     () =>
@@ -99,6 +101,7 @@ export function useFrameAdmission(
     const size = [...htmlSizes.values()].reduce((total, length) => total + length, 0)
     const count = htmlSizes.size + browserIds.size
     const warmSmallPage =
+      !limitOverview &&
       count <= EAGER_FRAME_LIMIT &&
       size <= SMALL_PAGE_HTML_LIMIT &&
       (size <= EAGER_HTML_LIMIT || count <= SMALL_PAGE_FRAME_LIMIT)
@@ -312,8 +315,12 @@ export function useFrameAdmission(
       const { protectedIds, forced } = protectedFrames(now)
       let expiry = Math.min(Infinity, ...leases.values())
       const browserChanged = admitBrowsers()
-      const desired = moving ? forced : planFrameAdmission(ranked, ids, forced, warming, now)
-      if (!moving) {
+      const overview = limitOverview && useStore.getState().viewport.zoom <= FRAME_OVERVIEW_MAX_ZOOM
+      // Keep mounted documents in overview to preserve their state, but
+      // reserve new live slots for active work and explicit requests only.
+      const admitIdleFrames = !moving && !overview
+      const desired = admitIdleFrames ? planFrameAdmission(ranked, ids, forced, warming, now) : forced
+      if (admitIdleFrames) {
         for (const frame of ranked) {
           const { id, visible } = frame
           if (!ids.has(id)) continue
@@ -358,7 +365,7 @@ export function useFrameAdmission(
         return
       }
       for (const id of forced) changed = start(id, !warming) || changed
-      if (!moving) {
+      if (admitIdleFrames) {
         let preparing = 0
         for (const id of boots.keys()) preparing += htmlSizes.get(id) ?? 0
         for (const id of desired) {
@@ -456,7 +463,7 @@ export function useFrameAdmission(
       window.clearTimeout(expiryTimer)
       for (const off of watches.values()) off()
     }
-  }, [htmlSizes, browserIds, presenting, stage, layer])
+  }, [htmlSizes, browserIds, presenting, limitOverview, stage, layer])
 
   return { admitted, request, protect }
 }

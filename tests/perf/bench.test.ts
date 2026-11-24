@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { regionWentFlat } from '../../scripts/bench/flicker'
 import { loadPerfHud } from '../../src/perf/hudFlag'
 import { frameIntervals, intervalStats, nearestRank } from '../../src/perf/metrics'
 import { trajectory } from './gesture'
@@ -40,6 +41,65 @@ describe('canvas benchmark', () => {
         95,
       ),
     ).toBe(19)
+  })
+
+  it('identifies loss of panel detail without flagging ordinary luma changes', () => {
+    const baseline = { meanLuma: 40, background: 0.93 }
+    expect(regionWentFlat(baseline, { meanLuma: 255, background: 1 })).toBe(true)
+    expect(regionWentFlat(baseline, { meanLuma: 31, background: 0.999 })).toBe(true)
+    expect(regionWentFlat(baseline, { meanLuma: 49, background: 0.93 })).toBe(false)
+    const emptyStage = { meanLuma: 27, background: 1 }
+    expect(regionWentFlat(emptyStage, emptyStage)).toBe(false)
+  })
+
+  it('drives horizontal pan and vertical scroll separately in capture mode', () => {
+    const camera = initialCamera('pan')
+    const pivot = { x: 600, y: 400 }
+    expect(trajectory('pan', 8000, camera, pivot, true).expected).toEqual({
+      x: [camera.x - 120, camera.x],
+      y: [camera.y, camera.y],
+      zoom: [camera.zoom, camera.zoom],
+    })
+    expect(trajectory('scroll', 6000, camera, pivot).expected).toEqual({
+      x: [camera.x, camera.x],
+      y: [camera.y - 80, camera.y],
+      zoom: [camera.zoom, camera.zoom],
+    })
+  })
+
+  it('rejects a WebContent memory kill without requiring gesture metrics', () => {
+    expect(
+      rejectionReasons(
+        {
+          webContentTermination: 'ExceededMemoryLimit',
+          webContent: { points: [], maxFootprintBytes: null },
+        },
+        256,
+      ),
+    ).toEqual(['WebContent killed: ExceededMemoryLimit'])
+    expect(rejectionReasons({ webContentTermination: 'Unknown' }, 256)).toEqual(['WebContent killed: Unknown'])
+    expect(rejectionReasons({ benchError: 'fixture timed out' }, 256)).toEqual(['fixture timed out'])
+    expect(
+      rejectionReasons(
+        {
+          ...trial(),
+          webContent: { points: [], maxFootprintBytes: null, samplingError: 'PID unavailable' },
+        },
+        256,
+      ),
+    ).toEqual(['WebContent footprint unavailable: PID unavailable'])
+  })
+
+  it('requires a sampled WebContent peak below 3 GB for the wide zoom-out', () => {
+    const sample = { ...trial(), scenario: 'zoom-out-wide' as const }
+    expect(rejectionReasons(sample, 256)).toEqual(['WebContent footprint unavailable'])
+    const webContent = { points: [], maxFootprintBytes: 3_000_000_000 }
+    expect(rejectionReasons({ ...sample, webContent }, 256)).toEqual([
+      'WebContent footprint 3000000000 bytes reached the 3 GB limit',
+    ])
+    expect(
+      rejectionReasons({ ...sample, webContent: { ...webContent, maxFootprintBytes: 2_999_999_999 } }, 256),
+    ).toEqual([])
   })
 
   it('rejects swap noise, wrong camera trajectory and changed live counts', () => {
@@ -130,6 +190,12 @@ describe('canvas benchmark', () => {
     expect(zoom.expectedFinal.zoom).toBe(0.055)
     const wide = trajectory('zoom-wide', 3000, initialCamera('zoom-wide'), { x: 680, y: 420 })
     expect(wide.expected.zoom[1]).toBeCloseTo(0.6)
+    const out = trajectory('zoom-out-wide', 2000, { x: 30, y: 105, zoom: 0.57 }, { x: 30, y: 105 })
+    expect(out.zoomDelta).toBeLessThan(0)
+    expect(out.expected.zoom[0]).toBeCloseTo(0.015)
+    expect(out.expected.zoom[1]).toBe(0.57)
+    expect(out.expectedFinal).toMatchObject({ x: 30, y: 105 })
+    expect(out.points.at(-1)).toEqual({ at: 2000, position: 1 })
   })
 
   it('generates deterministic local documents and only two animations per scene', () => {

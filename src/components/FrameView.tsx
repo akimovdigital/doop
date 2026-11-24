@@ -382,6 +382,7 @@ export const FrameView = memo(function FrameView({
   stack,
   loadDocument = true,
   snapshots,
+  overview = false,
   compactSectionTitles = false,
   requestDocument,
   protectDocument,
@@ -394,6 +395,7 @@ export const FrameView = memo(function FrameView({
   stack?: number
   loadDocument?: boolean
   snapshots?: FrameSnapshots
+  overview?: boolean
   compactSectionTitles?: boolean
   requestDocument?: (frameId: string) => void
   protectDocument?: (frameId: string, active: boolean) => void
@@ -2439,8 +2441,7 @@ export const FrameView = memo(function FrameView({
                 changing={editing || !!stream || !!remoteEditor || !!pageMode || !!pathEdit}
                 blocked={
                   !!bleed ||
-                  !mountRuntime ||
-                  runtimeDocument?.html !== frame.html ||
+                  (runtimeDocument ? runtimeDocument.html !== frame.html : !overview) ||
                   !canSnapshotFrame(frame, {
                     selected,
                     editing: editing || suspendPost || !!remoteEditor,
