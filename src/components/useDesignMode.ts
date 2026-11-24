@@ -316,10 +316,25 @@ export function useDesignMode({
     if (win && frame && frame.id === note.frameId) return captureDesignCrop(win, frame, note)
   }
 
-  function draftToChat(value: Draft) {
+  function draftToChat(value: Draft, stayInDesignMode = false) {
     if (!frame || !allowed || savingRegion.current) return
     stopActiveDictation()
     const note = asNote({ ...value, id: undefined }, value.comment.trim())
+    function appendContext() {
+      const store = useStore.getState()
+      const previous = store.composerDrafts[canvasId!]
+      const text = [previous?.text, note.comment].filter(Boolean).join('\n\n')
+      store.setComposerDraft(canvasId!, text, [...(previous?.contexts ?? []), ...noteContexts(note)])
+    }
+    const target = { scope: scopeOf(note), label: note.elements[0]?.label }
+    if (stayInDesignMode) {
+      void capture(note)
+      appendContext()
+      clearHover()
+      closeDraft()
+      onDraft(target)
+      return
+    }
     const win = getWindow()
     const sequence = ++pickSequence.current
     const captureReady = capture(note)
@@ -328,10 +343,7 @@ export function useDesignMode({
         void discardDesignCrop(note.id)
         return
       }
-      const store = useStore.getState()
-      const previous = store.composerDrafts[canvasId!]
-      const text = [previous?.text, note.comment].filter(Boolean).join('\n\n')
-      store.setComposerDraft(canvasId!, text, [...(previous?.contexts ?? []), ...noteContexts(note)])
+      appendContext()
       if (
         value.id &&
         value.textEdit &&
@@ -339,7 +351,7 @@ export function useDesignMode({
       )
         deleteNote(value.id)
       exit()
-      onDraft({ scope: scopeOf(note), label: note.elements[0]?.label })
+      onDraft(target)
     }
     // Exiting a browser frame replaces its proxy iframe. Wait for its live capture inputs.
     if (source === 'browser' && captureReady) void captureReady.then(openChat)
@@ -478,7 +490,8 @@ export function useDesignMode({
   }, [allowed, screenKey, documentRevision, pageUrl, getWindow, pageNotes, enabled, draft])
 
   async function pick(at: DesignPoint, shift: boolean, alt: boolean) {
-    const seq = ++pickSequence.current
+    // Option-clicks append independently. Leaving the mode or changing the screen still cancels pending picks.
+    const seq = alt ? pickSequence.current : ++pickSequence.current
     const previous = point.current
     const selected = previous && Math.hypot(at.x - previous.x, at.y - previous.y) < 3 ? hover : null
     const hit = selected ?? (await ask<Target>('doop:hover', at))
@@ -486,7 +499,7 @@ export function useDesignMode({
     const detail = await ask<Details>('doop:select', { selector: hit.selector, ...at })
     if (!detail || pickSequence.current !== seq) return
     const element = { ...detail, label: label(detail), htmlExcerpt: noteHtml(detail) }
-    if (alt) return draftToChat({ elements: [element], comment: '' })
+    if (alt) return draftToChat({ elements: [element], comment: '' }, true)
     closeCssInspector()
     setDraft((current) => {
       if (shift && current && !current.region && !current.textEdit && !current.cssEdits?.length) {
