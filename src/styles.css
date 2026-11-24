@@ -1518,6 +1518,11 @@ body[data-panel-resizing] * {
   transform: scale(calc(1 / var(--cef-frame-density)));
 }
 
+/* The live iframe draws over this paper as soon as Chromium repaints it. */
+[data-frame-repainting]::before {
+  background-color: var(--paper-deep);
+}
+
 [data-html-browser-chrome] {
   --browser-bar-min: 244px;
 }

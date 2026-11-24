@@ -686,6 +686,7 @@ export function frameRuntime(browse?: { token: string; url: string }) {
   var readMessagePorts = getter(MessageEvent.prototype, 'ports')
   var stopMessage = Event.prototype.stopImmediatePropagation
   var portSend = MessagePort.prototype.postMessage
+  var nextPaint = window.requestAnimationFrame
   var apply = Reflect.apply
   function getter(proto, name) {
     var d = Object.getOwnPropertyDescriptor(proto, name)
@@ -2326,6 +2327,15 @@ export function frameRuntime(browse?: { token: string; url: string }) {
     }
     if (d.type === 'doop:root-fill') {
       parent.postMessage({ type: 'doop:root-fill-result', reqId: d.reqId, fill: rootFill() }, '*')
+    }
+    if (!browse && d.type === 'doop:viewport-paint' && runtimePort && typeof d.reqId === 'number') {
+      // A retained document may be render-throttled until it enters the
+      // viewport. Leave a child paint between the two callbacks.
+      apply(nextPaint, window, [function () {
+        apply(nextPaint, window, [function () {
+          apply(portSend, runtimePort, [{ event: 'viewport-painted', reqId: d.reqId }])
+        }])
+      }])
     }
     if (!browse && d.type === 'doop:pause-animations') setFrameAnimationPolicy(d.policy ?? null)
     if (d.type === 'doop:outlines') setOutlines(d.on === true)
