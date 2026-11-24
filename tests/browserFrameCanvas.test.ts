@@ -200,6 +200,9 @@ describe.skipIf(!findBrowserPath())('live browser on the canvas', { timeout: 30_
     await child!.evaluate(() => window.scrollTo(0, 400))
     await page.mouse.click(center.x, center.y, { count: 2 })
     await page.waitForSelector(PRESENT, { visible: true })
+    expect(
+      await page.$eval(PRESENT, (surface) => getComputedStyle(surface, '::backdrop').backgroundColor),
+    ).not.toBe('rgba(0, 0, 0, 0)')
     await page.keyboard.press('Escape')
     await page.waitForSelector(PRESENT, { hidden: true })
     expect(await element!.evaluate((iframe) => iframe.isConnected)).toBe(true)
@@ -209,6 +212,9 @@ describe.skipIf(!findBrowserPath())('live browser on the canvas', { timeout: 30_
     await clickButton(BAR, 'Open browser in side panel')
     await page.waitForSelector(SIDE, { visible: true })
     expect(await page.$eval(SIDE, (surface) => surface.getBoundingClientRect().right)).toBe(1440)
+    expect(await page.$eval(SIDE, (surface) => getComputedStyle(surface, '::backdrop').backgroundColor)).toBe(
+      'rgba(0, 0, 0, 0)',
+    )
     await clickButton(SIDE, 'Close browser')
     await page.waitForSelector(SIDE, { hidden: true })
     expect(await child!.evaluate(() => window.scrollY)).toBe(400)

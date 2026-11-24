@@ -1442,7 +1442,7 @@ body[data-panel-resizing] * {
   }
 }
 
-.browser-surface::backdrop {
+.browser-surface:modal::backdrop {
   background: var(--paper);
 }
 

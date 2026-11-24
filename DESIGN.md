@@ -118,6 +118,10 @@ space permits, a panel radius, an edge and `shadow-pop`. The 150 ms ease-out res
 reduced-motion preference. The site and its overlays share a separately measured, clipped viewport
 inside the window. Standalone preview keeps the same bar layout with its editor actions hidden. Full-window toolbars reserve 76 px on the left when macOS overlays the window controls.
 
+The resizable Preview on the right leaves the editor, Layers and Agents visible in the remaining
+space. Browser frames offer it from the Browser controls. The HTML frame toolbar offers it when
+the experimental toolbar is enabled. Full-window Browser Present uses a solid paper backdrop.
+
 ## Development performance HUD
 
 The opt-in HUD sits in the lower-right corner above the canvas toolbar and moves below the top chrome on narrow windows. It uses the surface, ink, line, panel-radius and caption tokens with tabular mono figures. It does not capture pointer input. Its styles load with the development HUD and do not ship in the production entry.
