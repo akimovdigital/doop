@@ -58,7 +58,7 @@ describe('snapshot capture queue', () => {
     vi.mocked(rasterizeFrame).mockReset()
   })
 
-  function queue() {
+  function queue(zoom = 1, useOverview = false) {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
     vi.stubGlobal('requestIdleCallback', undefined)
     const stage = document.createElement('div')
@@ -67,7 +67,9 @@ describe('snapshot capture queue', () => {
       clientHeight: { value: 800 },
     })
     const snapshots = new FrameSnapshots()
-    const stop = snapshots.connect(document.createElement('div'), stage, () => ({ x: 0, y: 0, zoom: 1 }))
+    const layer = document.createElement('div')
+    if (useOverview) layer.setAttribute('data-frame-overview', '')
+    const stop = snapshots.connect(layer, stage, () => ({ x: 0, y: 0, zoom }), useOverview)
     snapshots.update({ ...frame, x: 0, y: 0 } as Frame, new Image(), false)
     function move(moving: boolean) {
       stage.toggleAttribute('data-frame-camera-moving', moving)
@@ -75,6 +77,41 @@ describe('snapshot capture queue', () => {
     }
     return { snapshots, stage, move, stop }
   }
+
+  it('prepares another overview frame while an earlier resource is still loading', async () => {
+    const raster = vi.mocked(rasterizeFrame).mockImplementation(
+      (_frame, { signal }) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        }),
+    )
+    const { snapshots, move, stop } = queue(0.02, true)
+    try {
+      for (let i = 0; i < 4; i++) {
+        snapshots.update({ ...frame, id: `overview-${i}`, x: i * 800, y: 0 } as Frame, new Image(), false)
+      }
+      await vi.advanceTimersByTimeAsync(80)
+      expect(raster).toHaveBeenCalledTimes(3)
+      expect(new Set(raster.mock.calls.map(([frame]) => frame.id)).size).toBe(3)
+      move(true)
+      await vi.advanceTimersByTimeAsync(80)
+      expect(raster.mock.calls.every(([, { signal }]) => signal?.aborted)).toBe(true)
+      expect(raster).toHaveBeenCalledTimes(3)
+    } finally {
+      stop()
+    }
+  })
+
+  it('starts with a reusable thumbnail when a heavy page opens zoomed in', async () => {
+    const raster = vi.mocked(rasterizeFrame).mockRejectedValue(new Error('capture failed'))
+    const { stop } = queue(0.13, true)
+    try {
+      await vi.advanceTimersByTimeAsync(20)
+      expect(raster.mock.calls[0]?.[1].scale).toBe(0.125)
+    } finally {
+      stop()
+    }
+  })
 
   it('retries at increasing intervals, waits for camera idle, and caps attempts', async () => {
     const raster = vi.mocked(rasterizeFrame).mockRejectedValue(new Error('capture failed'))
