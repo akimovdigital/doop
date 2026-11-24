@@ -1885,8 +1885,8 @@ function FrameStack({
     }
     settleOverview()
     if (!limitOverview) return
-    // Removing live iframe layers while the camera crosses the overview
-    // threshold repeatedly makes Chromium rebuild the layer tree mid-gesture.
+    // Keep the overview policy stable during threshold crossings. The
+    // snapshot layer still updates sharpness at the current camera zoom.
     const motion = new MutationObserver(() => {
       if (!target.hasAttribute('data-frame-camera-moving')) settleOverview()
     })
@@ -1901,7 +1901,6 @@ function FrameStack({
       className="absolute top-0 left-0 isolate"
       data-live-frame-budget={LIVE_FRAME_BUDGET}
       data-animating-frame-budget={ANIMATING_FRAME_BUDGET}
-      data-frame-overview-capable={heavyPage && FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY ? '' : undefined}
       data-frame-snapshots-disabled={snapshotsDisabled ? '' : undefined}
     >
       {mounted.map((f) =>

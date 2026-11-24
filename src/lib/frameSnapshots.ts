@@ -75,14 +75,33 @@ export function canSnapshotFrame(
   )
 }
 
+/** Keep a decoded preview above the iframe for a rendering opportunity after its HTML ACK. */
+export function holdSnapshotForPaint(image: HTMLImageElement) {
+  if (!image.matches('[data-frame-snapshot-ready][data-frame-snapshot-waiting]')) return
+  if (image.closest('[data-frame-snapshots-disabled]')) return
+  image.setAttribute('data-frame-snapshot-handoff', '')
+  const release = () => {
+    window.cancelAnimationFrame(frame)
+    image.removeAttribute('data-frame-snapshot-handoff')
+  }
+  let frame = window.requestAnimationFrame(() => {
+    frame = window.requestAnimationFrame(release)
+  })
+  return release
+}
+
 const NEAR_PX = 180
 export const FRAME_SNAPSHOT_TINY_PX = 160
 export const FRAME_OVERVIEW_MAX_ZOOM = 0.06
 export const FRAME_CAMERA_SETTLE_MS = 220
 const MIN_BITMAP_DENSITY = 0.125
+const MIN_OVERVIEW_DENSITY = 1 / 32
 const THUMBNAIL_CACHE_BYTES = 32 * 1024 * 1024
 const OVERVIEW_CAPTURE_LIMIT = 3
 const FIRST_OVERVIEW_RESOURCE_MS = 60
+const FIRST_OVERVIEW_FRAME_WINDOW_MS = 4000
+const CAPTURE_INTERVAL_MS = 16
+const CAPTURE_TURN_FALLBACK_MS = 32
 const MAX_BITMAP_EDGE = 8192
 const MAX_BITMAP_PIXELS = 2_400_000
 const CAPTURE_TIMEOUT_MS = 4000
@@ -98,6 +117,7 @@ type Slot = {
   retryAt: number
   near: boolean
   captured: boolean
+  captureStarted: boolean
   thumbnail?: Snapshot
   detail?: Snapshot
   displayed?: Snapshot
@@ -111,12 +131,12 @@ function resetAttempts(slot: Slot) {
   slot.requestedDensity = 0
 }
 
-function snapshotDensity(frame: Frame, zoom: number, dpr: number) {
+function snapshotDensity(frame: Frame, zoom: number, dpr: number, minimum = MIN_BITMAP_DENSITY) {
   // The next bucket supplies headroom for small zoom gestures without
   // repeatedly rasterizing the same document.
   const desired = 2 ** Math.ceil(Math.log2(zoom * dpr * 1.25))
   return Math.min(
-    Math.max(MIN_BITMAP_DENSITY, desired),
+    Math.max(minimum, desired),
     MAX_BITMAP_EDGE / Math.max(frame.width, frame.height),
     Math.sqrt(MAX_BITMAP_PIXELS / (frame.width * frame.height)),
   )
@@ -147,13 +167,35 @@ function decodeSnapshot(url: string, signal: AbortSignal): Promise<HTMLImageElem
   })
 }
 
-function onIdle(run: () => void): () => void {
-  if (typeof window.requestIdleCallback === 'function') {
-    const id = window.requestIdleCallback(run)
-    return () => window.cancelIdleCallback(id)
+function onCaptureTurn(run: () => void, waitingForFrame: boolean): () => void {
+  const canIdle = !waitingForFrame && typeof window.requestIdleCallback === 'function'
+  const earliest = performance.now() + CAPTURE_INTERVAL_MS
+  let idle: number | undefined
+  let timer = window.setTimeout(finish, canIdle || waitingForFrame ? CAPTURE_TURN_FALLBACK_MS : CAPTURE_INTERVAL_MS)
+
+  function cancel() {
+    window.clearTimeout(timer)
+    if (idle !== undefined) window.cancelIdleCallback(idle)
   }
-  const id = window.setTimeout(run, 16)
-  return () => window.clearTimeout(id)
+
+  function finish() {
+    cancel()
+    run()
+  }
+
+  if (canIdle) {
+    // A busy renderer can stop granting idle time even while timers still run.
+    idle = window.requestIdleCallback(() => {
+      idle = undefined
+      const wait = earliest - performance.now()
+      if (wait <= 0) finish()
+      else {
+        window.clearTimeout(timer)
+        timer = window.setTimeout(finish, Math.ceil(wait))
+      }
+    })
+  }
+  return cancel
 }
 
 /** One producer per mounted page. The DOM attributes change independently of React. */
@@ -162,8 +204,12 @@ export class FrameSnapshots {
   private readonly thumbnails = new FrameSnapshotCache(THUMBNAIL_CACHE_BYTES)
   private readonly slots = new Map<string, Slot>()
   private readonly ready = new Set<Slot>()
-  private cancelIdle: (() => void) | undefined
+  private cancelCaptureTurn: (() => void) | undefined
   private retryTimer: number | undefined
+  private firstOverviewUntil: number | undefined
+  private overviewFrame: number | undefined
+  private overviewDeadline: number | undefined
+  private firstOverviewPending = 0
   private readonly pending = new Map<Slot, AbortController>()
   private stage: HTMLElement | undefined
   private layer: HTMLElement | undefined
@@ -177,6 +223,7 @@ export class FrameSnapshots {
     this.viewport = viewport
     this.useOverview = useOverview
     this.zoom = viewport().zoom
+    if (useOverview) this.firstOverviewUntil ??= performance.now() + FIRST_OVERVIEW_FRAME_WINDOW_MS
     const motion = new MutationObserver(() => {
       if (!stage.hasAttribute('data-frame-camera-moving')) {
         for (const slot of this.ready) {
@@ -201,14 +248,20 @@ export class FrameSnapshots {
     theme.observe(root, { attributes: true, attributeFilter: ['style'] })
     const size = new ResizeObserver(() => this.wake())
     size.observe(stage)
+    const visibility = () => {
+      if (document.hidden) this.cancelScheduledCapture()
+      this.wake()
+    }
+    if (useOverview) document.addEventListener('visibilitychange', visibility)
     this.wake()
     return () => {
       motion.disconnect()
       theme.disconnect()
       size.disconnect()
+      if (useOverview) document.removeEventListener('visibilitychange', visibility)
       this.stage = this.layer = this.viewport = undefined
-      this.cancelIdle?.()
-      this.cancelIdle = undefined
+      this.cancelScheduledCapture()
+      this.cancelOverviewFrame()
       window.clearTimeout(this.retryTimer)
       this.retryTimer = undefined
       for (const abort of this.pending.values()) abort.abort()
@@ -237,6 +290,7 @@ export class FrameSnapshots {
         retryAt: 0,
         near: false,
         captured: false,
+        captureStarted: false,
         requestedDensity: 0,
       })
     }
@@ -249,6 +303,10 @@ export class FrameSnapshots {
     this.cache.delete(id)
     this.thumbnails.delete(id)
     this.slots.delete(id)
+    if (!this.slots.size) {
+      this.cancelScheduledCapture()
+      this.cancelOverviewFrame()
+    }
   }
 
   private updateTiny({ frame, image }: Slot) {
@@ -267,6 +325,7 @@ export class FrameSnapshots {
         if (moving) this.updateSharp(slot)
         else this.display(slot)
       }
+      this.wake()
     })
   }
 
@@ -309,30 +368,93 @@ export class FrameSnapshots {
     )
   }
 
+  private cancelScheduledCapture() {
+    this.cancelCaptureTurn?.()
+    this.cancelCaptureTurn = undefined
+  }
+
+  private canRunOverviewFrames() {
+    return (
+      this.inOverview() &&
+      !document.hidden &&
+      performance.now() < (this.firstOverviewUntil ?? 0) &&
+      typeof window.requestAnimationFrame === 'function'
+    )
+  }
+
+  private scheduleOverviewFrame() {
+    if (this.overviewFrame !== undefined) return
+    this.overviewDeadline ??= window.setTimeout(
+      () => this.cancelOverviewFrame(),
+      (this.firstOverviewUntil ?? 0) - performance.now(),
+    )
+    this.overviewFrame = window.requestAnimationFrame(() => {
+      this.overviewFrame = undefined
+      // The timer, capture completion and camera observers wake the queue for
+      // work. Keep the frame chain cheap when it is only waiting for a capture.
+      if (!this.cancelCaptureTurn && this.firstOverviewPending && this.canRunOverviewFrames() && !this.paused()) {
+        this.scheduleOverviewFrame()
+        return
+      }
+      this.scheduleNextCapture(true)
+    })
+  }
+
+  private cancelOverviewFrame() {
+    if (this.overviewFrame !== undefined) window.cancelAnimationFrame(this.overviewFrame)
+    window.clearTimeout(this.overviewDeadline)
+    this.overviewFrame = this.overviewDeadline = undefined
+  }
+
+  private inOverview() {
+    return this.useOverview && this.zoom <= FRAME_OVERVIEW_MAX_ZOOM
+  }
+
+  private hasCaptureCapacity() {
+    return this.pending.size < (this.inOverview() ? OVERVIEW_CAPTURE_LIMIT : 1)
+  }
+
   wake() {
+    this.scheduleNextCapture(false)
+  }
+
+  private scheduleNextCapture(fromFrame: boolean) {
     window.clearTimeout(this.retryTimer)
     this.retryTimer = undefined
     if (this.paused()) {
-      this.cancelIdle?.()
-      this.cancelIdle = undefined
+      this.cancelScheduledCapture()
+      this.cancelOverviewFrame()
       for (const abort of this.pending.values()) abort.abort()
       return
     }
     for (const [slot, abort] of this.pending) {
       if (slot.image.hasAttribute('data-frame-snapshot-blocked')) abort.abort()
     }
-    const limit = this.useOverview && this.zoom <= FRAME_OVERVIEW_MAX_ZOOM ? OVERVIEW_CAPTURE_LIMIT : 1
-    if (this.cancelIdle || this.pending.size >= limit) return
-    this.cancelIdle = onIdle(() => {
-      this.cancelIdle = undefined
-      if (this.paused()) return
+    const withFrames = this.canRunOverviewFrames()
+    const slot = withFrames && this.hasCaptureCapacity() ? this.nextSlot() : undefined
+    const first = slot && !slot.captureStarted ? slot : undefined
+    // Keep giving CEF rendering opportunities even while the queue is full.
+    if (withFrames && (first || this.firstOverviewPending)) this.scheduleOverviewFrame()
+    else this.cancelOverviewFrame()
+
+    if (fromFrame && first) {
+      this.cancelScheduledCapture()
+      void this.capture(first)
+    }
+    // A frame that did not start a capture leaves the timer's deadline alone.
+    if (withFrames && !slot) {
+      this.cancelScheduledCapture()
+      return
+    }
+    if (this.cancelCaptureTurn || !this.hasCaptureCapacity() || !this.slots.size) return
+    this.cancelCaptureTurn = onCaptureTurn(() => {
+      this.cancelCaptureTurn = undefined
+      if (this.paused() || !this.hasCaptureCapacity()) return
       const slot = this.nextSlot()
       if (!slot) return
       void this.capture(slot)
-      // Start at most one capture per idle callback. A resource request in
-      // one frame must not hold up the rest of the overview.
       this.wake()
-    })
+    }, !!first)
   }
 
   private nextSlot() {
@@ -341,6 +463,9 @@ export class FrameSnapshots {
     const width = this.stage.clientWidth
     const height = this.stage.clientHeight
     if (!width || !height) return
+    const dpr = window.devicePixelRatio || 1
+    const overview = this.useOverview && zoom <= FRAME_OVERVIEW_MAX_ZOOM
+    const thumbnailFits = overview && zoom * dpr <= MIN_BITMAP_DENSITY
     let next: Slot | undefined
     let bestArea = -1
     let bestDistance = Infinity
@@ -354,9 +479,10 @@ export class FrameSnapshots {
       const right = left + box.width * zoom
       const bottom = top + box.height * zoom
       const near = right >= -NEAR_PX && bottom >= -NEAR_PX && left <= width + NEAR_PX && top <= height + NEAR_PX
-      const zoomDensity = snapshotDensity(frame, zoom, window.devicePixelRatio || 1)
-      const density = this.useOverview && !slot.displayed ? Math.min(zoomDensity, MIN_BITMAP_DENSITY) : zoomDensity
-      const availableDensity = slot.detail?.density ?? slot.thumbnail?.density ?? 0
+      const zoomDensity = snapshotDensity(frame, zoom, dpr, overview ? MIN_OVERVIEW_DENSITY : MIN_BITMAP_DENSITY)
+      const density =
+        thumbnailFits || (this.useOverview && !slot.displayed) ? Math.min(zoomDensity, MIN_BITMAP_DENSITY) : zoomDensity
+      const availableDensity = Math.max(slot.detail?.density ?? 0, slot.thumbnail?.density ?? 0)
       if (near && slot.captured && density > availableDensity && (!slot.near || density < slot.requestedDensity)) {
         resetAttempts(slot)
       }
@@ -401,6 +527,9 @@ export class FrameSnapshots {
 
   private async capture(slot: Slot) {
     const { frame, image } = slot
+    const firstOverviewCapture = this.inOverview() && !slot.captureStarted
+    if (firstOverviewCapture) this.firstOverviewPending++
+    slot.captureStarted = true
     const abort = new AbortController()
     this.pending.set(slot, abort)
     const timeout = window.setTimeout(() => abort.abort(CAPTURE_DEADLINE), CAPTURE_TIMEOUT_MS)
@@ -411,8 +540,7 @@ export class FrameSnapshots {
       const { rasterizeFrame } = await import('./frameRaster')
       abort.signal.throwIfAborted()
       const scale = slot.requestedDensity
-      const firstOverview =
-        this.useOverview && this.zoom <= FRAME_OVERVIEW_MAX_ZOOM && !slot.displayed && slot.attempts === 0
+      const firstOverview = this.useOverview && !slot.displayed && slot.attempts === 0
       const blob = await rasterizeFrame(frame, {
         type: 'png',
         scale,
@@ -433,7 +561,10 @@ export class FrameSnapshots {
 
       // Keep the inexpensive overview bitmap across upgrades and detailed
       // evictions so a return to the overview doesn't show an empty frame.
-      const key = scale <= MIN_BITMAP_DENSITY ? 'thumbnail' : 'detail'
+      const key =
+        scale <= MIN_BITMAP_DENSITY && (!this.useOverview || !slot.thumbnail || scale <= slot.thumbnail.density)
+          ? 'thumbnail'
+          : 'detail'
       const cache = key === 'thumbnail' ? this.thumbnails : this.cache
       const bitmap = { url, density: scale, readyAt: `${started}:${performance.now()}` }
       const install = {
@@ -459,6 +590,7 @@ export class FrameSnapshots {
       window.clearTimeout(timeout)
       if (url) URL.revokeObjectURL(url)
       this.pending.delete(slot)
+      if (firstOverviewCapture) this.firstOverviewPending--
       this.wake()
     }
   }

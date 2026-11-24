@@ -233,6 +233,58 @@ describe.skipIf(!findBrowserPath())('prototype design mode', { timeout: 35_000 }
     await page.waitForSelector('[data-proto-scrollbar]', { visible: true })
   })
 
+  it('keeps the scrolled Present preview visible after stacking a local note', async () => {
+    const home = canvas.frames[0]!
+    const frame = await mount(
+      {
+        ...canvas,
+        frames: [
+          {
+            ...home,
+            height: 2800,
+            html: `${home.html}<style>html,body{background:#102030} #more{color:white}</style>`,
+          },
+        ],
+      },
+      false,
+      false,
+      true,
+    )
+    await enter()
+    const viewport = '[data-proto-viewport]'
+    const geometry = () =>
+      page.$eval(viewport, (el) => {
+        const screen = el.querySelector('[data-proto-screen="home"]')!
+        const box = el.getBoundingClientRect()
+        return { outer: el.scrollTop, inner: screen.scrollTop, top: box.top, height: box.height }
+      })
+    await page.mouse.move(160, 280)
+    await page.mouse.wheel({ deltaY: 640 })
+    await page.waitForFunction(() => document.querySelector('[data-proto-screen="home"]')!.scrollTop >= 620)
+    const before = await geometry()
+    expect(before.outer).toBe(0)
+    const sample = async () => {
+      const clip = { x: 40, y: Math.floor(before.top + before.height * 0.75), width: 4, height: 4 }
+      return sharp(await page.screenshot({ clip }))
+        .removeAlpha()
+        .raw()
+        .toBuffer()
+    }
+    const pixels = await sample()
+    expect([...pixels.subarray(0, 3)]).toEqual([16, 32, 48])
+
+    await pick(frame, '#more')
+    await page.keyboard.type('Keep this local')
+    await page.click('[role="switch"]')
+    await page.click(control('Add to stack'))
+    await page.waitForSelector(control('Send 1 to agent'))
+    await page.waitForSelector(field, { hidden: true })
+    await page.waitForSelector(pin(1), { visible: true })
+    expect(await sent()).toEqual([])
+    expect(await geometry()).toEqual(before)
+    expect(await sample()).toEqual(pixels)
+  })
+
   const sent = () => page.evaluate(() => (window as unknown as Fixture).designSends)
   const draft = () => page.evaluate((id) => (window as unknown as Fixture).readDesignDraft(id), canvas.id)
 

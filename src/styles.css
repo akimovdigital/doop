@@ -1519,12 +1519,6 @@ body:has([data-prototype-player]:not([data-minimized])) .stage[data-stage-presen
   content-visibility: hidden;
 }
 
-.world:has(> [data-frame-overview-capable]) {
-  /* Chromium can otherwise stretch fixed raster tiles as the world zooms. */
-  will-change: auto;
-}
-
-/* A decoded bitmap and the mounted iframe exchange visibility in one paint. */
 [data-frame-snapshot] {
   position: absolute;
   inset: 0;
@@ -1534,31 +1528,25 @@ body:has([data-prototype-player]:not([data-minimized])) .stage[data-stage-presen
   visibility: hidden;
 }
 
-:is(
-  [data-frame-snapshot-ready][data-frame-snapshot-waiting],
-  .stage[data-frame-camera-moving] [data-frame-snapshot-ready][data-frame-snapshot-sharp],
-  [data-frame-overview] [data-frame-snapshot-ready][data-frame-snapshot-sharp],
-  .stage [data-frame-snapshot-ready][data-frame-snapshot-sharp][data-frame-snapshot-tiny]
-):not([data-frame-snapshot-blocked], [data-frame-snapshots-disabled] *) {
+[data-frame-snapshot-handoff] {
+  z-index: 1;
+}
+
+/* A snapshot can cover an unready document, including while selection
+   admits it. At handoff, draw the iframe underneath the preview. */
+[data-frame-snapshot-ready]:is(
+    [data-frame-snapshot-waiting],
+    [data-frame-snapshot-handoff],
+    [data-frame-snapshot-sharp]:not([data-frame-snapshot-blocked]):is(
+        .stage[data-frame-camera-moving] *,
+        [data-frame-overview] *,
+        .stage [data-frame-snapshot-tiny]
+      )
+  ):not([data-frame-snapshots-disabled] *) {
   visibility: visible;
-}
 
-:is(
-    [data-frame-snapshot-ready][data-frame-snapshot-waiting],
-    .stage[data-frame-camera-moving] [data-frame-snapshot-ready][data-frame-snapshot-sharp],
-    .stage [data-frame-snapshot-ready][data-frame-snapshot-sharp][data-frame-snapshot-tiny]
-  ):not([data-frame-snapshot-blocked], [data-frame-snapshots-disabled] *)
-  + div
-  > iframe[data-doop-frame] {
-  visibility: hidden;
-}
-
-/* Park the live iframe layers at rest and during pans. A zoom can cross
-   several bitmap densities, so use visibility until the gesture settles. */
-.stage:not([data-frame-camera-moving='zoom'])
-  [data-frame-overview]:not([data-frame-snapshots-disabled])
-  [data-frame-snapshot-ready][data-frame-snapshot-sharp]:not([data-frame-snapshot-blocked])
-  + div
-  > iframe[data-doop-frame] {
-  display: none;
+  /* Keep the iframe laid out so the handoff doesn't rebuild its layout. */
+  &:not([data-frame-snapshot-handoff]) + div > iframe[data-doop-frame] {
+    visibility: hidden;
+  }
 }

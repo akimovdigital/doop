@@ -655,7 +655,9 @@ export function PrototypePlayer({
         />
         <div
           ref={viewportRef}
-          className={`relative isolate min-h-0 flex-1 overflow-hidden ${minimized ? 'rounded-b-panel' : ''}`}
+          /* Only the screen wrapper can scroll. Focus moving out of a note
+             must not scroll the preview and its overlays as a single layer. */
+          className={`relative isolate min-h-0 flex-1 overflow-clip ${minimized ? 'rounded-b-panel' : ''}`}
           data-proto-viewport=""
           onPointerDownCapture={(event) => {
             if (event.target instanceof Element && !event.target.closest('[data-preview-chat],[data-design-queue]'))

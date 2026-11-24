@@ -125,12 +125,19 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
       await page.waitForSelector(`[data-doop-frame-shell="${id}"] img[data-frame-snapshot-ready]`, { visible: true })
       expect(await page.$(`[data-doop-frame-shell="${id}"] iframe[data-doop-frame]`)).toBeNull()
     }
-    await page.waitForFunction((iframe) => getComputedStyle(iframe).display === 'none', {}, live!)
+    await page.waitForFunction((iframe) => getComputedStyle(iframe).visibility === 'hidden', {}, live!)
+    expect(await live!.evaluate((iframe) => getComputedStyle(iframe).display)).toBe('block')
 
     await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 30, y: 105, zoom: 0.57 }))
     await page.waitForFunction(() => {
       const frame = document.querySelector('[data-doop-frame-shell="cached"] iframe[data-doop-frame]')
-      return frame && getComputedStyle(frame).visibility === 'visible'
+      const bitmap = frame?.closest('[data-doop-frame-shell]')?.querySelector('[data-frame-snapshot-ready]')
+      return (
+        frame &&
+        bitmap &&
+        getComputedStyle(frame).visibility === 'visible' &&
+        getComputedStyle(bitmap).visibility === 'hidden'
+      )
     })
     expect(await child!.evaluate(() => document.querySelector('input')!.value)).toBe('kept')
   })
@@ -138,23 +145,33 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
   it('holds the heavy overview layer through threshold crossings until the zoom settles', async () => {
     const page = await pages.open()
     await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 })
+    await page.evaluateOnNewDocument(() => {
+      window.requestIdleCallback = () => 1
+      window.cancelIdleCallback = () => {}
+    })
     const large = canvasFrame({ id: 'large', name: 'Large', x: 3000, y: 0, width: 5000, height: 16000 })
     await openCanvasPage(page, [sample, large])
     await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 230, y: 140, zoom: 0.04 }))
-    await page.waitForSelector('[data-frame-overview] img[data-frame-snapshot-ready]', { visible: true })
-    const layers = await page.evaluate(async () => {
+    await page.waitForSelector('[data-frame-overview] [data-doop-frame-shell="large"] img[data-frame-snapshot-ready]', {
+      visible: true,
+    })
+    const states = await page.evaluate(async () => {
       const stage = document.querySelector('.stage')!
       const layer = stage.querySelector('[data-frame-overview]')!
-      const world = stage.querySelector('.world')!
+      const image = stage.querySelector('[data-doop-frame-shell="large"] img[data-frame-snapshot-ready]')!
       const states = []
       for (const zoom of [0.11, 0.04, 0.11]) {
         window.canvasPageHarness.setCamera({ x: 230, y: 140, zoom })
         await new Promise(requestAnimationFrame)
-        states.push(layer.hasAttribute('data-frame-overview'))
+        states.push([layer.hasAttribute('data-frame-overview'), getComputedStyle(image).visibility])
       }
-      return { states, willChange: getComputedStyle(world).willChange }
+      return states
     })
-    expect(layers).toEqual({ states: [true, true, true], willChange: 'auto' })
+    expect(states).toEqual([
+      [true, 'visible'],
+      [true, 'visible'],
+      [true, 'visible'],
+    ])
     await page.waitForFunction(() => !document.querySelector('.stage [data-frame-overview]'))
   })
 
@@ -178,6 +195,7 @@ describe.skipIf(!findBrowserPath())('canvas frame snapshots', { timeout: 30_000 
     // the low zoom even if Chromium scheduled an idle task during opening.
     await page.evaluate((frames) => window.canvasPageHarness.seed(frames), [dark, far])
     const image = await page.waitForSelector('[data-doop-frame-shell="cached"] img[data-frame-snapshot-ready]')
+    await page.waitForFunction((node) => node.naturalWidth >= 136, {}, image!)
     const low = await image!.evaluate((node) => node.naturalWidth)
     expect(low).toBe(170)
     await setZoom(0.5)

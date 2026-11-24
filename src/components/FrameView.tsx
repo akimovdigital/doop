@@ -46,7 +46,7 @@ import { sendWs } from '../lib/ws'
 import { throttle } from '../lib/throttle'
 import { getIdentity } from '../lib/identity'
 import { FRAME_BOOTSTRAP } from '../lib/frameRuntime'
-import { canSnapshotFrame, type FrameSnapshots } from '../lib/frameSnapshots'
+import { canSnapshotFrame, holdSnapshotForPaint, type FrameSnapshots } from '../lib/frameSnapshots'
 import { MOD_KEY } from '../lib/keys'
 import { isDesktopShell } from '../lib/shell'
 import { FRAME_DOCUMENTS_TAKE_ZOOM_AS_DENSITY } from '../lib/layoutZoom'
@@ -1214,14 +1214,19 @@ export const FrameView = memo(function FrameView({
     const request = ++htmlRequest.current
     noteFrameDocument(frame.id, null)
     let cancelled = false
+    let releaseSnapshot: (() => void) | undefined
     void requestFrame(frame.id, 'doop:html', { html }).then((reply) => {
       if (!reply || !iframe || iframeRef.current !== iframe || request !== htmlRequest.current) return
       /* the runtime shows it whether or not this effect is still current */
       noteFrameDocument(frame.id, html)
-      if (!cancelled) setRuntimeDocument({ html, request })
+      if (cancelled) return
+      const preview = iframe.parentElement?.previousElementSibling
+      if (preview instanceof HTMLImageElement) releaseSnapshot = holdSnapshotForPaint(preview)
+      setRuntimeDocument({ html, request })
     })
     return () => {
       cancelled = true
+      releaseSnapshot?.()
     }
   }, [runtimeReady, html, frame.html, frame.id, editing, suspendPost, reloadRequest])
 
@@ -2494,7 +2499,7 @@ export const FrameView = memo(function FrameView({
               <FrameSnapshotLayer
                 snapshots={snapshots}
                 frame={frame}
-                waiting={!runtimeDocument}
+                waiting={!runtimeDocument && !bleed}
                 changing={editing || !!stream || !!remoteEditor || !!pageMode || !!pathEdit}
                 blocked={
                   !!bleed ||
