@@ -490,6 +490,7 @@ export function useDesignMode({
   }, [allowed, screenKey, documentRevision, pageUrl, getWindow, pageNotes, enabled, draft])
 
   async function pick(at: DesignPoint, shift: boolean, alt: boolean) {
+    if (!enabled || usingPage || editingText || busy) return
     // Option-clicks append independently. Leaving the mode or changing the screen still cancels pending picks.
     const seq = alt ? pickSequence.current : ++pickSequence.current
     const previous = point.current
@@ -639,13 +640,12 @@ export function useDesignMode({
     if (!current || current.pointerId !== pointerId) return
     pointerMove(at, shift, alt, scale)
     cancelDrag()
-    if (current.rect) {
-      pickSequence.current++
-      closeCssInspector()
-      setMarkupTool('move')
-      const rect = current.rect
-      setDraft({ region: { ...rect, ...pagePoint(rect) }, regionInPage: true, elements: [], comment: '' })
-    } else void pick(at, shift, alt)
+    if (!current.rect) return true
+    pickSequence.current++
+    closeCssInspector()
+    setMarkupTool('move')
+    const rect = current.rect
+    setDraft({ region: { ...rect, ...pagePoint(rect) }, regionInPage: true, elements: [], comment: '' })
   }
 
   function openNote(note: DesignNote) {
@@ -945,6 +945,7 @@ export function useDesignMode({
     pointerDown,
     pointerMove,
     pointerUp,
+    pick,
     openNote,
     deleteNote,
     submit,

@@ -58,12 +58,12 @@ mod appimage;
 mod claude;
 mod claude_extension;
 mod codex;
-#[cfg(all(target_os = "macos", not(chromium)))]
+#[cfg(target_os = "macos")]
 mod dictation;
 mod fonts;
 mod server;
 mod updates;
-#[cfg(all(target_os = "macos", not(chromium)))]
+#[cfg(target_os = "macos")]
 mod local_test_login;
 mod view_menu;
 #[cfg(all(chromium, target_os = "macos"))]
@@ -105,6 +105,14 @@ const APP_URL: &str = match option_env!("DOOP_APP_URL") {
     Some(url) => url,
     None => "https://doop.design",
 };
+
+const OFFICIAL_BUNDLE_IDENTIFIER: &str = "design.doop.desktop";
+const DEV_BUNDLE_IDENTIFIER: &str = "digital.akimov.doop-test";
+
+fn native_dictation_enabled(app: &AppHandle) -> bool {
+    cfg!(target_os = "macos")
+        && (!cfg!(chromium) || app.config().identifier == DEV_BUNDLE_IDENTIFIER)
+}
 
 /// The server this launch opens (src/server.rs), without a trailing slash.
 fn base_url() -> String {
@@ -283,9 +291,9 @@ impl MenuEntries {
 /// CDP client), which is how the frames' renderer processes are inspected;
 /// release builds never listen.
 #[cfg(chromium)]
-fn chromium_runtime() -> tauri_runtime_cef::Cef {
+fn chromium_runtime(identifier: &str) -> tauri_runtime_cef::Cef {
     let mut cef = tauri_runtime_cef::Cef::default().persist_session_cookies(true);
-    if let Some(profile) = chromium_profile_dir() {
+    if let Some(profile) = chromium_profile_dir(identifier) {
         cef = cef.root_cache_path(profile);
     }
     let port = std::env::var("DOOP_CEF_DEBUG_PORT")
@@ -302,11 +310,10 @@ fn chromium_runtime() -> tauri_runtime_cef::Cef {
 }
 
 /// Application Support/<identifier>/cef, worked out by hand: the runtime is
-/// configured before the app (and its path resolver) exists. Keep the
-/// identifier in step with both tauri.conf.json files.
+/// configured before the app (and its path resolver) exists. The merged
+/// config keeps Doop Dev separate from the official Doop profile.
 #[cfg(chromium)]
-fn chromium_profile_dir() -> Option<PathBuf> {
-    const IDENTIFIER: &str = "design.doop.desktop";
+fn chromium_profile_dir(identifier: &str) -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     let profile = if cfg!(debug_assertions) {
         "cef-dev"
@@ -316,7 +323,7 @@ fn chromium_profile_dir() -> Option<PathBuf> {
     Some(
         PathBuf::from(home)
             .join("Library/Application Support")
-            .join(IDENTIFIER)
+            .join(identifier)
             .join(profile),
     )
 }
@@ -368,7 +375,7 @@ fn build_canvas_window(
 ) -> tauri::Result<WebviewWindow<ShellRuntime>> {
     let label_is_main = label == "main";
     let show_without_animation = cfg!(target_os = "macos")
-        && app.config().identifier == "digital.akimov.doop-test"
+        && app.config().identifier == DEV_BUNDLE_IDENTIFIER
         && !migrating;
     let handle = app.clone();
     // Hosts that stay inside the shell; any other http(s) target opens
@@ -390,7 +397,7 @@ fn build_canvas_window(
         // only macOS has a menu bar for the page to build (app_menu.rs)
         cfg!(target_os = "macos"),
         !label_is_main,
-        cfg!(all(target_os = "macos", not(chromium)))
+        native_dictation_enabled(app)
     );
     // macOS never reports the saved path on `Finished`, so remember
     // the destinations chosen on `Requested`, keyed by URL. The same
@@ -533,9 +540,10 @@ fn build_canvas_window(
 // the entry point hands those to Chromium before any of main() runs.
 #[cfg_attr(chromium, tauri_runtime_cef::cef_entry_point)]
 fn main() {
+    let context = tauri::generate_context!();
     let builder = tauri::Builder::default();
     #[cfg(chromium)]
-    let builder = builder.runtime(chromium_runtime());
+    let builder = builder.runtime(chromium_runtime(&context.config().identifier));
     // single-instance must be the first plugin so a second launch is caught
     // before anything else initialises; it hands the launch's URL args to
     // the deep-link plugin through the `deep-link` feature.
@@ -564,11 +572,11 @@ fn main() {
             updates::update_card_ready,
             updates::update_restart,
             open_canvas_window,
-            #[cfg(all(target_os = "macos", not(chromium)))]
+            #[cfg(target_os = "macos")]
             dictation::dictation_available,
-            #[cfg(all(target_os = "macos", not(chromium)))]
+            #[cfg(target_os = "macos")]
             dictation::dictation_start,
-            #[cfg(all(target_os = "macos", not(chromium)))]
+            #[cfg(target_os = "macos")]
             dictation::dictation_stop,
         ])
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -594,7 +602,7 @@ fn main() {
     });
     builder
         .on_window_event(|window, event| {
-            #[cfg(all(target_os = "macos", not(chromium)))]
+            #[cfg(target_os = "macos")]
             if matches!(event, tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed) {
                 dictation::cancel_window(window);
             }
@@ -634,7 +642,7 @@ fn main() {
             // the app's origin and brings the WebKit storage over before the
             // app loads (src/webkit_migration.rs).
             #[cfg(all(chromium, target_os = "macos"))]
-            let migrating = webkit_migration::pending();
+            let migrating = webkit_migration::pending(&app.config().identifier);
             #[cfg(not(all(chromium, target_os = "macos")))]
             let migrating = false;
             let first_url: Url = if migrating {
@@ -649,9 +657,9 @@ fn main() {
             } else {
                 entry.parse()?
             };
-            #[cfg(all(target_os = "macos", not(chromium)))]
+            #[cfg(target_os = "macos")]
             let test_login = local_test_login::enabled(app.handle());
-            #[cfg(all(target_os = "macos", not(chromium)))]
+            #[cfg(target_os = "macos")]
             let first_url = if test_login { "about:blank".parse()? } else { first_url };
             // Exercise a cold test login without replacing the user's stored WebKit session.
             #[cfg(all(target_os = "macos", not(chromium)))]
@@ -659,14 +667,14 @@ fn main() {
             #[cfg(not(all(target_os = "macos", not(chromium))))]
             let incognito = false;
             let _webview_window = build_canvas_window(app.handle(), "main", first_url, migrating, incognito)?;
-            #[cfg(all(target_os = "macos", not(chromium)))]
+            #[cfg(target_os = "macos")]
             if test_login {
                 local_test_login::start(_webview_window.clone());
             }
             server::check_on_launch(app.handle(), entry.parse()?);
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("failed to start doop")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
