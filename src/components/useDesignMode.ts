@@ -353,7 +353,7 @@ export function useDesignMode({
       exit()
       onDraft(target)
     }
-    // Exiting a browser frame replaces its proxy iframe. Wait for its live capture inputs.
+    // Exiting a browser frame replaces its proxy iframe. Wait for the crop reply before replacing it.
     if (source === 'browser' && captureReady) void captureReady.then(openChat)
     else openChat()
   }
