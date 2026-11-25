@@ -1517,16 +1517,63 @@ iframe[data-frame-content-auto] {
   content-visibility: auto;
 }
 
-/* A single static treatment shared by the pending surfaces. Keep the real
-   iframe underneath, with the same near-opaque cover used for snapshot handoff. */
+@property --cold-frame-pulse {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 0%;
+}
+
+[data-frame-cold-skeleton-stack] {
+  --cold-frame-surface: var(--sub);
+  --cold-frame-border: var(--line);
+  --cold-frame-block: var(--paper-deep);
+  --cold-frame-highlight: var(--line);
+}
+
+.dark [data-frame-cold-skeleton-stack] {
+  --cold-frame-surface: #232325;
+  --cold-frame-border: #3a3a40;
+  --cold-frame-block: #303035;
+  --cold-frame-highlight: #38383e;
+}
+
+@keyframes cold-frame-pulse {
+  50% {
+    --cold-frame-pulse: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-frame-cold-skeleton-stack]:has([data-frame-cold-skeleton]) {
+    animation: cold-frame-pulse 420ms ease-in-out;
+  }
+}
+
+/* The stack supplies one pulse. Each pending surface keeps its own box and
+   paints only the shared block color, with no per-frame animation. */
 [data-frame-cold-skeleton]::after {
+  --block: linear-gradient(
+    color-mix(in srgb, var(--cold-frame-block), var(--cold-frame-highlight) var(--cold-frame-pulse)) 0 0
+  );
   content: '';
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(150deg, var(--sub), var(--paper-deep));
-  box-shadow: inset 0 0 0 calc(1px / var(--zoom, 1)) var(--line-soft);
-  opacity: 0.999;
+  background:
+    var(--block) 20% 8% / 44% 1.4% no-repeat,
+    var(--block) center 22% / 76% 12% no-repeat,
+    var(--block) center 48% / 76% 8% no-repeat,
+    var(--block) center 73% / 76% 6% no-repeat,
+    var(--cold-frame-surface);
+  box-shadow: inset 0 0 0 calc(1px / var(--zoom, 1)) var(--cold-frame-border);
+}
+
+[data-frame-cold-skeleton='narrow']::after {
+  background:
+    var(--block) center 21% / 64% 5% no-repeat,
+    var(--block) center 46% / 64% 5% no-repeat,
+    var(--block) center 77% / 64% 5% no-repeat,
+    var(--cold-frame-surface);
 }
 
 /* Paint admitted documents in overview without waiting for Blink's auto

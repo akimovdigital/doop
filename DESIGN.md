@@ -93,8 +93,18 @@ artboard paper. The floating HTML frame toolbar is temporarily opt-in with `doop
 
 The macOS Chromium cold-load experiment is enabled by setting `doop:cold-frame-skeleton` to `1` in
 local storage before opening the canvas. Pending HTML artboards use their existing size and stack
-with a static `--sub` to `--paper-deep` gradient and a one-screen-pixel `--line-soft` inset border.
-The surface takes no pointer events from the artboard and has no animation in either motion preference.
+with an opaque neutral surface and a one-screen-pixel inset border. Wide artboards show a line and
+three blocks. Artboards up to 480 design pixels wide show three strips. The stack supplies one
+420 ms pulse to the block color when a group of covers appears. Reduced motion shows the static
+color from the start. The cover takes no pointer events from the artboard.
+
+| Role                | Light          | Dark      |
+| ------------------- | -------------- | --------- |
+| Cover               | `--sub`        | `#232325` |
+| Inset border        | `--line`       | `#3a3a40` |
+| Block               | `--paper-deep` | `#303035` |
+| Block at pulse peak | `--line`       | `#38383e` |
+
 The runtime reports HTML application on its private port. The editor associates the receipt and the
 two-frame callback reply with the active document generation and intersecting iframe. If the normal
 HTML RPC has expired, the application receipt restores the editor's document bookkeeping. After the

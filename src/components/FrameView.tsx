@@ -2536,7 +2536,11 @@ export const FrameView = memo(function FrameView({
             data-frame-surface=""
             data-frame-document-deferred={!mountRuntime && frame.html ? '' : undefined}
             data-frame-cold-skeleton={
-              coldSkeleton && !standalone && frame.html && !coldSkeletonRevealed ? '' : undefined
+              coldSkeleton && !standalone && frame.html && !coldSkeletonRevealed
+                ? frame.width <= 480
+                  ? 'narrow'
+                  : 'wide'
+                : undefined
             }
             ref={surfaceRef}
             className={cn(

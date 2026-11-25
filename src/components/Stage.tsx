@@ -2035,6 +2035,7 @@ function FrameStack({
     <div
       ref={layer}
       className="absolute top-0 left-0 isolate"
+      data-frame-cold-skeleton-stack={coldSkeleton ? '' : undefined}
       data-live-frame-budget={LIVE_FRAME_BUDGET}
       data-animating-frame-budget={ANIMATING_FRAME_BUDGET}
       data-frame-snapshots-disabled={snapshotsDisabled ? '' : undefined}

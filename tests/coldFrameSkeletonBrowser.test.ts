@@ -15,7 +15,7 @@ const front = {
   ...canvasFrame({ id: 'front', name: 'Front', x: 100, y: 100, width: 300, height: 200 }),
   html: `<button onclick="this.textContent = 'Clicked'">Live</button>`,
 }
-const back = { ...front, id: 'back', name: 'Back', x: 145, y: 130, z: 1 }
+const back = { ...front, id: 'back', name: 'Back', x: 145, y: 130, width: 560, z: 1 }
 const fixtures = [back, { ...front, z: 2 }]
 const frontShell = '[data-doop-frame-shell="front"]'
 const skeleton = '[data-frame-cold-skeleton]'
@@ -26,6 +26,7 @@ describe.skipIf(!findBrowserPath())('cold frame skeleton', () => {
   it('covers the original surface until its runtime can render, and clears pending frames on canvas change', async () => {
     const page = await pages.open()
     await page.setViewport({ width: 1280, height: 800 })
+    await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'no-preference' }])
     await page.evaluateOnNewDocument(() => {
       if (window === window.top) {
         Object.defineProperties(window, {
@@ -77,20 +78,31 @@ describe.skipIf(!findBrowserPath())('cold frame skeleton', () => {
     const covered = await geometry()
     expect(covered).toEqual(baseline)
     const surface = (await page.$(`${frontShell} [data-frame-surface]`))!
+    const stack = (await page.$('[data-frame-cold-skeleton-stack]'))!
+    expect(
+      await stack.evaluate((el) => {
+        const style = getComputedStyle(el)
+        return [style.animationName, style.animationDuration, style.animationIterationCount]
+      }),
+    ).toEqual(['cold-frame-pulse', '0.42s', '1'])
+    expect(await surface.evaluate((el) => el.getAttribute('data-frame-cold-skeleton'))).toBe('narrow')
+    expect(await page.$('[data-doop-frame-shell="back"] [data-frame-cold-skeleton="wide"]')).not.toBeNull()
     await page.emulateMediaFeatures([{ name: 'prefers-reduced-motion', value: 'reduce' }])
+    expect(await stack.evaluate((el) => getComputedStyle(el).animationName)).toBe('none')
     const appearance = await surface.evaluate((el) => {
       const read = () => {
         const cue = getComputedStyle(el, '::after')
-        return [cue.backgroundImage, cue.pointerEvents, cue.animationName, cue.transitionDuration]
+        return [cue.backgroundColor, cue.pointerEvents, cue.animationName, cue.transitionDuration, cue.opacity]
       }
       document.documentElement.classList.remove('dark')
       const light = read()
       document.documentElement.classList.add('dark')
       return { light, dark: read() }
     })
-    expect(appearance.light[0]).toContain('linear-gradient')
+    expect(appearance.light[0]).toBe('rgb(247, 247, 247)')
+    expect(appearance.dark[0]).toBe('rgb(35, 35, 37)')
     expect(appearance.dark[0]).not.toBe(appearance.light[0])
-    expect(appearance.dark.slice(1)).toEqual(['none', 'none', '0s'])
+    expect(appearance.dark.slice(1)).toEqual(['none', 'none', '0s', '1'])
 
     // A normal window message from a design cannot substitute for the private port.
     await child.evaluate(() => {
