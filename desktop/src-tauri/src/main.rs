@@ -659,7 +659,7 @@ fn main() {
             };
             #[cfg(target_os = "macos")]
             let test_login = local_test_login::enabled(app.handle());
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", not(chromium)))]
             let first_url = if test_login { "about:blank".parse()? } else { first_url };
             // Exercise a cold test login without replacing the user's stored WebKit session.
             #[cfg(all(target_os = "macos", not(chromium)))]
