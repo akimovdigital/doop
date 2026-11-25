@@ -91,8 +91,8 @@ preserve the frame's theme and render at a density suited to the canvas zoom. Wh
 loads, its surface uses `--sub` (#f7f7f7 light, #242424 dark). Once ready, transparent HTML sits on white
 artboard paper. The floating HTML frame toolbar is temporarily opt-in with `doop:html-frame-toolbar`.
 
-The macOS Chromium cold-load experiment is enabled by setting `doop:cold-frame-skeleton` to `1` in
-local storage before opening the canvas. Pending HTML artboards use their existing size and stack
+The macOS Chromium cold-load experiment is off by default. Set `doop:cold-frame-skeleton` to `1` in
+local storage before opening the canvas to try it. Pending HTML artboards use their existing size and stack
 with an opaque neutral surface and a one-screen-pixel inset border. Wide artboards show a line and
 three blocks. Artboards up to 480 design pixels wide show three strips. The stack supplies one
 420 ms pulse to the block color when a group of covers appears. Reduced motion shows the static
@@ -129,6 +129,15 @@ Frames on another page wait for that page's HTML before mounting the new screen.
 same typed runtime in canvas frames and the Browser annotation proxy, with canvas-only motion holds.
 See `src/components/frameAdmission.ts`,
 `src/components/Stage.tsx` and `src/components/FrameView.tsx`.
+
+The macOS Chromium editor experiment `doop:far-overview` is off by default. It enters at
+6% and exits at 8%. The overview uses static blocks from a bounded sample of the rendered artboard,
+with the existing surface, line and ink tokens. It keeps the artboard bounds, stacking and label in
+place. Selection reveals the live document in the same iframe. Focused and active documents keep
+their live surface. Preview, Present and Prototype mode use the normal canvas rendering.
+When both experiments are enabled, the cold cover has priority until the iframe's paint reply.
+The far overview samples the live document after that handoff. Both flags remain experimental
+pending full native acceptance.
 
 Canvas dots fade as their on-screen spacing falls from 10 px to 4 px. At overview zoom, the page colour
 shows through. When canvas chrome is hidden, the bottom-right button and Escape bring it back.

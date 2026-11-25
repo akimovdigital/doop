@@ -179,6 +179,51 @@ describe.skipIf(!findBrowserPath())('cold frame skeleton', () => {
     expect(await page.$eval('[data-frame-surface]', (el) => getComputedStyle(el, '::before').content)).toBe('""')
   })
 
+  it('waits for the cold paint before the far overview locks the same iframe', async () => {
+    const page = await pages.open()
+    await page.evaluateOnNewDocument(() => {
+      if (window === window.top) {
+        Object.defineProperties(window, {
+          __DOOP_DESKTOP__: { value: '0.15.0' },
+          __DOOP_DESKTOP_PLATFORM__: { value: 'macos' },
+        })
+        localStorage.setItem('doop:cold-frame-skeleton', '1')
+        localStorage.setItem('doop:far-overview', '1')
+        return
+      }
+      const request = window.requestAnimationFrame.bind(window)
+      const pending: FrameRequestCallback[] = []
+      let held = true
+      window.requestAnimationFrame = (callback) => {
+        if (!held) return request(callback)
+        return pending.push(callback)
+      }
+      window.releaseColdFrameCallbacks = () => {
+        held = false
+        for (const callback of pending.splice(0)) request(callback)
+      }
+    })
+    await openCanvasPage(page, [front])
+    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 150, y: 100, zoom: 0.05 }))
+    await page.waitForSelector('.stage[data-far-overview]')
+    const iframe = (await page.waitForSelector('iframe[data-doop-frame]'))!
+    const child = (await iframe.contentFrame())!
+    await child.waitForSelector('button')
+
+    expect(await page.$(skeleton)).not.toBeNull()
+    expect(await iframe.evaluate((el) => getComputedStyle(el).contentVisibility)).not.toBe('hidden')
+    await child.evaluate(() => window.releaseColdFrameCallbacks())
+    await page.waitForSelector(skeleton, { hidden: true })
+    await page.waitForSelector('[data-far-overview-paper]', { visible: true })
+    expect(await iframe.evaluate((el) => getComputedStyle(el).contentVisibility)).toBe('hidden')
+
+    await page.evaluate(() => window.canvasPageHarness.select('front'))
+    await page.waitForSelector('[data-far-overview-paper]', { hidden: true })
+    expect(await iframe.evaluate((el) => el.isConnected && getComputedStyle(el).contentVisibility !== 'hidden')).toBe(
+      true,
+    )
+  })
+
   it('keeps a replacement request covered when the previous generation applies in the same iframe', async () => {
     const page = await pages.open()
     await page.evaluateOnNewDocument(holdColdHtml)

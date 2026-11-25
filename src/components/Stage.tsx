@@ -87,6 +87,12 @@ import {
   settledLayoutZoom,
 } from '../lib/layoutZoom'
 import { createFrameLayoutQueue } from '../lib/frameLayoutQueue'
+import {
+  FAR_OVERVIEW_FLAG,
+  FAR_OVERVIEW_FLAG_EVENT,
+  farOverviewAtZoom,
+  protectFarOverviewFocus,
+} from '../lib/farOverview'
 import { useT, type PlainMessageKey } from '../lib/i18n'
 import { NO_INSETS, fitBox, fitColumnStart, type StageInsets } from '../lib/viewFit'
 import { spaceWouldScroll } from '../lib/spaceScroll'
@@ -256,6 +262,7 @@ export function Stage({
   bounds,
   onPresentFrame,
   presenting = false,
+  previewing = false,
   hideTools = false,
 }: {
   onAddFrame: () => void
@@ -267,6 +274,7 @@ export function Stage({
    *  docked panels leave it the gap between their columns */
   bounds?: StageInsets
   presenting?: boolean
+  previewing?: boolean
   onPresentFrame?: (frameId: string, interaction?: Interaction) => void
   hideTools?: boolean
 }) {
@@ -366,6 +374,43 @@ export function Stage({
   const layoutZoomRef = useRef(1)
   const restoringDesktopCamera = useRef(false)
   const [frameLayoutQueue] = useState(createFrameLayoutQueue)
+  const [farOverviewEnabled, setFarOverviewEnabled] = useState(false)
+  useLayoutEffect(() => {
+    if (!MAC_CHROMIUM_DESKTOP || !CSS.supports('content-visibility', 'hidden')) return
+    const readFlag = () => {
+      try {
+        setFarOverviewEnabled(localStorage.getItem(FAR_OVERVIEW_FLAG) === '1')
+      } catch {
+        setFarOverviewEnabled(false)
+      }
+    }
+    readFlag()
+    window.addEventListener(FAR_OVERVIEW_FLAG_EVENT, readFlag)
+    return () => window.removeEventListener(FAR_OVERVIEW_FLAG_EVENT, readFlag)
+  }, [])
+  useLayoutEffect(() => {
+    const stage = ref.current
+    if (!stage || !farOverviewEnabled || presenting || previewing) return
+    const stopProtectingFocus = protectFarOverviewFocus(stage)
+    let active = false
+    const update = (state: ReturnType<typeof useStore.getState>) => {
+      const next = !state.prototypeMode && farOverviewAtZoom(active, state.viewport.zoom)
+      if (active === next) return
+      active = next
+      stage.toggleAttribute('data-far-overview', active)
+      performance.mark(active ? 'doop:far-overview-enter' : 'doop:far-overview-exit', { detail: state.viewport })
+    }
+    const unsubscribe = useStore.subscribe((state, previous) => {
+      if (state.viewport.zoom !== previous.viewport.zoom || state.prototypeMode !== previous.prototypeMode)
+        update(state)
+    })
+    update(useStore.getState())
+    return () => {
+      unsubscribe()
+      stopProtectingFocus()
+      stage.removeAttribute('data-far-overview')
+    }
+  }, [farOverviewEnabled, presenting, previewing])
   const framesNearViewport = useCallback((vp: Viewport, size: { width: number; height: number }) => {
     const { selectedIds, ctxMenu, selectedElement } = useStore.getState()
     const keep = new Set(selectedIds)
@@ -1682,6 +1727,7 @@ export function Stage({
                     onPresentFrame={onPresentFrame}
                     presenting={presenting}
                     uiHidden={uiHidden}
+                    farOverviewEnabled={farOverviewEnabled && !previewing}
                   />
                 </FrameLabelLayer.Provider>
                 <GhostFrames />
@@ -1957,12 +2003,14 @@ function FrameStack({
   onPresentFrame,
   presenting,
   uiHidden,
+  farOverviewEnabled,
 }: {
   frames: Frame[]
   onFollowLink: (source: Frame, href: string) => void
   onPresentFrame?: (frameId: string, interaction?: Interaction) => void
   presenting: boolean
   uiHidden: boolean
+  farOverviewEnabled: boolean
   stage: React.RefObject<HTMLDivElement | null>
 }) {
   const mounted = useMemo(() => [...frames].sort(byCreation), [frames])
@@ -2058,6 +2106,7 @@ function FrameStack({
             onPresentFrame={onPresentFrame}
             presenting={presenting}
             uiHidden={uiHidden}
+            farOverviewEnabled={farOverviewEnabled && !presenting && !prototypeMode}
           />
         ),
       )}

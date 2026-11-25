@@ -39,6 +39,7 @@ import { editGeometry, type GeometryCommand } from './move'
 import { pathInfo, setMovingDrawing, setPathEditing } from './paths'
 import { protoHtmlChanged } from './proto'
 import { exportSnapshot } from './serialize'
+import { readFarOverviewBlocks } from './farOverview'
 import { setCanvasCursor, setOutlines } from './sheets'
 import { applyStyle, beginStyleEdit, endStyleEdit, flushStyleSave, styleSavePending } from './styles'
 import { firstTextRun, formatLayers, formatText, runDecoration } from './text'
@@ -268,13 +269,21 @@ function handle(d: Command, ev: MessageEvent): void {
           apply(nextPaint, window, [
             () => {
               if (coldGeneration === undefined || coldGeneration === appliedColdGeneration)
-                sendToEditor({ event: 'viewport-painted', reqId: d.reqId, coldGeneration })
+                sendToEditor({
+                  event: 'viewport-painted',
+                  reqId: d.reqId,
+                  ...(coldGeneration === undefined ? {} : { coldGeneration }),
+                })
             },
           ]),
       ])
     }
   }
   if (!browse && runtimePort && d.type === 'doop:pause-animations') setFrameAnimationPolicy(d.policy ?? null)
+  if (!browse && runtimePort && d.type === 'doop:far-overview') {
+    answer('doop:far-overview-result', d.reqId, { blocks: readFarOverviewBlocks() })
+    return
+  }
   annotationCommand(d)
   if (d.type === 'doop:inspect') answer('doop:inspect-result', d.reqId, { info: inspect(d.selector) })
   if (d.type === 'doop:root-fill') answer('doop:root-fill-result', d.reqId, { fill: rootFill() })
