@@ -90,6 +90,15 @@ admitted in batches and already loaded documents stay mounted as the camera move
 preserve the frame's theme and render at a density suited to the canvas zoom. While a document
 loads, its surface uses `--sub` (#f7f7f7 light, #242424 dark). Once ready, transparent HTML sits on white
 artboard paper. The floating HTML frame toolbar is temporarily opt-in with `doop:html-frame-toolbar`.
+
+The macOS Chromium cold-load experiment is enabled by setting `doop:cold-frame-skeleton` to `1` in
+local storage before opening the canvas. Pending HTML artboards use their existing size and stack
+with a static `--sub` to `--paper-deep` gradient and a one-screen-pixel `--line-soft` inset border.
+The surface takes no pointer events from the artboard and has no animation in either motion preference.
+After an intersecting iframe acknowledges the current HTML and returns the private runtime's two-frame
+callback reply, its cover disappears immediately. The reply indicates a rendering opportunity.
+Physical presentation and late resources still need verification in the native window.
+
 On macOS Chromium, live HTML on the editing canvas shows finite CSS and Web Animations effects at
 their completed state. Repeating effects rest at a fixed phase and CSS state changes apply immediately.
 Hover, selection and editing keep this static presentation. Present and the separate HTML Preview

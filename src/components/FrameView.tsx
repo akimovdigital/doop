@@ -396,6 +396,7 @@ export const FrameView = memo(function FrameView({
   frame,
   stack,
   loadDocument = true,
+  coldSkeleton = false,
   snapshots,
   compactSectionTitles = false,
   requestDocument,
@@ -409,6 +410,7 @@ export const FrameView = memo(function FrameView({
   /** its place in the page's paint order (the Stage's z-index), front highest */
   stack?: number
   loadDocument?: boolean
+  coldSkeleton?: boolean
   snapshots?: FrameSnapshots
   compactSectionTitles?: boolean
   requestDocument?: (frameId: string) => void
@@ -1069,6 +1071,8 @@ export const FrameView = memo(function FrameView({
   // acknowledged it. Inline edits already live there and set this on save.
   const htmlRequest = useRef(0)
   const [runtimeDocument, setRuntimeDocument] = useState<{ html: string; request: number } | null>(null)
+  const [coldSkeletonRevealed, setColdSkeletonRevealed] = useState(false)
+  const acknowledgeColdDocument = useRef<((request: number) => void) | undefined>(undefined)
   /* where the last right-click landed, in screen coordinates: Paste drops the
      frame there, and the menu's own box is not that point once Radix has
      flipped or shifted it away from a viewport edge */
@@ -1104,9 +1108,38 @@ export const FrameView = memo(function FrameView({
     const surface = surfaceRef.current
     let hasBeenVisible = false
     let paintRequest = 0
+    let visible = false
+    let coldDocument = 0
+    let coldProbe = 0
+    let pendingColdProbe = 0
+    function probeColdSkeleton() {
+      if (
+        !visible ||
+        !coldDocument ||
+        coldDocument !== htmlRequest.current ||
+        pendingColdProbe ||
+        !surface?.hasAttribute('data-frame-cold-skeleton')
+      )
+        return
+      // Negative IDs distinguish the cold handoff from the return-to-view paper.
+      pendingColdProbe = --coldProbe
+      sandbox?.postMessage({ type: 'doop:viewport-paint', reqId: pendingColdProbe }, '*')
+    }
+    if (coldSkeleton && !standalone) {
+      acknowledgeColdDocument.current = (request) => {
+        coldDocument = request
+        pendingColdProbe = 0
+        probeColdSkeleton()
+      }
+    }
     const stopObservingPaint =
       MAC_CHROMIUM_DESKTOP && !standalone && surface
-        ? observeFrameViewportPaint(liveFrame, (visible) => {
+        ? observeFrameViewportPaint(liveFrame, (intersects) => {
+            visible = intersects
+            if (coldSkeleton) {
+              if (visible) probeColdSkeleton()
+              else pendingColdProbe = 0
+            }
             if (visible) {
               hasBeenVisible = true
               if (surface.hasAttribute('data-frame-repainting'))
@@ -1148,6 +1181,13 @@ export const FrameView = memo(function FrameView({
       }
       if (relay?.event === 'viewport-painted') {
         if (relay.reqId === paintRequest) surface?.removeAttribute('data-frame-repainting')
+        if (pendingColdProbe && relay.reqId === pendingColdProbe && visible && coldDocument === htmlRequest.current) {
+          // The private reply follows two iframe callbacks. It gives the
+          // document a rendering opportunity, without proving presentation.
+          coldDocument = 0
+          pendingColdProbe = 0
+          setColdSkeletonRevealed(true)
+        }
         return
       }
       /* replayed on the iframe, the wheel bubbles to the stage, which zooms or pans
@@ -1238,12 +1278,13 @@ export const FrameView = memo(function FrameView({
     const off = onFrameMessage(sandbox, onMsg)
     return () => {
       stopObservingPaint?.()
+      acknowledgeColdDocument.current = undefined
       surface?.removeAttribute('data-frame-repainting')
       off()
       runtimePort.current?.close()
       runtimePort.current = null
     }
-  }, [mountRuntime, standalone])
+  }, [mountRuntime, standalone, coldSkeleton])
   /* the runtime insets its body by the margin once the iframe has grown by it */
   useLayoutEffect(() => {
     if (runtimeReady) iframeRef.current?.contentWindow?.postMessage({ type: 'doop:bleed', px: bleed }, '*')
@@ -1275,6 +1316,7 @@ export const FrameView = memo(function FrameView({
       noteFrameDocument(frame.id, html)
       if (cancelled) return
       setRuntimeDocument({ html, request })
+      acknowledgeColdDocument.current?.(request)
     })
     return () => {
       cancelled = true
@@ -2449,6 +2491,9 @@ export const FrameView = memo(function FrameView({
           <div
             data-frame-surface=""
             data-frame-document-deferred={!mountRuntime && frame.html ? '' : undefined}
+            data-frame-cold-skeleton={
+              coldSkeleton && !standalone && frame.html && !coldSkeletonRevealed ? '' : undefined
+            }
             ref={surfaceRef}
             className={cn(
               /* a standalone shape's stroke spills past its box */

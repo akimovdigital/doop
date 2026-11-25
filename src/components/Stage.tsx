@@ -1967,6 +1967,14 @@ function FrameStack({
 }) {
   const mounted = useMemo(() => [...frames].sort(byCreation), [frames])
   const rank = useMemo(() => new Map(frames.map((f, i) => [f.id, i + 1])), [frames])
+  const [coldSkeleton] = useState(() => {
+    if (!MAC_CHROMIUM_DESKTOP) return false
+    try {
+      return localStorage.getItem('doop:cold-frame-skeleton') === '1'
+    } catch {
+      return false
+    }
+  })
   const layer = useRef<HTMLDivElement>(null)
   const [snapshots] = useState(() => (MAC_CHROMIUM_DESKTOP ? undefined : new FrameSnapshots()))
   const prototypeMode = useStore((s) => s.prototypeMode)
@@ -2040,6 +2048,7 @@ function FrameStack({
             frame={f}
             stack={rank.get(f.id)}
             loadDocument={admitted.has(f.id)}
+            coldSkeleton={coldSkeleton}
             protectDocument={protect}
             snapshots={snapshots}
             compactSectionTitles={compactSectionTitles}
