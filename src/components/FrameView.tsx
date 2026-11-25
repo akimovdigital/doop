@@ -46,6 +46,7 @@ import { sendWs } from '../lib/ws'
 import { throttle } from '../lib/throttle'
 import { getIdentity } from '../lib/identity'
 import { FRAME_BOOTSTRAP } from '../lib/frameRuntime'
+import { coldFrameReceipt } from '../lib/coldFrameReceipt'
 import { observeFrameViewportPaint } from '../lib/frameViewportPaint'
 import { canSnapshotFrame, type FrameSnapshots } from '../lib/frameSnapshots'
 import { MOD_KEY } from '../lib/keys'
@@ -1072,6 +1073,7 @@ export const FrameView = memo(function FrameView({
   const htmlRequest = useRef(0)
   const [runtimeDocument, setRuntimeDocument] = useState<{ html: string; request: number } | null>(null)
   const [coldSkeletonRevealed, setColdSkeletonRevealed] = useState(false)
+  const coldApplication = useRef<{ generation: number; applied: () => void } | null>(null)
   const acknowledgeColdDocument = useRef<((request: number) => void) | undefined>(undefined)
   /* where the last right-click landed, in screen coordinates: Paste drops the
      frame there, and the menu's own box is not that point once Radix has
@@ -1116,14 +1118,14 @@ export const FrameView = memo(function FrameView({
       if (
         !visible ||
         !coldDocument ||
-        coldDocument !== htmlRequest.current ||
+        coldDocument !== coldApplication.current?.generation ||
         pendingColdProbe ||
         !surface?.hasAttribute('data-frame-cold-skeleton')
       )
         return
       // Negative IDs distinguish the cold handoff from the return-to-view paper.
       pendingColdProbe = --coldProbe
-      sandbox?.postMessage({ type: 'doop:viewport-paint', reqId: pendingColdProbe }, '*')
+      sandbox?.postMessage({ type: 'doop:viewport-paint', reqId: pendingColdProbe, coldGeneration: coldDocument }, '*')
     }
     if (coldSkeleton && !standalone) {
       acknowledgeColdDocument.current = (request) => {
@@ -1165,7 +1167,8 @@ export const FrameView = memo(function FrameView({
         | Partial<KeyRelay>
         | { event: 'edited'; html?: unknown; discrete?: boolean; edit?: unknown }
         | { event: 'settled'; reqId?: unknown }
-        | { event: 'viewport-painted'; reqId?: unknown }
+        | { event: 'cold-document-applied'; generation?: unknown }
+        | { event: 'viewport-painted'; reqId?: unknown; coldGeneration?: unknown }
         | Partial<WheelRelay>
         | undefined
       /* Inspector edits arrive while the panel holds focus. Only keys need
@@ -1179,9 +1182,30 @@ export const FrameView = memo(function FrameView({
         if (typeof relay.reqId === 'number') finishFrameSettle(iframe.contentWindow, relay.reqId)
         return
       }
+      if (relay?.event === 'cold-document-applied') {
+        const application = coldApplication.current
+        if (
+          ev.currentTarget === runtimePort.current &&
+          iframe === liveFrame &&
+          iframe.contentWindow === sandbox &&
+          application &&
+          application.generation === relay.generation
+        )
+          application.applied()
+        return
+      }
       if (relay?.event === 'viewport-painted') {
         if (relay.reqId === paintRequest) surface?.removeAttribute('data-frame-repainting')
-        if (pendingColdProbe && relay.reqId === pendingColdProbe && visible && coldDocument === htmlRequest.current) {
+        if (
+          ev.currentTarget === runtimePort.current &&
+          iframe === liveFrame &&
+          iframe.contentWindow === sandbox &&
+          pendingColdProbe &&
+          relay.reqId === pendingColdProbe &&
+          relay.coldGeneration === coldDocument &&
+          coldDocument === coldApplication.current?.generation &&
+          visible
+        ) {
           // The private reply follows two iframe callbacks. It gives the
           // document a rendering opportunity, without proving presentation.
           coldDocument = 0
@@ -1309,17 +1333,37 @@ export const FrameView = memo(function FrameView({
     const request = ++htmlRequest.current
     noteFrameDocument(frame.id, null)
     let cancelled = false
-    void requestFrame(frame.id, 'doop:html', { html: composed, basis }).then((reply) => {
+    const receipt = surfaceRef.current?.hasAttribute('data-frame-cold-skeleton')
+      ? coldFrameReceipt((recoverDocument) => {
+          if (recoverDocument) {
+            noteFrameDocument(frame.id, html)
+            setRuntimeDocument({ html, request })
+          }
+          acknowledgeColdDocument.current?.(request)
+        })
+      : null
+    if (receipt) coldApplication.current = { generation: request, applied: receipt.applied }
+    void requestFrame(frame.id, 'doop:html', {
+      html: composed,
+      basis,
+      ...(receipt ? { coldGeneration: request } : null),
+    }).then((reply) => {
       /* outdated: the runtime has edited since; that edit's save comes back instead */
-      if (!reply || reply.outdated || !iframe || iframeRef.current !== iframe || request !== htmlRequest.current) return
+      if (reply?.outdated || !iframe || iframeRef.current !== iframe || request !== htmlRequest.current) {
+        receipt?.cancel()
+        return
+      }
       /* the runtime shows it whether or not this effect is still current */
-      noteFrameDocument(frame.id, html)
-      if (cancelled) return
-      setRuntimeDocument({ html, request })
-      acknowledgeColdDocument.current?.(request)
+      if (reply) {
+        noteFrameDocument(frame.id, html)
+        if (!cancelled) setRuntimeDocument({ html, request })
+      }
+      receipt?.settled(reply !== null)
     })
     return () => {
       cancelled = true
+      receipt?.cancel()
+      if (coldApplication.current?.generation === request) coldApplication.current = null
     }
   }, [runtimeReady, html, composed, shared, frame.html, frame.id, editing, suspendPost, reloadRequest])
 

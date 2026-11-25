@@ -6,6 +6,8 @@ import { canvasFrame, openCanvasPage, showCanvasPage } from './canvasPageFixture
 declare global {
   interface Window {
     releaseColdFrameCallbacks: () => void
+    holdColdFrameHtml: boolean
+    heldColdFrameHtml: { html: string; data: unknown; time: number }[]
   }
 }
 
@@ -91,7 +93,10 @@ describe.skipIf(!findBrowserPath())('cold frame skeleton', () => {
     expect(appearance.dark.slice(1)).toEqual(['none', 'none', '0s'])
 
     // A normal window message from a design cannot substitute for the private port.
-    await child.evaluate(() => parent.postMessage({ event: 'viewport-painted', reqId: -1 }, '*'))
+    await child.evaluate(() => {
+      parent.postMessage({ event: 'cold-document-applied', generation: 1 }, '*')
+      parent.postMessage({ event: 'viewport-painted', reqId: -1, coldGeneration: 1 }, '*')
+    })
     expect(await surface.evaluate((el) => el.hasAttribute('data-frame-cold-skeleton'))).toBe(true)
 
     const originalWindow = (await iframe.evaluateHandle((el) => el.contentWindow))!
@@ -137,4 +142,78 @@ describe.skipIf(!findBrowserPath())('cold frame skeleton', () => {
     await next.evaluate(() => window.releaseColdFrameCallbacks())
     await page.waitForSelector(skeleton, { hidden: true })
   })
+
+  it('keeps the cover through the RPC timeout and lets the same live document recover applied HTML', async () => {
+    const page = await pages.open()
+    await page.evaluateOnNewDocument(holdColdHtml)
+    await openCanvasPage(page, [front])
+    const iframe = (await page.waitForSelector('iframe[data-doop-frame]'))!
+    const child = (await iframe.contentFrame())!
+    await child.waitForFunction(() => window.heldColdFrameHtml.length === 1)
+    const held = (await child.evaluate(() => window.heldColdFrameHtml[0]))!
+    await page.waitForFunction((time) => Date.now() - time >= 2250, {}, held.time)
+    expect(await page.$(skeleton)).not.toBeNull()
+    expect(await child.$('button')).toBeNull()
+    const originalWindow = await iframe.evaluateHandle((el) => el.contentWindow)
+
+    await child.evaluate(() => {
+      window.holdColdFrameHtml = false
+    })
+    await iframe.evaluate((el, data) => el.contentWindow!.postMessage(data, '*'), held.data)
+    await child.waitForSelector('button')
+    await page.waitForSelector(skeleton, { hidden: true, timeout: 3000 })
+    expect(await iframe.evaluate((el, win) => el.isConnected && el.contentWindow === win, originalWindow)).toBe(true)
+    expect(await child.$eval('button', (el) => el.textContent)).toBe('Live')
+    expect(await page.$eval('[data-frame-surface]', (el) => getComputedStyle(el, '::before').content)).toBe('""')
+  })
+
+  it('keeps a replacement request covered when the previous generation applies in the same iframe', async () => {
+    const page = await pages.open()
+    await page.evaluateOnNewDocument(holdColdHtml)
+    await openCanvasPage(page, [front])
+    const iframe = (await page.waitForSelector('iframe[data-doop-frame]'))!
+    const child = (await iframe.contentFrame())!
+    await child.waitForFunction(() => window.heldColdFrameHtml.length === 1)
+    const updated = { ...front, html: '<button>Replacement</button>' }
+    await page.evaluate((frame) => window.canvasPageHarness.seed([frame]), updated)
+    await child.waitForFunction(() => window.heldColdFrameHtml.some(({ html }) => html.includes('Replacement')))
+    const [old, current] = await child.evaluate(() => {
+      window.holdColdFrameHtml = false
+      return [window.heldColdFrameHtml[0], window.heldColdFrameHtml.find(({ html }) => html.includes('Replacement'))]
+    })
+    await iframe.evaluate((el, data) => el.contentWindow!.postMessage(data, '*'), old!.data)
+    await child.waitForSelector('button')
+    await child.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    )
+    expect(await page.$(skeleton)).not.toBeNull()
+    expect(await child.$eval('button', (el) => el.textContent)).toBe('Live')
+
+    await iframe.evaluate((el, data) => el.contentWindow!.postMessage(data, '*'), current!.data)
+    await page.waitForSelector(skeleton, { hidden: true, timeout: 3000 })
+    expect(await child.$eval('button', (el) => el.textContent)).toBe('Replacement')
+  })
 })
+
+function holdColdHtml() {
+  if (window === window.top) {
+    Object.defineProperties(window, {
+      __DOOP_DESKTOP__: { value: '0.15.0' },
+      __DOOP_DESKTOP_PLATFORM__: { value: 'macos' },
+    })
+    localStorage.setItem('doop:cold-frame-skeleton', '1')
+    return
+  }
+  window.holdColdFrameHtml = true
+  window.heldColdFrameHtml = []
+  window.addEventListener(
+    'message',
+    (event) => {
+      if (!window.holdColdFrameHtml || !event.isTrusted || event.source !== parent || event.data?.type !== 'doop:html')
+        return
+      event.stopImmediatePropagation()
+      window.heldColdFrameHtml.push({ html: event.data.html, data: event.data, time: Date.now() })
+    },
+    true,
+  )
+}

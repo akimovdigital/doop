@@ -95,8 +95,10 @@ The macOS Chromium cold-load experiment is enabled by setting `doop:cold-frame-s
 local storage before opening the canvas. Pending HTML artboards use their existing size and stack
 with a static `--sub` to `--paper-deep` gradient and a one-screen-pixel `--line-soft` inset border.
 The surface takes no pointer events from the artboard and has no animation in either motion preference.
-After an intersecting iframe acknowledges the current HTML and returns the private runtime's two-frame
-callback reply, its cover disappears immediately. The reply indicates a rendering opportunity.
+The runtime reports HTML application on its private port. The editor associates the receipt and the
+two-frame callback reply with the active document generation and intersecting iframe. If the normal
+HTML RPC has expired, the application receipt restores the editor's document bookkeeping. After the
+callback reply, the cover disappears immediately. The reply indicates a rendering opportunity.
 Physical presentation and late resources still need verification in the native window.
 
 On macOS Chromium, live HTML on the editing canvas shows finite CSS and Web Animations effects at

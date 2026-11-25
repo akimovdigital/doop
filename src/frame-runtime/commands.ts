@@ -73,6 +73,7 @@ interface Command extends AnnotationCommand {
   html?: unknown
   /** doop:html: the edit a document built from one of ours was made from */
   basis?: unknown
+  coldGeneration?: unknown
   command?: unknown
   id?: unknown
   cursor?: unknown
@@ -248,6 +249,7 @@ function answer(type: string, reqId: unknown, fields: Record<string, unknown>): 
 }
 
 const nextPaint = window.requestAnimationFrame
+let appliedColdGeneration: number | undefined
 
 function handle(d: Command, ev: MessageEvent): void {
   if (d.type === 'doop:runtime-port') {
@@ -258,10 +260,19 @@ function handle(d: Command, ev: MessageEvent): void {
     return
   }
   if (!browse && d.type === 'doop:viewport-paint' && runtimePort && typeof d.reqId === 'number') {
-    // A retained iframe may be throttled offscreen. Leave a paint between callbacks.
-    apply(nextPaint, window, [
-      () => apply(nextPaint, window, [() => sendToEditor({ event: 'viewport-painted', reqId: d.reqId })]),
-    ])
+    const coldGeneration = d.coldGeneration
+    if (coldGeneration === undefined || coldGeneration === appliedColdGeneration) {
+      // A retained iframe may be throttled offscreen. Leave a rendering opportunity between callbacks.
+      apply(nextPaint, window, [
+        () =>
+          apply(nextPaint, window, [
+            () => {
+              if (coldGeneration === undefined || coldGeneration === appliedColdGeneration)
+                sendToEditor({ event: 'viewport-painted', reqId: d.reqId, coldGeneration })
+            },
+          ]),
+      ])
+    }
   }
   if (!browse && runtimePort && d.type === 'doop:pause-animations') setFrameAnimationPolicy(d.policy ?? null)
   annotationCommand(d)
@@ -313,7 +324,12 @@ function handle(d: Command, ev: MessageEvent): void {
   if (d.type === 'doop:html' && typeof d.html === 'string' && !editing && outdated) {
     if (d.reqId) parent.postMessage({ type: 'doop:html-result', reqId: d.reqId, outdated: true }, '*')
   } else if (d.type === 'doop:html' && typeof d.html === 'string' && !editing) {
+    appliedColdGeneration = undefined
     render(d.html)
+    if (!browse && runtimePort && typeof d.coldGeneration === 'number') {
+      appliedColdGeneration = d.coldGeneration
+      sendToEditor({ event: 'cold-document-applied', generation: appliedColdGeneration })
+    }
     notifyFrameUpdated()
     protoHtmlChanged()
     if (d.reqId) parent.postMessage({ type: 'doop:html-result', reqId: d.reqId }, '*')
@@ -418,6 +434,14 @@ function handle(d: Command, ev: MessageEvent): void {
 }
 
 export function installCommands(): void {
+  // Navigation keeps the WindowProxy, but this generation belongs to this runtime document.
+  window.addEventListener(
+    'pagehide',
+    (ev) => {
+      if (isTrusted(ev)) appliedColdGeneration = undefined
+    },
+    true,
+  )
   window.addEventListener(
     'message',
     (ev) => {
