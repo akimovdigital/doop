@@ -123,6 +123,33 @@ it('rebuilds the body on revision, role, landing page, team, build and explicit 
   expect(reads()).toBe(7)
 })
 
+it('keys cached bodies by the hydrated pages and by who composes their frames', async () => {
+  const { init } = largeInit('page-format-variants')
+  const variant = (pageId: string, format: string): Init => ({
+    ...init,
+    loadedPageIds: [pageId],
+    canvas: {
+      ...init.canvas,
+      frames: [{ ...init.canvas.frames[0]!, pageId, html: `${format}:${init.canvas.frames[0]!.html}` }],
+    },
+  })
+  const first = variant('home', 'source')
+  const other = variant('about', 'source')
+  const legacy = variant('home', 'composed')
+  const decode = async (message: Init, composes: boolean) =>
+    JSON.parse(gunzipSync(Buffer.from(await wireRoomInitPayload(message, true, 1, composes))).toString()) as Init
+  for (const [message, composes] of [
+    [first, true],
+    [other, true],
+    [legacy, false],
+    [first, true],
+  ] as const) {
+    const wire = await decode(message, composes)
+    expect(wire.loadedPageIds).toEqual(message.loadedPageIds)
+    expect(wire.canvas.frames[0]?.html).toBe(message.canvas.frames[0]?.html)
+  }
+})
+
 it('evicts the least recently used body after four canvases', async () => {
   const entries = Array.from({ length: 5 }, (_, i) => largeInit(`cache-limit-${i}`))
   for (const { init } of entries.slice(0, 4)) await wireRoomInitPayload(init, true, 1)
@@ -151,7 +178,12 @@ it('evicts large bodies at the byte limit before reaching four canvases', async 
 
 it('invalidates even when an open write was cached and then rolled back', async () => {
   const { init } = largeInit('rollback-cache')
-  const canvas = init.canvas
+  const canvas = {
+    ...init.canvas,
+    components: undefined,
+    frames: init.canvas.frames.map((frame) => ({ ...frame, html: frame.html ?? '' })),
+  }
+  init.canvas = canvas
   canvas.pages = [{ id: 'home', name: 'Home' }]
   canvas.frames[0]!.pageId = 'home'
   store.init([canvas])

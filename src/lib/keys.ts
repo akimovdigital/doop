@@ -40,6 +40,14 @@ export function isTypingTarget(target: EventTarget | null): target is HTMLElemen
   return target instanceof HTMLElement && (target.matches('input, textarea, select') || target.isContentEditable)
 }
 
+/** Focus is in an open menu (a context or dropdown menu). As in Figma, the
+ *  canvas's shortcuts rest while one is open: a letter is the menu's
+ *  typeahead, moving to the item that starts with it, ↩, Tab, Esc and the
+ *  arrows walk and close it, and ⌘ chords and the clipboard do nothing. */
+export function isMenuTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('[role="menu"]') !== null
+}
+
 /** ⌘. (Ctrl+. elsewhere): Figma's "hide UI" — only the bare chord, so
  *  ⌘⇧. and ⌥-variants stay free for the browser and the OS. */
 export function isHideUiShortcut(e: Chord) {
@@ -146,4 +154,24 @@ export function reorderShortcut(e: Chord): ReorderMove | null {
   if (key !== ']' && key !== '[') return null
   if (e.altKey) return key === ']' ? 'front' : 'back'
   return key === ']' ? 'forward' : 'backward'
+}
+
+export type ProtoShortcut = 'back' | 'forward' | 'reload' | 'address' | 'annotate' | 'chat'
+
+/** Also inlined in the sandboxed screen; keep this independent of module state. */
+export function protoShortcut(event: KeyboardEvent): ProtoShortcut | undefined {
+  if (!event.metaKey || event.altKey || event.ctrlKey || event.isComposing) return
+  if (event.shiftKey) return event.key.toLowerCase() === 'd' ? 'annotate' : undefined
+  switch (event.key.toLowerCase()) {
+    case '[':
+      return 'back'
+    case ']':
+      return 'forward'
+    case 'r':
+      return 'reload'
+    case 'l':
+      return 'address'
+    case '/':
+      return 'chat'
+  }
 }

@@ -47,6 +47,7 @@ const studio: WorkspaceSummary = {
   canvasCount: 1,
   cancelAtPeriodEnd: false,
   libraryPublish: 'everyone',
+  linkSharing: 'allowed',
   createdAt: 1,
   updatedAt: 2,
 }

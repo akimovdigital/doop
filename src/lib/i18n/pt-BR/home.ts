@@ -92,6 +92,11 @@ export const home: Catalog['home'] = {
   share: 'Compartilhar',
   duplicating: 'Duplicando…',
   duplicate: 'Duplicar',
+  renameTitle: 'Renomear canvas',
+  canvasNameAria: 'Nome do canvas',
+  renaming: 'Salvando…',
+  move: 'Mover…',
+  moveToWorkspace: 'Mover para um workspace…',
 
   /* hero */
   greeting: 'Me diga o que desenhar',

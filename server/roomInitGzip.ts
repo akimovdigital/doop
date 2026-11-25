@@ -35,8 +35,7 @@ function forgetBody(canvasId: string) {
 function rememberBody(canvasId: string, body: Body) {
   const bytes = retainedBytes(body)
   if (bytes > MAX_CACHE_BYTES) return
-  while (cachedBytes + bytes > MAX_CACHE_BYTES || bodies.size >= MAX_CANVASES)
-    forgetBody(bodies.keys().next().value!)
+  while (cachedBytes + bytes > MAX_CACHE_BYTES || bodies.size >= MAX_CANVASES) forgetBody(bodies.keys().next().value!)
   bodies.set(canvasId, body)
   cachedBytes += bytes
 }
@@ -47,12 +46,13 @@ export async function wireRoomInitPayload(
   init: InitMessage,
   gzipEncoding: boolean,
   revision: number,
+  composes = false,
 ): Promise<Buffer | string> {
   const { canvas, type, ...header } = init
   // This is the rest of the same JSON object, including its closing brace.
   const suffix = ',' + JSON.stringify(header).slice(1)
   const { id, role, landingPageId, team } = canvas
-  const key = JSON.stringify([revision, role, landingPageId, team, header.serverBuild])
+  const key = JSON.stringify([revision, role, landingPageId, team, header.serverBuild, header.loadedPageIds, composes])
   let body = bodies.get(id)
   let prefix: string | undefined
   if (body?.key === key) {
@@ -78,9 +78,12 @@ export async function wireRoomInitPayload(
       const source = Buffer.from(prefix)
       // Full flush ends on a byte boundary and resets the deflate dictionary.
       // A fresh deflater can finish this stream with the per-join JSON suffix.
-      const job = deflateBody(source, { level: 1, finishFlush: constants.Z_FULL_FLUSH }).then(
-        (deflated) => ({ key, deflated, crc: crc32(source), bytes }),
-      )
+      const job = deflateBody(source, { level: 1, finishFlush: constants.Z_FULL_FLUSH }).then((deflated) => ({
+        key,
+        deflated,
+        crc: crc32(source),
+        bytes,
+      }))
       pending.jobs.set(key, job)
       pendingBodies.set(id, pending)
       try {

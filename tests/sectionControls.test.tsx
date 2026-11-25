@@ -72,7 +72,12 @@ beforeEach(() => {
       write(id, init?.method, body)
       const state = useStore.getState().canvas!
       if (init?.method === 'DELETE') {
-        const layout = removeSections(state, pageId, [id, ...body.additionalSections], body.keepContents)!
+        const layout = removeSections(
+          { ...state, components: undefined },
+          pageId,
+          [id, ...body.additionalSections],
+          body.keepContents,
+        )!
         pages = layout.pages
         return Promise.resolve(Response.json(layout))
       }

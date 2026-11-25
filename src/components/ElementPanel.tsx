@@ -259,9 +259,10 @@ export function ElementPanel({
   }
 
   /* closing the panel is only that: the element stays picked, its outline
-     and grips in place, and a second click on it opens the panel again */
+     and grips in place, and later picks leave it closed until the rail's
+     button opens it again */
   function close() {
-    useStore.getState().setElementPanelOpen(false)
+    useStore.getState().closeElementPanel()
   }
 
   const name = node ? layerName(node) : selector.split(' > ').at(-1)
@@ -764,6 +765,9 @@ function useTokenFields(frame: Frame, info: PaintInfo, apply: (styles: StylePatc
   return { tokens, bound, chip, menu }
 }
 
+/* a colour and its number (fill opacity, stroke width): the number's column
+   fits "100 %" and a two-digit "12 px" whole, the same in every such row */
+
 /** The Fill section: the paint's colour and opacity, token-bindable, and an
  *  image fill when the layer has one. The frame Inspector shows the same
  *  section for the frame's own fill. */
@@ -885,7 +889,7 @@ function DesignTab({
         : info.textAlign
   const flexAxis = flexSizeAxis(info)
   function modeFor(axis: 'width' | 'height') {
-    return flexAxis === axis && info.flexGrow > 0 ? 'fill' : sizeMode(info[`${axis}Value`])
+    return flexAxis === axis && (info.flexGrow ?? 0) > 0 ? 'fill' : sizeMode(info[`${axis}Value`])
   }
   function fixedSize(axis: 'width' | 'height', value: number): StylePatch {
     return {

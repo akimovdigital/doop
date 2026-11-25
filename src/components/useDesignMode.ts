@@ -94,7 +94,7 @@ export function useDesignMode({
   documentRevision: number
   pageUrl: string
   source?: DesignNote['source']
-  components?: ComponentDef[]
+  components?: readonly Pick<ComponentDef, 'id' | 'name'>[]
   getWindow: () => Window | undefined
   onDraft: (target: PreviewComposerTarget) => void
   onNavigate: (frameId: string, pageUrl: string) => void

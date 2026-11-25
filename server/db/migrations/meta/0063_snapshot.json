@@ -1,6 +1,6 @@
 {
-  "id": "58846a7e-1955-4a56-97af-c6d3d2b87623",
-  "prevId": "7d9ebb5a-5575-4fcf-a79f-16285f7d8dc5",
+  "id": "4117e25f-95e2-48ed-a391-6df80640ccde",
+  "prevId": "eab78bbb-bd19-418c-a13c-70bfe712d0be",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -358,10 +358,7 @@
       "compositePrimaryKeys": {
         "agent_overrides_scope_role_id_pk": {
           "name": "agent_overrides_scope_role_id_pk",
-          "columns": [
-            "scope",
-            "role_id"
-          ]
+          "columns": ["scope", "role_id"]
         }
       },
       "uniqueConstraints": {},
@@ -407,10 +404,7 @@
       "compositePrimaryKeys": {
         "asset_refs_asset_id_frame_id_pk": {
           "name": "asset_refs_asset_id_frame_id_pk",
-          "columns": [
-            "asset_id",
-            "frame_id"
-          ]
+          "columns": ["asset_id", "frame_id"]
         }
       },
       "uniqueConstraints": {},
@@ -816,20 +810,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "display_ext": {
-          "name": "display_ext",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'webp'"
-        },
-        "thumb_ext": {
-          "name": "thumb_ext",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'webp'"
-        },
         "width": {
           "name": "width",
           "type": "integer",
@@ -946,10 +926,7 @@
       "compositePrimaryKeys": {
         "canvas_members_canvas_id_user_id_pk": {
           "name": "canvas_members_canvas_id_user_id_pk",
-          "columns": [
-            "canvas_id",
-            "user_id"
-          ]
+          "columns": ["canvas_id", "user_id"]
         }
       },
       "uniqueConstraints": {},
@@ -1223,6 +1200,84 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.component_revisions": {
+      "name": "component_revisions",
+      "schema": "",
+      "columns": {
+        "canvas_id": {
+          "name": "canvas_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "component_id": {
+          "name": "component_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rev": {
+          "name": "rev",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "template": {
+          "name": "template",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "raw_css": {
+          "name": "raw_css",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "head": {
+          "name": "head",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "props": {
+          "name": "props",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "saved_at": {
+          "name": "saved_at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "saved_by": {
+          "name": "saved_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "render_rev": {
+          "name": "render_rev",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "component_revisions_canvas_id_component_id_rev_pk": {
+          "name": "component_revisions_canvas_id_component_id_rev_pk",
+          "columns": ["canvas_id", "component_id", "rev"]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.components": {
       "name": "components",
       "schema": "",
@@ -1315,7 +1370,8 @@
           "name": "history",
           "type": "jsonb",
           "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": "'[]'::jsonb"
         },
         "status": {
           "name": "status",
@@ -1353,6 +1409,12 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true
+        },
+        "render_rev": {
+          "name": "render_rev",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
@@ -1360,10 +1422,7 @@
       "compositePrimaryKeys": {
         "components_canvas_id_id_pk": {
           "name": "components_canvas_id_id_pk",
-          "columns": [
-            "canvas_id",
-            "id"
-          ]
+          "columns": ["canvas_id", "id"]
         }
       },
       "uniqueConstraints": {},
@@ -1647,10 +1706,7 @@
       "compositePrimaryKeys": {
         "design_tokens_canvas_id_name_pk": {
           "name": "design_tokens_canvas_id_name_pk",
-          "columns": [
-            "canvas_id",
-            "name"
-          ]
+          "columns": ["canvas_id", "name"]
         }
       },
       "uniqueConstraints": {},
@@ -2115,12 +2171,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "browser": {
-          "name": "browser",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
         "approval": {
           "name": "approval",
           "type": "jsonb",
@@ -2370,10 +2420,7 @@
       "compositePrimaryKeys": {
         "guidelines_canvas_id_name_pk": {
           "name": "guidelines_canvas_id_name_pk",
-          "columns": [
-            "canvas_id",
-            "name"
-          ]
+          "columns": ["canvas_id", "name"]
         }
       },
       "uniqueConstraints": {},
@@ -2684,10 +2731,7 @@
       "compositePrimaryKeys": {
         "library_components_canvas_id_id_pk": {
           "name": "library_components_canvas_id_id_pk",
-          "columns": [
-            "canvas_id",
-            "id"
-          ]
+          "columns": ["canvas_id", "id"]
         }
       },
       "uniqueConstraints": {},
@@ -2755,9 +2799,7 @@
         "linear_installations_user_id_unique": {
           "name": "linear_installations_user_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "user_id"
-          ]
+          "columns": ["user_id"]
         }
       },
       "policies": {},
@@ -3004,9 +3046,7 @@
         "live_activities_token_unique": {
           "name": "live_activities_token_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "token"
-          ]
+          "columns": ["token"]
         }
       },
       "policies": {},
@@ -3380,10 +3420,7 @@
       "compositePrimaryKeys": {
         "model_accounts_user_id_kind_pk": {
           "name": "model_accounts_user_id_kind_pk",
-          "columns": [
-            "user_id",
-            "kind"
-          ]
+          "columns": ["user_id", "kind"]
         }
       },
       "uniqueConstraints": {},
@@ -3586,9 +3623,7 @@
         "slack_installations_user_id_unique": {
           "name": "slack_installations_user_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "user_id"
-          ]
+          "columns": ["user_id"]
         }
       },
       "policies": {},
@@ -3855,11 +3890,7 @@
       "compositePrimaryKeys": {
         "sync_edges_key_id_from_page_to_page_pk": {
           "name": "sync_edges_key_id_from_page_to_page_pk",
-          "columns": [
-            "key_id",
-            "from_page",
-            "to_page"
-          ]
+          "columns": ["key_id", "from_page", "to_page"]
         }
       },
       "uniqueConstraints": {},
@@ -4449,10 +4480,7 @@
       "compositePrimaryKeys": {
         "workspace_members_workspace_id_user_id_pk": {
           "name": "workspace_members_workspace_id_user_id_pk",
-          "columns": [
-            "workspace_id",
-            "user_id"
-          ]
+          "columns": ["workspace_id", "user_id"]
         }
       },
       "uniqueConstraints": {},
@@ -4664,12 +4692,8 @@
           "name": "account_user_id_user_id_fk",
           "tableFrom": "account",
           "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -4754,16 +4778,12 @@
         "oauth_access_token_access_token_unique": {
           "name": "oauth_access_token_access_token_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "access_token"
-          ]
+          "columns": ["access_token"]
         },
         "oauth_access_token_refresh_token_unique": {
           "name": "oauth_access_token_refresh_token_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "refresh_token"
-          ]
+          "columns": ["refresh_token"]
         }
       },
       "policies": {},
@@ -4857,9 +4877,7 @@
         "oauth_application_client_id_unique": {
           "name": "oauth_application_client_id_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "client_id"
-          ]
+          "columns": ["client_id"]
         }
       },
       "policies": {},
@@ -4990,12 +5008,8 @@
           "name": "session_user_id_user_id_fk",
           "tableFrom": "session",
           "tableTo": "user",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -5005,9 +5019,7 @@
         "session_token_unique": {
           "name": "session_token_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "token"
-          ]
+          "columns": ["token"]
         }
       },
       "policies": {},
@@ -5096,9 +5108,7 @@
         "user_email_unique": {
           "name": "user_email_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "email"
-          ]
+          "columns": ["email"]
         }
       },
       "policies": {},

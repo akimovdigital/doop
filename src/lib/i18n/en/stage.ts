@@ -16,6 +16,8 @@ export const stage = {
   newFrame: 'New frame',
   pagesStrip: 'Pages',
   goToPage: 'Go to page',
+  /* a page whose frames are on their way from the room */
+  pageLoading: 'Loading page…',
 
   /* drawing, path editing, moving and resizing */
   textInputLabel: 'Text to add to canvas',

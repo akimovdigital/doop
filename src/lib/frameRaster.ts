@@ -2,6 +2,9 @@ import type { Frame } from '../../shared/types'
 import { importedPageSource } from '../../shared/importSource'
 import { colorAlpha } from './cssValues'
 import { computedStyles, hasFrameDocument, readBrowseCropResource, snapshotFrame } from './frameBridge'
+import { composeFrame } from './frameCompose'
+import { useStore } from './store'
+import { loadFramePages } from './ws'
 
 /**
  * Render a frame to an image in this browser: the document is inlined into
@@ -66,7 +69,7 @@ export async function rasterizeFrame(frame: Frame, opts: RasterOptions): Promise
   /* an unmounted frame renders from its saved HTML; a mounted one whose
      pixels cannot all be read is for the server */
   if (snapshot && snapshot.html === null) throw new Error('the frame cannot be drawn here')
-  const html = snapshot?.html ?? frame.html
+  const html = snapshot?.html ?? (await savedHtml(frame))
   const shrinkDecoder = opts.preview && !opts.clip && frame.width * frame.height > LARGE_PREVIEW_SOURCE_PIXELS
   const svg = await inlineDocument(html, {
     width: frame.width,
@@ -116,6 +119,14 @@ export async function rasterizeHtml(
   return drawSvg(svg, { ...viewport, ...opts, signal })
 }
 
+/** The HTML of a frame that is not on screen: read with its page first when
+ *  this browser has not loaded that page, so it never draws a blank or old copy. */
+async function savedHtml(frame: Frame): Promise<string> {
+  await loadFramePages([frame.id])
+  /* the store's source, as a document of its own: the canvas's styles composed in */
+  return composeFrame(useStore.getState().canvas?.frames.find((f) => f.id === frame.id)?.html ?? frame.html)
+}
+
 /** The frame as an SVG file: the same self-contained document the raster
  *  draws (an HTML page inside a `foreignObject`, every resource inlined), so
  *  it opens anywhere a browser renders SVG but is not editable vector art.
@@ -124,7 +135,7 @@ export async function frameSvg(frame: Frame, opts: { clip?: ClipRect; signal?: A
   const signal = opts.signal ?? AbortSignal.timeout(RESOURCE_FETCH_MS)
   const snapshot = await snapshotFrame(frame.id)
   if (snapshot && snapshot.html === null) throw new Error('the frame cannot be drawn here')
-  const svg = await inlineDocument(snapshot?.html ?? frame.html, {
+  const svg = await inlineDocument(snapshot?.html ?? (await savedHtml(frame)), {
     width: frame.width,
     height: frame.height,
     signal,
@@ -218,10 +229,13 @@ const VIEWPORT_MEDIA_FEATURE = /\b(?:width|height|orientation|aspect-ratio)\b/i
  *  aspect ratio, the person's colour scheme) is judged as the canvas does. */
 class FrameViewport {
   private frame: HTMLIFrameElement | null = null
-  constructor(
-    private readonly size: { width: number; height: number },
-    private readonly scaledPreview = false,
-  ) {}
+  private readonly size: { width: number; height: number }
+  private readonly scaledPreview: boolean
+
+  constructor(size: { width: number; height: number }, scaledPreview = false) {
+    this.size = size
+    this.scaledPreview = scaledPreview
+  }
 
   /** before url()s are inlined, so no data: URL is ever rewritten */
   units(css: string): string {
@@ -646,13 +660,22 @@ async function previewBlob(
 class ResourceCache {
   private readonly pending = new Map<string, Promise<Blob | null>>()
   private readonly budget: AbortSignal | undefined
+  readonly signal: AbortSignal
+  /** settles each imported stylesheet as `inlineDocument` does the page's */
+  private readonly viewport: FrameViewport | null
+  readonly preview: RasterOptions['preview']
+  private readonly source: Parameters<typeof readBrowseCropResource>[0] | undefined
+
   constructor(
-    readonly signal: AbortSignal,
-    /** settles each imported stylesheet as `inlineDocument` does the page's */
-    private readonly viewport: FrameViewport | null = null,
-    readonly preview?: RasterOptions['preview'],
-    private readonly source?: Parameters<typeof readBrowseCropResource>[0],
+    signal: AbortSignal,
+    viewport: FrameViewport | null = null,
+    preview?: RasterOptions['preview'],
+    source?: Parameters<typeof readBrowseCropResource>[0],
   ) {
+    this.signal = signal
+    this.viewport = viewport
+    this.preview = preview
+    this.source = source
     if (preview?.resourceBudgetMs !== undefined) this.budget = AbortSignal.timeout(preview.resourceBudgetMs)
   }
 

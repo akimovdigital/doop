@@ -1,24 +1,16 @@
 import { Window } from 'happy-dom'
 import { expect, it } from 'vitest'
-import { FRAME_ANNOTATION_CSS_RUNTIME } from '../src/lib/frameAnnotationCss'
-
-type PreviewTarget = { selector: string; properties: Record<string, string> }
+import { annotationCss } from '../src/frame-runtime/annotationCss'
 
 function setup(html: string) {
   const { document, CSS } = new Window()
   document.body.innerHTML = html
-  const sync = new Function(
-    'document',
-    'CSS',
-    'styleTarget',
-    'annotationChanged',
-    FRAME_ANNOTATION_CSS_RUNTIME + '\nreturn syncAnnotationCss',
-  )(
-    document,
-    CSS,
-    (selector: string) => document.querySelector(selector),
+  const sync = annotationCss(
+    (selector) => document.querySelector(selector) as unknown as HTMLElement | null,
+    () => document.createElement('div').style as unknown as CSSStyleDeclaration,
+    (name, value) => CSS.supports(name, value),
     () => {},
-  ) as (targets: PreviewTarget[]) => void
+  )
   return { sync, heading: document.querySelector('h1')! }
 }
 

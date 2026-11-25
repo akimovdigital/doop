@@ -1,15 +1,16 @@
 import type { Actor, Frame } from '../shared/types.ts'
-import * as actions from './actions.ts'
+import { runImportWrite, type CreateImportedFrame } from './canvasWrites.ts'
 import { importedPageSource, importPage, normalizeImportUrl, type ImportedPage } from './importer.ts'
 
 interface WebpageImportDependencies {
   importPage: typeof importPage
-  createFrame: typeof actions.createFrame
+  createFrame: CreateImportedFrame
 }
 
 const dependencies: WebpageImportDependencies = {
   importPage,
-  createFrame: actions.createFrame,
+  createFrame: (canvasId, input, actor) =>
+    runImportWrite('webpage import', canvasId, { type: 'create-frame', input, actor }),
 }
 
 export interface ImportedWebpageFrame {
@@ -35,13 +36,15 @@ export async function createImportedWebpageFrame(
     url: string
     actor: Actor
     includePreview?: boolean
+    placement?: { pageId?: string; x?: number; y?: number }
   },
   deps: WebpageImportDependencies = dependencies,
 ): Promise<ImportedWebpageFrame> {
   const imported = await deps.importPage(input.url, { includePreview: input.includePreview })
-  const frame = deps.createFrame(
+  const frame = await deps.createFrame(
     input.canvasId,
     {
+      ...input.placement,
       name: imported.title.slice(0, 80),
       width: imported.width,
       height: imported.height,

@@ -1,5 +1,6 @@
 {
   "productName": "Doop Dev",
+  "version": "0.15.0",
   "identifier": "digital.akimov.doop-test",
   "build": {
     "frontendDist": "http://127.0.0.1:4437"

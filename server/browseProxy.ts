@@ -1,7 +1,8 @@
 import { createHmac, randomBytes } from 'node:crypto'
 import { defaultTreeAdapter as tree, html, parse, serialize, type DefaultTreeAdapterTypes as Node } from 'parse5'
-import { frameRuntime } from '../src/lib/frameRuntime'
-import { fetchPinnedPublicUrl, PublicNetworkUrlError } from './publicUrl'
+import { readFile } from 'node:fs/promises'
+import { env } from './env.ts'
+import { fetchPinnedPublicUrl, PublicNetworkUrlError } from './publicUrl.ts'
 
 const LIMIT = 10_000_000
 const TIMEOUT = 15_000
@@ -17,11 +18,10 @@ export function browseSessionToken(userId: string, canvasId: string, url: string
 }
 
 export class BrowseProxyError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
+  readonly status: number
+  constructor(status: number, message: string) {
     super(message)
+    this.status = status
   }
 }
 
@@ -68,7 +68,19 @@ async function boundedBody(response: Response, signal: AbortSignal, limit = LIMI
   return Buffer.concat(chunks, size)
 }
 
-function injectedHtml(source: string, url: URL, nonce: string, token: string) {
+let runtimeScript: Promise<string> | undefined
+function browseRuntime(): Promise<string> {
+  return (runtimeScript ??= (
+    env.NODE_ENV === 'production'
+      ? readFile(new URL('../dist/frame-runtime.js', import.meta.url), 'utf8')
+      : import('../src/frame-runtime/build.ts').then(async ({ buildFrameRuntime }) => (await buildFrameRuntime()).code)
+  ).catch((error: unknown) => {
+    runtimeScript = undefined
+    throw error
+  }))
+}
+
+async function injectedHtml(source: string, url: URL, nonce: string, token: string) {
   const doc = parse(source)
   const root = doc.childNodes.find((node): node is Node.Element => tree.isElementNode(node) && node.tagName === 'html')!
   const [head, body] = root.childNodes.filter(tree.isElementNode) as [Node.Element, Node.Element]
@@ -111,8 +123,10 @@ function injectedHtml(source: string, url: URL, nonce: string, token: string) {
   const script = tree.createElement('script', html.NS.HTML, [
     { name: 'nonce', value: nonce },
     { name: 'data-v-boot', value: '' },
+    { name: 'data-v-browse-token', value: token },
+    { name: 'data-v-browse-url', value: url.href },
   ])
-  tree.insertText(script, frameRuntime({ token, url: url.href }))
+  tree.insertText(script, await browseRuntime())
   if (head.childNodes[1]) tree.insertBefore(head, script, head.childNodes[1])
   else tree.appendChild(head, script)
   return Buffer.from(serialize(doc))
@@ -168,7 +182,7 @@ async function load(
     } catch {
       decoder = new TextDecoder()
     }
-    const body = injectedHtml(decoder.decode(bytes), url, nonce, token)
+    const body = await injectedHtml(decoder.decode(bytes), url, nonce, token)
     if (body.length > LIMIT) throw new BrowseProxyError(413, 'Remote page exceeds 10 MB')
     headers['content-type'] = 'text/html; charset=utf-8'
     headers['content-security-policy'] = [

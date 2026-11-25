@@ -7,7 +7,7 @@ export interface CropViewport {
   scrollY: number
 }
 
-/** Also serialized into the sandbox bootstrap. Keep its dependencies local. */
+/** Shared by the annotation controls and the sandbox runtime. */
 export function planDesignCrop(rects: ClipRect[], viewport: CropViewport, dpr: number) {
   function clipToViewport(rect: ClipRect): ClipRect | null {
     const left = Math.max(0, Math.floor(rect.x))
@@ -44,7 +44,7 @@ export interface FrameCropReply {
   png: Blob | null
 }
 
-/** Serialized into the sandbox bootstrap so the opaque iframe reads its own DOM.
+/** Runs in the sandbox so the opaque iframe reads its own DOM.
  * Capture computed styles synchronously, then resolve raster resources without
  * touching the live document or running its scripts in the SVG. */
 export async function paintFrameCrop(

@@ -35,7 +35,7 @@ it.each([
       }
     }
     exposeGetters(FrameKeyboardEvent.prototype, ['key', 'code', 'ctrlKey', 'metaKey', 'shiftKey', 'altKey', 'repeat'])
-    exposeGetters(FrameMessageEvent.prototype, ['source', 'data'])
+    exposeGetters(FrameMessageEvent.prototype, ['source', 'data', 'ports'])
     Object.assign(frame, { KeyboardEvent: FrameKeyboardEvent, MessageEvent: FrameMessageEvent, MessagePort })
     // The bootstrap also listens for font loads, which Happy DOM does not implement.
     Object.defineProperty(doc, 'fonts', { value: new frame.EventTarget() })

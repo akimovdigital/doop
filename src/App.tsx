@@ -4,10 +4,13 @@ import { lazy, startTransition, Suspense, useEffect, useRef, useState } from 're
 import { Home } from './pages/Home'
 import { CanvasPage } from './pages/CanvasPage'
 import { AuthPage } from './pages/AuthPage'
+import { EditorConnect } from './pages/EditorConnect'
+import { EDITOR_CONNECT_PATH } from '../shared/editorConnect'
 import { DESKTOP_CONNECT_PATH } from '../shared/desktopConnect'
 import { CODEX_SETUP_PATH } from './lib/codexConnection'
 import { DESKTOP_HANDOFF_PATH, DESKTOP_SIGNIN_PATH } from './lib/desktopAuth'
 import { UpgradeHost } from './components/UpgradeHost'
+import { FeedbackHost } from './components/FeedbackModal'
 import { authClient } from './lib/auth'
 import { useStore } from './lib/store'
 import { setName } from './lib/identity'
@@ -72,6 +75,10 @@ export function App() {
     firstSplit && s.split ? s.tabs.find((tab) => tab.id === s.split?.[1]) : undefined,
   )
   const { data: session, isPending } = authClient.useSession()
+  // Better Auth marks signed-out refetches pending too. Only the first
+  // lookup needs a loading screen; later checks must preserve the open form.
+  const [sessionChecked, setSessionChecked] = useState(!isPending)
+  if (!sessionChecked && !isPending) setSessionChecked(true)
   /* a signed-out guest on a share link asked for the sign-in form */
   const [guestAuth, setGuestAuth] = useState<'signin' | 'signup' | null>(null)
   const signInRequired = useStore((s) => s.signInRequired)
@@ -152,7 +159,7 @@ export function App() {
     if (localAgentUser && window === window.top) return startLocalAgent(localAgentUser)
   }, [localAgentUser])
 
-  if (isPending)
+  if (isPending && !sessionChecked)
     return (
       <>
         <ShellDragBar />
@@ -230,6 +237,8 @@ export function App() {
     <DesktopCodexSetup key={route} />
   ) : path === DESKTOP_HANDOFF_PATH ? (
     <DesktopHandoff />
+  ) : path === EDITOR_CONNECT_PATH ? (
+    <EditorConnect email={session.user.email} />
   ) : path === '/oauth/consent' ? (
     <OAuthConsent email={session.user.email} />
   ) : path.startsWith('/admin') ? (
@@ -253,6 +262,7 @@ export function App() {
     <>
       <Suspense fallback={<AuthScreen />}>{screen}</Suspense>
       <UpgradeHost />
+      <FeedbackHost />
     </>
   )
 

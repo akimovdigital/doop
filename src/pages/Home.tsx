@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { Canvas, CanvasMeta, WorkspaceSummary } from '../../shared/types'
+import type { ClientCanvas, CanvasMeta, WorkspaceSummary } from '../../shared/types'
 import { colorFor } from '../../shared/types'
+import { MAX_CANVAS_NAME } from '../../shared/pages'
 import { api, errorMessage, paywalledWorkspace } from '../lib/api'
 import { authClient } from '../lib/auth'
 import { useUserEvents } from '../hooks/use-user-events'
@@ -27,7 +28,6 @@ import { IosAppPrompt } from '../components/NativeAppPromo'
 import { StarCard } from '../components/StarCard'
 import { SourcePicker } from '../components/ImportSources'
 import { importSources } from '../components/importSourceList'
-import { Modal } from '../components/ui/modal'
 import { ShareModal } from '../components/ShareModal'
 import { CreateWorkspaceModal, MoveCanvasModal, UpgradeModal } from '../components/WorkspaceModals'
 import { posthog } from '../lib/posthog'
@@ -46,6 +46,7 @@ import { shortcutKey } from '../lib/keys'
 import { AvatarStack } from '../components/ui/avatar'
 import { EmptyState } from '../components/ui/empty-state'
 import { Button } from '../components/ui/button'
+import { Modal } from '../components/ui/modal'
 import { Input } from '../components/ui/input'
 import { IconButton } from '../components/ui/icon-button'
 import { MenuButton } from '../components/ui/menu-button'
@@ -126,7 +127,7 @@ export function Home() {
   })
   const [sort, setSort] = useState<Sort>('updated')
   const [view, setView] = useState<'grid' | 'list'>('grid')
-  const [shareCanvas, setShareCanvas] = useState<Canvas | null>(null)
+  const [shareCanvas, setShareCanvas] = useState<ClientCanvas | null>(null)
   const [deleteCanvas, setDeleteCanvas] = useState<CanvasMeta | null>(null)
   const [moveCanvas, setMoveCanvas] = useState<CanvasMeta | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
@@ -921,6 +922,7 @@ function CanvasNameInput({
     <Input
       ref={inputRef}
       defaultValue={name}
+      maxLength={MAX_CANVAS_NAME}
       aria-label={t('home.renameCanvasAria')}
       className="h-7 min-w-0 flex-1 py-0 text-body"
       onBlur={(event) => finish(true, event.currentTarget.value)}

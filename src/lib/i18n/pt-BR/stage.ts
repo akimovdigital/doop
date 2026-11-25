@@ -16,6 +16,7 @@ export const stage: Catalog['stage'] = {
   newFrame: 'Novo frame',
   pagesStrip: 'Páginas',
   goToPage: 'Ir para a página',
+  pageLoading: 'Carregando página…',
 
   /* drawing, path editing, moving and resizing */
   textInputLabel: 'Texto a adicionar ao canvas',

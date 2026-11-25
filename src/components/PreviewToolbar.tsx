@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
+  CommentIcon,
   DesktopIcon,
   ExportIcon,
   HistoryIcon,
@@ -32,6 +33,10 @@ import {
 type Screen = { id: string; name: string }
 
 interface PreviewToolbarProps {
+  hidden?: boolean
+  frameMenu?: ReactNode
+  onComment?: () => void
+  commenting?: boolean
   annotationHint?: ReactNode
   annotationControls?: ReactNode
   addressRef: RefObject<HTMLInputElement>
@@ -65,10 +70,12 @@ export function PreviewToolbar(props: PreviewToolbarProps) {
   return (
     <div
       data-preview-toolbar=""
+      data-proto-bar=""
       role="group"
       aria-label={t('panels.protoToolbar')}
       className={cn(
-        'dark @container relative z-10 flex h-9 shrink-0 items-center gap-1.5 border-b border-line bg-surface px-1.5 text-ink sm:gap-2 sm:px-2',
+        'dark @container relative z-10 flex h-10 shrink-0 items-center gap-1.5 border-b border-line bg-surface px-1.5 text-ink sm:gap-2 sm:px-2',
+        props.hidden && 'invisible',
         minimized && 'rounded-t-panel',
         previewTrafficLightsClass(!minimized),
         props.annotationHint && 'border-brand/30',
@@ -97,15 +104,32 @@ export function PreviewToolbar(props: PreviewToolbarProps) {
           {canvasId && <PreviewAddress key={frameId} {...props} canvasId={canvasId} />}
         </>
       )}
+      {!props.annotationHint && <div className="hidden min-w-0 @md:block">{props.frameMenu}</div>}
       <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
         <IconButton size="sm" aria-label={t('panels.protoRestart')} onClick={props.onRestart}>
           <HistoryIcon size="rail" />
         </IconButton>
-        {props.onDesignMode ? (
-          <DesignModeToggle enabled={!!props.designModeOn} onToggle={props.onDesignMode} />
-        ) : (
-          <IconButton size="sm" aria-label={t('panels.protoHotspots')} onClick={props.onHotspots}>
+        {props.onDesignMode && <DesignModeToggle enabled={!!props.designModeOn} onToggle={props.onDesignMode} />}
+        {!props.designModeOn && (
+          <IconButton
+            size="sm"
+            data-proto-hotspots=""
+            aria-label={t('panels.protoHotspots')}
+            onClick={props.onHotspots}
+          >
             <HotspotIcon size="rail" />
+          </IconButton>
+        )}
+        {props.onComment && (
+          <IconButton
+            size="sm"
+            data-proto-comments=""
+            aria-label={t('panels.protoComments')}
+            title={t('panels.protoCommentsTitle')}
+            aria-pressed={props.commenting}
+            onClick={props.onComment}
+          >
+            <CommentIcon size="rail" />
           </IconButton>
         )}
         <ScalingMenu scaling={props.scaling} onChange={props.onScalingChange} onClose={props.onMenuClose} />

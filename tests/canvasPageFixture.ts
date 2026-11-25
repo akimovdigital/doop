@@ -1,4 +1,6 @@
 import type { Page } from 'puppeteer-core'
+import type { WireComponentDef } from '../shared/components'
+import type { DesignToken } from '../shared/designTokens'
 import type { Canvas, CanvasPageInfo, Frame } from '../shared/types'
 import { fixtureUrl } from './browser'
 
@@ -13,6 +15,12 @@ declare global {
       select: (id: string | null) => void
       setCamera: (viewport: { x: number; y: number; zoom: number }) => void
       componentTypes: { stage: unknown; frame: unknown }
+      /** the canvas's tokens as the room's `tokens` message would set them */
+      setTokens: (tokens: DesignToken[], themes: string[]) => void
+      /** a component as the room's `component` message would set it */
+      setComponent: (component: WireComponentDef) => void
+      /** the frame's HTML as the store holds it */
+      frameHtml: (id: string) => string
     }
   }
 }

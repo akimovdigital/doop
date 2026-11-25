@@ -1,6 +1,17 @@
+import { createHash } from 'node:crypto'
 import { PREVIEW_MAX_HEIGHT, type Frame } from '../shared/types.ts'
 import * as storage from './storage.ts'
 import { store } from './store.ts'
+import { stampRender } from './frameCompose.ts'
+import {
+  componentDependency,
+  renderStamp,
+  stampCurrent,
+  stampDependencies,
+  THEMES_DEPENDENCY,
+  tokenDependency,
+  type RenderStamp,
+} from './styleVersion.ts'
 
 /**
  * Persisted dashboard previews: `thumb/<frameId>.jpg` in byte storage,
@@ -10,14 +21,15 @@ import { store } from './store.ts'
  * cache — so a dashboard never shows blank tiles waiting on Chromium: a
  * possibly-stale thumbnail is served instantly and refreshed in the
  * background. The key is deliberately unversioned; freshness lives in the
- * in-memory `written` map (frameId → the frame.updatedAt the stored thumb
+ * in-memory `written` map (frameId → the render version the stored thumb
  * was rendered from). After a restart freshness is simply unknown, which
  * degrades to one background re-render per previewed frame — never to a
  * blank tile.
  */
 
-/** frame.updatedAt the stored thumb was rendered from; absent = unknown */
-const written = new Map<string, number>()
+/** what the stored thumb was rendered from: the frame's version and what its canvas
+ *  supplied to it (styleVersion.ts); absent = unknown */
+const written = new Map<string, RenderStamp>()
 /** in-flight render+persist per frame — concurrent callers share it */
 const pending = new Map<string, Promise<Buffer>>()
 /** background revalidation throttle: an agent saving every few seconds
@@ -31,6 +43,22 @@ export type ThumbKind = 'card' | 'canvas'
 
 const keyFor = (frameId: string, kind: ThumbKind) =>
   kind === 'canvas' ? `thumb/${frameId}-canvas-v1.bin` : `thumb/${frameId}.jpg`
+
+/** Style counters live in memory. On disk, use a digest of the resources the
+ *  captured document used so a restart cannot make an old counter look current. */
+function styleKey(frame: Frame, dependencies: readonly string[]): string {
+  const canvas = store.getCanvas(frame.canvasId)
+  const used = new Set(dependencies)
+  const tokens = canvas?.tokens?.filter((token) => used.has(tokenDependency(token.name))) ?? []
+  const components =
+    canvas?.components
+      ?.filter((def) => used.has(componentDependency(def.id)))
+      .map(({ id, name, css, head, template, props }) => ({ id, name, css, head, template, props })) ?? []
+  const themes = used.has(THEMES_DEPENDENCY) ? (canvas?.tokenThemes ?? []) : []
+  return createHash('sha256')
+    .update(JSON.stringify([themes, tokens, components]))
+    .digest('hex')
+}
 
 /* Reduce density before capture so long pages keep their bottom edge. */
 function canvasDensity({ width, height }: Frame) {
@@ -52,21 +80,23 @@ const loadScreenshot = () => (screenshot ??= import('./screenshot.ts'))
 
 /** The preview render: card-sized, clipped, cheap — matches what /i/?preview
  *  serves, because this IS what /i/?preview serves. */
-async function render(frame: Frame, kind: ThumbKind) {
+async function render(frame: Frame, kind: ThumbKind, stamp: RenderStamp) {
   if (active >= MAX_CONCURRENT_RENDERS) await new Promise<void>((r) => waiting.push(r))
   active++
   try {
     const { renderFrame } = await loadScreenshot()
     /* Read the latest visual state only when the render starts. */
     const source = await store.renderSource(frame)
+    stampRender(stamp, source)
     const canvas = kind === 'canvas'
+    const styles = canvas ? styleKey(source, stamp.dependencies ?? []) : undefined
     const buf = await renderFrame(source, canvas ? canvasDensity(source) : Math.min(1, 640 / source.width), {
       type: 'jpeg',
       quality: canvas ? 76 : 70,
       ...(canvas ? { canvasSnapshot: true } : { maxHeight: PREVIEW_MAX_HEIGHT }),
       priority: 'background',
     })
-    return { buf, updatedAt: source.updatedAt }
+    return { buf, styles }
   } finally {
     active--
     waiting.shift()?.()
@@ -75,24 +105,24 @@ async function render(frame: Frame, kind: ThumbKind) {
 
 /** Render now, persist, and return the bytes. Deduped per frame; rejects on
  *  render failure (the caller decides what a failed render means). */
-export function create(frame: Frame, kind: ThumbKind = 'card'): Promise<Buffer> {
+export function create(frame: Frame, kind: ThumbKind = 'card', stamp = renderStamp(frame)): Promise<Buffer> {
   const key = keyFor(frame.id, kind)
   const inflight = pending.get(key)
   if (inflight) return inflight
   lastAttempt.set(key, Date.now())
-  const p = render(frame, kind).then(async ({ buf, updatedAt }) => {
+  const p = render(frame, kind, stamp).then(async ({ buf, styles }) => {
     /* persist is best-effort: a bucket hiccup must not fail the response
        that only needed the bytes */
     try {
       if (!dead.has(frame.id)) {
         if (kind === 'canvas') {
-          // Keep the revision and image in one atomic object across restarts.
-          const snapshot = Buffer.concat([Buffer.from(`${updatedAt}\n`), buf])
+          // Keep the version, shared style stamp and image in one atomic object.
+          const snapshot = Buffer.concat([Buffer.from(JSON.stringify({ ...stamp, styles }) + '\n'), buf])
           await storage.putObject(key, snapshot, 'application/octet-stream')
         } else {
           await storage.putObject(key, buf, 'image/jpeg')
-          written.set(key, updatedAt)
         }
+        if (!dead.has(frame.id)) written.set(key, stamp)
         /* purge may have run during the put — its delete can land before
            our write finishes, so re-check and clean up our own orphan */
         if (dead.has(frame.id)) await storage.deleteObject(key)
@@ -128,16 +158,47 @@ export async function getStored(frame: Frame, kind: ThumbKind = 'card'): Promise
     return null
   }
   if (kind === 'canvas') {
-    const header = Buffer.from(`${frame.updatedAt}\n`)
-    return buf.length > header.length && buf.subarray(0, header.length).equals(header)
-      ? buf.subarray(header.length)
-      : null
+    const end = buf.indexOf(10)
+    if (end <= 0 || end >= buf.length - 1 || end > 65_536) return null
+    try {
+      const header = JSON.parse(buf.toString('utf8', 0, end)) as (RenderStamp & { styles?: string }) | number
+      if (typeof header === 'number') {
+        // Older captures had only a frame version. Reuse when the canvas
+        // supplies no shared styles that could have changed without a write.
+        const canvas = store.getCanvas(frame.canvasId)
+        if (
+          header !== frame.updatedAt ||
+          frame.rendered !== undefined ||
+          canvas?.tokens?.length ||
+          canvas?.components?.length
+        )
+          return null
+        written.set(key, renderStamp(frame))
+      } else {
+        if (
+          header.updatedAt !== frame.updatedAt ||
+          header.rendered !== frame.rendered ||
+          header.styles !== styleKey(frame, header.dependencies ?? [])
+        )
+          return null
+        written.set(key, stampDependencies(frame.canvasId, renderStamp(frame), header.dependencies ?? []))
+      }
+      return buf.subarray(end + 1)
+    } catch {
+      return null
+    }
   }
-  const fresh = written.get(key) === frame.updatedAt
+  const fresh = stampCurrent(frame, written.get(key))
   const throttled = Date.now() - (lastAttempt.get(key) ?? 0) < MIN_REVALIDATE_MS
   if (!fresh && !throttled && !pending.has(key))
     create(frame).catch((e) => console.error(`thumb revalidate failed for ${frame.id}:`, e))
   return buf
+}
+
+/** What the stored thumb of this frame was rendered from, when that is known and still current. */
+export function stampOf(frame: Frame, kind: ThumbKind = 'card'): RenderStamp | undefined {
+  const stamp = written.get(keyFor(frame.id, kind))
+  return stampCurrent(frame, stamp) ? stamp : undefined
 }
 
 /** Frame (or its whole canvas) is gone — drop the derived object too, so the

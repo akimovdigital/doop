@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { useT } from '@/lib/i18n'
 import { AgentIcon } from './AgentIcon'
 import { DotMatrix } from './ui/dot-matrix'
+import { Markdown } from './Markdown'
 import { chatTurns, chatTurnsKey, type ChatTurn } from '../lib/agentChat'
 
 /** How close to the bottom still counts as reading the latest answer. */
@@ -95,7 +96,7 @@ function AgentAnswer({ turn }: { turn: ChatTurn }) {
   if (turn.reply)
     return (
       <>
-        <p className="break-words whitespace-pre-line">{turn.reply}</p>
+        <Markdown source={turn.reply} />
         {failure}
       </>
     )

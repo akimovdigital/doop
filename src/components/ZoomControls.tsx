@@ -3,7 +3,6 @@ import { useStore } from '../lib/store'
 import { useIsMobile } from '../hooks/use-mobile'
 import { ALT_KEY, MOD_KEY } from '../lib/keys'
 import { parseZoomPercent } from '../lib/viewOptions'
-import { cn } from '../lib/utils'
 import { MenuHint } from './ui/menu'
 import {
   DropdownMenu,
@@ -59,18 +58,17 @@ export function ZoomControls({
   }
   /* phones have no room for shortcut hints, and no keyboard to use them */
   const hint = (keys: string) => !isMobile && <MenuHint>{keys}</MenuHint>
-  const stepBtn = 'min-h-0'
 
   return (
     <Toolbar className="h-9 shrink-0 gap-0.5 px-1 py-0">
-      <ToolbarButton aria-label={t('canvas.zoomOut')} className={stepBtn} onClick={onZoomOut}>
+      <ToolbarButton aria-label={t('canvas.zoomOut')} onClick={onZoomOut}>
         <MinusIcon />
       </ToolbarButton>
       <DropdownMenu open={open} onOpenChange={onOpenChange}>
         <DropdownMenuTrigger asChild>
           <ToolbarButton
             aria-label={t('canvas.zoomLevel')}
-            className={cn(stepBtn, 'w-auto min-w-[48px] px-1.5 font-mono text-[12px] text-ink sm:w-auto sm:px-1.5')}
+            className="w-auto min-w-[48px] px-1.5 font-mono text-[12px] text-ink md:w-auto md:px-1.5"
           >
             <span ref={labelRef}>100%</span>
           </ToolbarButton>
@@ -142,7 +140,7 @@ export function ZoomControls({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <ToolbarButton aria-label={t('canvas.zoomIn')} className={stepBtn} onClick={onZoomIn}>
+      <ToolbarButton aria-label={t('canvas.zoomIn')} onClick={onZoomIn}>
         <PlusIcon />
       </ToolbarButton>
     </Toolbar>

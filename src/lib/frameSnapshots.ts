@@ -16,7 +16,11 @@ export class FrameSnapshotCache {
   private readonly entries = new Map<string, { revision: Revision; bitmap: Bitmap }>()
   private bytes = 0
 
-  constructor(private readonly budget = 64 * 1024 * 1024) {}
+  private readonly budget: number
+
+  constructor(budget = 64 * 1024 * 1024) {
+    this.budget = budget
+  }
 
   touch(frame: Revision) {
     const entry = this.entries.get(frame.id)

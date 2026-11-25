@@ -102,7 +102,11 @@ parts of the document. The iframe draws as soon as the browser paints it. Transp
 white paper after the guard. On a wide macOS Chromium overview, at most two new visible documents
 start per animation tick until a boot slot is freed. Subsequent ticks can start up to three while
 the same in-flight document and HTML limits apply.
-Present opens the interactive prototype player. See `src/components/frameAdmission.ts`,
+Present opens the interactive prototype player. Its toolbar and page-frame pager sit above and
+below the measured playback viewport. Hiding them keeps the viewport size and current frame scale.
+Frames on another page wait for that page's HTML before mounting the new screen. The editor uses the
+same typed runtime in canvas frames and the Browser annotation proxy, with canvas-only motion holds.
+See `src/components/frameAdmission.ts`,
 `src/components/Stage.tsx` and `src/components/FrameView.tsx`.
 
 Canvas dots fade as their on-screen spacing falls from 10 px to 4 px. At overview zoom, the page colour
