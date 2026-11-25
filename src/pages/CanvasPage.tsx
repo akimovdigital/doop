@@ -1141,6 +1141,7 @@ export function CanvasPage({
           bounds={stageBounds}
           onPresentFrame={openPresent}
           presenting={!!presenting || browserPresenting}
+          previewing={sideBrowserOpen}
           hideTools={mobileGuest && !!loadedCanvasId && guestSheetExpanded}
         />
         {htmlSideFrame && <HtmlFrameBrowserPanel key={htmlSideFrame.id} frame={htmlSideFrame} />}

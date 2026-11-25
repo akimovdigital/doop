@@ -109,6 +109,12 @@ same typed runtime in canvas frames and the Browser annotation proxy, with canva
 See `src/components/frameAdmission.ts`,
 `src/components/Stage.tsx` and `src/components/FrameView.tsx`.
 
+The macOS Chromium editor experiment `doop:far-overview` is off by default. It enters at
+6% and exits at 8%. The overview uses static blocks from a bounded sample of the rendered artboard,
+with the existing surface, line and ink tokens. It keeps the artboard bounds, stacking and label in
+place. Selection reveals the live document in the same iframe. Focused and active documents keep
+their live surface. Preview, Present and Prototype mode use the normal canvas rendering.
+
 Canvas dots fade as their on-screen spacing falls from 10 px to 4 px. At overview zoom, the page colour
 shows through. When canvas chrome is hidden, the bottom-right button and Escape bring it back.
 

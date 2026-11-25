@@ -30,6 +30,7 @@ import { PathEditor } from './PathEditor'
 import { loadPathEdit, type PathEditSource } from '../lib/pathEditing'
 import { currentPageCanvas, currentPageSpatialIndex } from '../lib/pages'
 import {
+  askFrameWindow,
   finishFrameSettle,
   frameShows,
   hasFrameDocument,
@@ -40,6 +41,7 @@ import {
   requestFrame,
   unregisterFrameWindow,
 } from '../lib/frameBridge'
+import type { FarOverviewBlock } from '../lib/farOverview'
 import { api } from '../lib/api'
 import { resolveFrameLink } from '../lib/elementLink'
 import { sendWs } from '../lib/ws'
@@ -404,6 +406,7 @@ export const FrameView = memo(function FrameView({
   onPresentFrame,
   presenting = false,
   uiHidden = false,
+  farOverviewEnabled = false,
 }: {
   frame: Frame
   /** its place in the page's paint order (the Stage's z-index), front highest */
@@ -417,6 +420,7 @@ export const FrameView = memo(function FrameView({
   onPresentFrame?: (frameId: string, interaction?: Interaction) => void
   presenting?: boolean
   uiHidden?: boolean
+  farOverviewEnabled?: boolean
 }) {
   const t = useT()
   const { standalone, synced, github, githubPlaceholder } = useMemo(() => {
@@ -2179,6 +2183,65 @@ export const FrameView = memo(function FrameView({
     return () => watch.disconnect()
   }, [runtimeReady])
 
+  const overviewDocument =
+    farOverviewEnabled &&
+    !standalone &&
+    !frame.browser &&
+    !githubPlaceholder &&
+    !bleed &&
+    !selected &&
+    !wantedSel &&
+    !activeDocument &&
+    !contextMenuOpen &&
+    !remoteEditor &&
+    !stream &&
+    !dragging &&
+    !resizing &&
+    !elementMove.moving &&
+    runtimeDocument?.html === frame.html
+      ? runtimeDocument
+      : null
+  const [overviewSample, setOverviewSample] = useState<{
+    request: number
+    width: number
+    height: number
+    blocks: FarOverviewBlock[]
+  } | null>(null)
+  const { width: overviewWidth, height: overviewHeight } = frame
+  useEffect(() => {
+    if (!overviewDocument || !iframeRef.current?.contentWindow) return
+    const win = iframeRef.current.contentWindow
+    const abort = new AbortController()
+    const idle = window.requestIdleCallback(
+      () => {
+        void askFrameWindow(win, 'doop:far-overview', {}, 1000, undefined, abort.signal)
+          .then((reply) => {
+            if (!Array.isArray(reply?.blocks) || abort.signal.aborted) return
+            setOverviewSample({
+              request: overviewDocument.request,
+              width: overviewWidth,
+              height: overviewHeight,
+              blocks: (reply.blocks as FarOverviewBlock[]).slice(0, 28),
+            })
+          })
+          .catch(() => {
+            // A superseded or unreachable document stays on its live surface.
+          })
+      },
+      { timeout: 750 },
+    )
+    return () => {
+      window.cancelIdleCallback(idle)
+      abort.abort()
+    }
+  }, [overviewDocument, overviewWidth, overviewHeight])
+  const overviewReady =
+    overviewDocument &&
+    overviewSample &&
+    overviewSample.request === overviewDocument.request &&
+    overviewSample.width === overviewWidth &&
+    overviewSample.height === overviewHeight
+
   if (frame.browser) {
     return (
       <BrowserFrame
@@ -2448,6 +2511,7 @@ export const FrameView = memo(function FrameView({
             )}
           <div
             data-frame-surface=""
+            data-far-overview-ready={overviewReady ? '' : undefined}
             data-frame-document-deferred={!mountRuntime && frame.html ? '' : undefined}
             ref={surfaceRef}
             className={cn(
@@ -2587,7 +2651,10 @@ export const FrameView = memo(function FrameView({
                 resizing ||
                 frame.locked ||
                 !frame.html ||
-                !runtimeReady
+                !runtimeReady ||
+                (overviewReady &&
+                  document.activeElement !== iframeRef.current &&
+                  e.currentTarget.closest('.stage[data-far-overview]'))
               )
                 return
               sendHover(at.x, at.y)
@@ -2662,6 +2729,22 @@ export const FrameView = memo(function FrameView({
                     ...(standalone ? { colorScheme: 'light' } : null),
                   }}
                 />
+              </div>
+            )}
+            {overviewReady && overviewSample && (
+              <div data-far-overview-paper="" aria-hidden="true">
+                {overviewSample.blocks.map((block, i) => (
+                  <div
+                    key={i}
+                    data-far-overview-block={block.kind}
+                    style={{
+                      left: `${block.x * 100}%`,
+                      top: `${block.y * 100}%`,
+                      width: `${block.width * 100}%`,
+                      height: `${block.height * 100}%`,
+                    }}
+                  />
+                ))}
               </div>
             )}
             {/* a standalone element is see-through: the paper's grid shows */}

@@ -1524,6 +1524,41 @@ iframe[data-frame-content-auto] {
   contain: content;
 }
 
+[data-far-overview-paper] {
+  display: none;
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  pointer-events: none;
+  background: var(--sub);
+  box-shadow: inset 0 0 0 calc(0.5px / var(--zoom, 1)) var(--line);
+}
+
+/* Blink's display lock skips rendering the retained iframe's contents.
+   Keep its owner box, browsing context and the usual canvas hit target. */
+.stage[data-far-overview] [data-far-overview-ready]:not(:focus-within, [data-far-overview-focused]) {
+  & > [data-frame-layout-root] > iframe[data-doop-frame] {
+    content-visibility: hidden;
+  }
+
+  & > [data-far-overview-paper] {
+    display: block;
+  }
+}
+
+[data-far-overview-block] {
+  position: absolute;
+  background: color-mix(in srgb, var(--ink-faint) 25%, var(--sub));
+}
+
+[data-far-overview-block='line'] {
+  background: color-mix(in srgb, var(--ink-faint) 55%, var(--sub));
+}
+
+[data-far-overview-block='media'] {
+  background: color-mix(in srgb, var(--ink-faint) 75%, var(--sub));
+}
+
 /* The live iframe draws over this paper as soon as Chromium repaints it. */
 [data-frame-repainting]::before,
 .stage[data-cef-overview-paper] [data-frame-surface]::before {
