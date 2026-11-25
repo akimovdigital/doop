@@ -1,3 +1,4 @@
+import sharp from 'sharp'
 import { describe, expect, it } from 'vitest'
 import { findBrowserPath } from '../server/screenshot'
 import { pagePerTest } from './browser'
@@ -136,7 +137,7 @@ describe.skipIf(!findBrowserPath())('cold frame skeleton', () => {
       window.canvasPageHarness.seed(
         [
           {
-            ...window.canvasPageHarness.frameState('back').frame!,
+            ...window.canvasPageHarness.frameState('front').frame!,
             canvasId: 'next',
             name: 'Next',
           },
@@ -149,8 +150,11 @@ describe.skipIf(!findBrowserPath())('cold frame skeleton', () => {
     )
     expect(await iframe.evaluate((el) => el.isConnected)).toBe(false)
     expect(await page.$$(skeleton)).toHaveLength(1)
-    const next = (await (await page.$('iframe[data-doop-frame]'))!.contentFrame())!
+    const nextIframe = (await page.$(`${frontShell} iframe[data-doop-frame]`))!
+    expect(await nextIframe.evaluate((el, win) => el.contentWindow !== win, originalWindow)).toBe(true)
+    const next = (await nextIframe.contentFrame())!
     await next.waitForSelector('button')
+    expect(await page.$(`${frontShell} ${skeleton}`)).not.toBeNull()
     await next.evaluate(() => window.releaseColdFrameCallbacks())
     await page.waitForSelector(skeleton, { hidden: true })
   })
@@ -177,6 +181,55 @@ describe.skipIf(!findBrowserPath())('cold frame skeleton', () => {
     expect(await iframe.evaluate((el, win) => el.isConnected && el.contentWindow === win, originalWindow)).toBe(true)
     expect(await child.$eval('button', (el) => el.textContent)).toBe('Live')
     expect(await page.$eval('[data-frame-surface]', (el) => getComputedStyle(el, '::before').content)).toBe('""')
+  })
+
+  it('distinguishes a replaced cover from a separately delayed visual update', async () => {
+    const page = await pages.open()
+    await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 })
+    await page.evaluateOnNewDocument(holdColdHtml)
+    await openCanvasPage(page, [
+      {
+        ...front,
+        html: '<div id="marker" hidden style="position:fixed;inset:0;background:#124e96"></div>',
+      },
+    ])
+    await page.evaluate(() => window.canvasPageHarness.setCamera({ x: 300, y: 140, zoom: 1 }))
+    const iframe = (await page.waitForSelector(`${frontShell} iframe[data-doop-frame]`))!
+    const child = (await iframe.contentFrame())!
+    await child.waitForFunction(() => window.heldColdFrameHtml.length === 1)
+    await page.waitForSelector(`${frontShell} ${skeleton}`, { visible: true })
+    const owner = await iframe.evaluateHandle((el) => el.contentWindow)
+    const sample = async () => {
+      const box = (await iframe.boundingBox())!
+      const clip = { x: Math.floor(box.x + box.width / 2), y: Math.floor(box.y + box.height / 2), width: 1, height: 1 }
+      return [
+        ...(await sharp(await page.screenshot({ clip }))
+          .removeAlpha()
+          .raw()
+          .toBuffer()),
+      ]
+    }
+
+    expect(await sample()).not.toEqual([255, 255, 255])
+    const payload = await child.evaluate(() => {
+      window.holdColdFrameHtml = false
+      return window.heldColdFrameHtml[0]!.data
+    })
+    await iframe.evaluate((el, data) => el.contentWindow!.postMessage(data, '*'), payload)
+    const marker = (await child.waitForSelector('#marker'))!
+    await page.waitForSelector(skeleton, { hidden: true })
+
+    // This fixture controls a late visual update after the real HTML handoff.
+    // The sampled white pixel characterizes the browser model, not CEF presentation.
+    expect(await sample()).toEqual([255, 255, 255])
+    await page.addStyleTag({ content: `${frontShell} [data-frame-surface]::before { background: #cc2266 !important }` })
+    expect(await sample()).toEqual([204, 34, 102])
+    await child.evaluate(() => (document.documentElement.style.backgroundColor = 'white'))
+    expect(await sample()).toEqual([255, 255, 255])
+    await marker.evaluate((el) => el.removeAttribute('hidden'))
+    expect(await sample()).toEqual([18, 78, 150])
+    expect(await iframe.evaluate((el, win) => el.isConnected && el.contentWindow === win, owner)).toBe(true)
+    expect(await marker.evaluate((el) => el === document.querySelector('#marker'))).toBe(true)
   })
 
   it('waits for the cold paint before the far overview locks the same iframe', async () => {
